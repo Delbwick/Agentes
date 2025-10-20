@@ -95,7 +95,7 @@ st.markdown(
 # Encabezado corporativo
 col_logo, col_title = st.columns([1, 5])
 with col_logo:
-    st.image("https://kaibot.es/wp-content/uploads/2020/07/image1.png", width=100)
+    st.image("https://kaibot.es/wp-content/uploads/2020/07/image1.png", width=250)
 with col_title:
     st.title("KaiBot Cloud Storage Manager")
     st.markdown(
