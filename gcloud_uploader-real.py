@@ -192,7 +192,7 @@ with col1:
     else:
         selected_folder = st.text_input("Nombre de la carpeta destino", value="raw")
 
-    tag = st.text_input("Etiqueta (tag)")("Etiqueta (tag)")
+    tag = st.text_input("Etiqueta (tag)")
 
     if st.button("Subir a GCloud"):
         if not uploaded:
@@ -216,33 +216,36 @@ with col1:
             st.success(f"{len(uploaded)} archivo(s) subidos correctamente")
 
 with col2:
-    st.subheader("📁 Archivos en el bucket")
+    st.subheader("📁 Explorador de archivos")
 
-    files = gcloud_list_files(client, bucket_name)
+    # Explorador simple por carpetas (prefix)
+    current_prefix = st.session_state.get("current_prefix", "")
 
+    col_nav1, col_nav2 = st.columns([1, 4])
+    with col_nav1:
+        if current_prefix and st.button("⬅️ Subir nivel"):
+            st.session_state["current_prefix"] = "/".join(current_prefix.rstrip("/").split("/")[:-1])
+            st.experimental_rerun()
+
+    blobs = client.list_blobs(bucket_name, prefix=current_prefix, delimiter="/")
+
+    folders = sorted([p.replace(current_prefix, "") for p in blobs.prefixes])
+    files = []
+    for b in blobs:
+        if b.name != current_prefix:
+            files.append(b.name.replace(current_prefix, ""))
+
+    st.markdown("**Carpetas**")
+    if folders:
+        for f in folders:
+            if st.button(f"📂 {f}"):
+                st.session_state["current_prefix"] = current_prefix + f
+                st.experimental_rerun()
+    else:
+        st.caption("(Sin subcarpetas)")
+
+    st.markdown("**Archivos**")
     if files:
-        df = pd.DataFrame(files)
-
-        # Filtros
-        tag_filter = st.text_input("Filtrar por tag")
-        if tag_filter:
-            df = df[df["metadata"].astype(str).str.contains(tag_filter)]
-
-        st.dataframe(df, use_container_width=True)
-
-        to_delete = st.multiselect("Borrar archivos", options=df["name"].tolist())
-        if st.button("Eliminar seleccionados"):
-            for name in to_delete:
-                gcloud_delete_file(client, bucket_name, name)
-            st.success("Archivos eliminados")
+        st.write(files)
     else:
-        st.info("El bucket no contiene archivos")
-
-if enable_history and fs_client:
-    st.markdown("---")
-    st.subheader("🕒 Historial de subidas (Firestore)")
-    history = load_history(fs_client)
-    if history:
-        st.dataframe(pd.DataFrame(history), use_container_width=True)
-    else:
-        st.info("Sin historial aún")
+        st.caption("(Sin archivos en esta carpeta)")
