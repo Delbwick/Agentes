@@ -168,24 +168,31 @@ with col1:
     uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True)
 
     st.markdown("**Destino en el bucket**")
+
     folder_mode = st.radio(
         "Selecciona cómo definir la carpeta destino",
         options=["Elegir carpeta existente", "Introducir nueva carpeta"],
         horizontal=True,
     )
 
-    existing_folders = sorted({
-        f.split("/")[0]
-        for f in [r.get("name", "") for r in st.session_state.get("uploaded_files", [])]
-        if "/" in f
-    })
+    # Obtener carpetas reales del bucket (prefixes)
+    existing_folders = []
+    try:
+        blobs = client.list_blobs(bucket_name, delimiter="/")
+        existing_folders = sorted([p.rstrip("/") for p in blobs.prefixes])
+    except Exception:
+        existing_folders = []
 
-    if folder_mode == "Elegir carpeta existente" and existing_folders:
-        selected_folder = st.selectbox("Carpeta destino", existing_folders)
+    if folder_mode == "Elegir carpeta existente":
+        if existing_folders:
+            selected_folder = st.selectbox("Carpeta destino", existing_folders)
+        else:
+            st.info("No existen carpetas todavía en el bucket. Crea una nueva.")
+            selected_folder = st.text_input("Nombre de la carpeta destino", value="raw")
     else:
         selected_folder = st.text_input("Nombre de la carpeta destino", value="raw")
 
-    tag = st.text_input("Etiqueta (tag)")
+    tag = st.text_input("Etiqueta (tag)")("Etiqueta (tag)")
 
     if st.button("Subir a GCloud"):
         if not uploaded:
