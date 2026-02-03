@@ -206,7 +206,7 @@ with col1:
                 )
                 if enable_history and fs_client:
                     save_history(fs_client, rec)
-            st.success(f"{len(uploaded)} archivo(s) subidos correctamente")(s) subidos correctamente")
+            st.success(f"{len(uploaded)} archivo(s) subidos correctamente")
 
 with col2:
     st.subheader("📁 Archivos en el bucket")
