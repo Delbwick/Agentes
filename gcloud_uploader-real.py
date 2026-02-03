@@ -14,6 +14,7 @@ Requisitos:
 IMPORTANTE:
 - Se espera un JSON de Service Account válido (pegado en la UI o vía variable de entorno)
 """
+
 import streamlit as st
 from datetime import datetime
 import os
@@ -165,6 +166,25 @@ with col1:
     st.subheader("📤 Subida de archivos")
 
     uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True)
+
+    st.markdown("**Destino en el bucket**")
+    folder_mode = st.radio(
+        "Selecciona cómo definir la carpeta destino",
+        options=["Elegir carpeta existente", "Introducir nueva carpeta"],
+        horizontal=True,
+    )
+
+    existing_folders = sorted({
+        f.split("/")[0]
+        for f in [r.get("name", "") for r in st.session_state.get("uploaded_files", [])]
+        if "/" in f
+    })
+
+    if folder_mode == "Elegir carpeta existente" and existing_folders:
+        selected_folder = st.selectbox("Carpeta destino", existing_folders)
+    else:
+        selected_folder = st.text_input("Nombre de la carpeta destino", value="raw")
+
     tag = st.text_input("Etiqueta (tag)")
 
     if st.button("Subir a GCloud"):
@@ -174,16 +194,19 @@ with col1:
             for f in uploaded:
                 buf = io.BytesIO(f.read())
                 meta = {"tag": tag} if tag else {}
+
+                destination_path = f"{selected_folder.strip('/')}/{f.name}"
+
                 rec = gcloud_upload_file(
                     client,
                     bucket_name,
                     buf,
-                    f.name,
+                    destination_path,
                     metadata=meta,
                 )
                 if enable_history and fs_client:
                     save_history(fs_client, rec)
-            st.success(f"{len(uploaded)} archivo(s) subidos correctamente")
+            st.success(f"{len(uploaded)} archivo(s) subidos correctamente")(s) subidos correctamente")
 
 with col2:
     st.subheader("📁 Archivos en el bucket")
