@@ -14,7 +14,7 @@ Requisitos:
 IMPORTANTE:
 - Se espera un JSON de Service Account válido (pegado en la UI o vía variable de entorno)
 """
-
+pip install google-cloud-storage google-cloud-firestore
 import streamlit as st
 from datetime import datetime
 import os
