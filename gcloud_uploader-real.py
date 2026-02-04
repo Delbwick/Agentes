@@ -1,23 +1,8 @@
+# KaiBot Cloud Storage Manager
+# streamlit_gcloud_uploader.py
 
-"""
-KaiBot Cloud Storage Manager
-Archivo: streamlit_gcloud_uploader.py
-
-Aplicación Streamlit corporativa para:
-- Subida REAL de archivos a Google Cloud Storage
-- Listado y borrado REAL desde un bucket GCS
-- Historial persistente opcional (Firestore preparado)
-- Filtros básicos por etiqueta y fecha
-
-Requisitos:
-- pip install streamlit pandas google-cloud-storage google-cloud-firestore
-
-IMPORTANTE:
-- Se espera un JSON de Service Account válido (pegado en la UI o vía variable de entorno)
-"""
 import streamlit as st
 from datetime import datetime
-import os
 import io
 import json
 import pandas as pd
@@ -42,18 +27,15 @@ def get_firestore_client_from_json(sa_json_str):
     return firestore.Client(credentials=creds, project=info.get("project_id"))
 
 # -----------------------------
-# GCloud REAL
+# GCloud
 # -----------------------------
 
 def gcloud_upload_file(client, bucket_name, file_buffer, destination_path, metadata=None):
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(destination_path)
-
     blob.metadata = metadata or {}
     blob.upload_from_file(file_buffer, rewind=True)
-
     blob.reload()
-
     return {
         "name": blob.name,
         "size": blob.size,
@@ -65,7 +47,6 @@ def gcloud_upload_file(client, bucket_name, file_buffer, destination_path, metad
 def gcloud_list_files(client, bucket_name):
     bucket = client.bucket(bucket_name)
     blobs = bucket.list_blobs()
-
     records = []
     for b in blobs:
         records.append({
@@ -79,11 +60,10 @@ def gcloud_list_files(client, bucket_name):
 
 def gcloud_delete_file(client, bucket_name, name):
     bucket = client.bucket(bucket_name)
-    blob = bucket.blob(name)
-    blob.delete()
+    bucket.blob(name).delete()
 
 # -----------------------------
-# Firestore (historial)
+# Firestore
 # -----------------------------
 
 def save_history(fs_client, record):
@@ -91,16 +71,19 @@ def save_history(fs_client, record):
 
 
 def load_history(fs_client, limit=200):
-    docs = fs_client.collection("upload_history").order_by(
-        "uploaded_at", direction=firestore.Query.DESCENDING
-    ).limit(limit).stream()
+    docs = (
+        fs_client.collection("upload_history")
+        .order_by("uploaded_at", direction=firestore.Query.DESCENDING)
+        .limit(limit)
+        .stream()
+    )
     return [d.to_dict() for d in docs]
 
 # -----------------------------
 # UI
 # -----------------------------
 
-st.set_page_config(page_title="KaiBot GCloud Uploader", layout="wide")
+st.set_page_config(page_title="KaiBot Cloud Storage Manager", layout="wide")
 
 st.markdown(
     """
@@ -128,19 +111,14 @@ with col_title:
 
 st.markdown("---")
 
-# Sidebar config
+# Sidebar
 with st.sidebar:
     st.header("⚙️ Configuración GCloud")
-
-    project_id = st.text_input("GCP Project ID")
     bucket_name = st.text_input("Bucket GCS")
     sa_json = st.text_area("Service Account JSON", height=220)
-
     enable_history = st.checkbox("Guardar historial en Firestore", value=False)
 
-    connect = st.button("Conectar")
-
-    if connect:
+    if st.button("Conectar"):
         try:
             gcs_client = get_gcs_client_from_json(sa_json)
             st.session_state["gcs_client"] = gcs_client
@@ -151,7 +129,6 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Error de conexión: {e}")
 
-# Validación conexión
 client = st.session_state.get("gcs_client")
 fs_client = st.session_state.get("fs_client")
 
@@ -159,11 +136,29 @@ if not client:
     st.warning("Configura el acceso a GCloud en la barra lateral para continuar.")
     st.stop()
 
-# Layout
 col1, col2 = st.columns((2, 3))
 
+# -----------------------------
+# Subida
+# -----------------------------
 with col1:
     st.subheader("📤 Subida de archivos")
+
+    # Carpetas existentes (prefixes reales)
+    iterator = client.list_blobs(bucket_name, prefix="", delimiter="/")
+    _ = list(iterator)
+    existing_folders = sorted([p.rstrip("/") for p in iterator.prefixes])
+
+    folder_mode = st.radio(
+        "Destino",
+        ["Elegir carpeta existente", "Crear nueva carpeta"],
+        horizontal=True,
+    )
+
+    if folder_mode == "Elegir carpeta existente" and existing_folders:
+        selected_folder = st.selectbox("Carpeta", existing_folders)
+    else:
+        selected_folder = st.text_input("Nombre de la carpeta", value="raw")
 
     uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True)
     tag = st.text_input("Etiqueta (tag)")
@@ -175,45 +170,57 @@ with col1:
             for f in uploaded:
                 buf = io.BytesIO(f.read())
                 meta = {"tag": tag} if tag else {}
-                rec = gcloud_upload_file(
-                    client,
-                    bucket_name,
-                    buf,
-                    f.name,
-                    metadata=meta,
-                )
+                destination = f"{selected_folder.strip('/')}/{f.name}"
+                rec = gcloud_upload_file(client, bucket_name, buf, destination, meta)
                 if enable_history and fs_client:
                     save_history(fs_client, rec)
             st.success(f"{len(uploaded)} archivo(s) subidos correctamente")
 
+# -----------------------------
+# Listado
+# -----------------------------
 with col2:
     st.subheader("📁 Archivos en el bucket")
 
-    files = gcloud_list_files(client, bucket_name)
+    records = gcloud_list_files(client, bucket_name)
+    df = pd.DataFrame(records)
 
-    if files:
-        df = pd.DataFrame(files)
+    if not df.empty:
+        folders_df = df[df.apply(lambda r: r["name"].endswith("/") and r["size"] == 0, axis=1)]
+        files_df = df[~df.index.isin(folders_df.index)]
 
-        # Filtros
+        st.markdown("**📁 Carpetas**")
+        if not folders_df.empty:
+            st.dataframe(folders_df[["name", "uploaded_at"]], use_container_width=True)
+        else:
+            st.caption("No hay carpetas")
+
+        st.markdown("**📄 Archivos**")
         tag_filter = st.text_input("Filtrar por tag")
         if tag_filter:
-            df = df[df["metadata"].astype(str).str.contains(tag_filter)]
+            files_df = files_df[files_df["metadata"].astype(str).str.contains(tag_filter)]
 
-        st.dataframe(df, use_container_width=True)
+        if not files_df.empty:
+            st.dataframe(files_df[["name", "size", "uploaded_at", "metadata"]], use_container_width=True)
 
-        to_delete = st.multiselect("Borrar archivos", options=df["name"].tolist())
-        if st.button("Eliminar seleccionados"):
-            for name in to_delete:
-                gcloud_delete_file(client, bucket_name, name)
-            st.success("Archivos eliminados")
+            to_delete = st.multiselect("Borrar archivos", options=files_df["name"].tolist())
+            if st.button("Eliminar seleccionados"):
+                for name in to_delete:
+                    gcloud_delete_file(client, bucket_name, name)
+                st.success("Archivos eliminados")
+        else:
+            st.caption("No hay archivos")
     else:
-        st.info("El bucket no contiene archivos")
+        st.info("El bucket está vacío")
 
+# -----------------------------
+# Historial
+# -----------------------------
 if enable_history and fs_client:
     st.markdown("---")
-    st.subheader("🕒 Historial de subidas (Firestore)")
+    st.subheader("🕒 Historial de subidas")
     history = load_history(fs_client)
     if history:
         st.dataframe(pd.DataFrame(history), use_container_width=True)
     else:
-        st.info("Sin historial aún")
+        st.caption("Sin historial aún")
