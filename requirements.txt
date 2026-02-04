@@ -2,4 +2,4 @@ streamlit
 pandas
 google-cloud-storage
 google-cloud-firestore
-
+openai>=1.0.0
