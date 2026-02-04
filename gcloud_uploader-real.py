@@ -244,3 +244,41 @@ No añadas texto fuera del JSON.""",
 
         except Exception:
             st.error("⚠️ Error al consultar el agente. Revisa el límite de tokens o el billing.")
+
+    st.markdown("---")
+    st.subheader("🎯 Agente demo")
+    st.caption("Consultas de ejemplo para mostrar el funcionamiento del agente en modo demo")
+
+    demo_queries = [
+        "Resume los puntos clave de la documentación seleccionada",
+        "Extrae oportunidades de mejora a partir de los documentos",
+        "Genera un resumen ejecutivo para dirección",
+        "Detecta incoherencias o riesgos en la información",
+    ]
+
+    demo_query = st.selectbox("Selecciona una consulta demo", demo_queries)
+
+    if st.button("Ejecutar consulta demo"):
+        if not selected_files:
+            st.warning("Selecciona al menos un archivo como contexto")
+            st.stop()
+
+        context = load_selected_context()
+
+        try:
+            response = st.session_state.openai.responses.create(
+                model="gpt-4o-mini",
+                input=[
+                    {
+                        "role": "system",
+                        "content": system_prompt + "\n\n" + context,
+                    },
+                    {"role": "user", "content": demo_query},
+                ],
+            )
+
+            output = response.output_text
+            st.json(json.loads(output))
+
+        except Exception:
+            st.error("⚠️ Error al ejecutar la consulta demo.")
