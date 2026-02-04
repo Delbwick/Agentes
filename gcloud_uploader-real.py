@@ -122,21 +122,46 @@ tab1, tab2 = st.tabs(["📁 Gestión de Archivos", "🤖 Consulta al Agente"])
 with tab1:
     folders, files = list_folders_and_files(client, bucket_name)
 
-    st.subheader("Subir archivos")
-    folder = st.selectbox("Carpeta destino", options=folders)
-    uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True)
+    st.subheader("📤 Subir archivos")
 
-    if st.button("Subir") and uploaded:
+    col_up1, col_up2 = st.columns([2, 1])
+    with col_up1:
+        folder = st.selectbox("Carpeta destino", options=folders)
+        uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True)
+    with col_up2:
+        new_folder = st.text_input("Crear nueva carpeta")
+
+    target_folder = new_folder.strip() + "/" if new_folder else folder
+
+    if st.button("Subir archivos") and uploaded:
         for f in uploaded:
-            upload_file(client, bucket_name, f, folder)
-        st.success("Archivos subidos correctamente")
+            upload_file(client, bucket_name, f, target_folder)
+        st.success(f"{len(uploaded)} archivo(s) subidos correctamente")
 
-    st.subheader("Contenido del bucket")
+    st.markdown("---")
+    st.subheader("📁 Contenido del bucket")
+
     if files:
-        st.dataframe(pd.DataFrame(files), use_container_width=True)
+        df = pd.DataFrame(files)
+        st.dataframe(df, use_container_width=True)
+
+        to_delete = st.multiselect(
+            "Selecciona archivos a eliminar",
+            options=df["name"].tolist(),
+        )
+
+        if st.button("Eliminar seleccionados") and to_delete:
+            bucket = client.bucket(bucket_name)
+            for name in to_delete:
+                bucket.blob(name).delete()
+            st.success("Archivos eliminados correctamente")
+    else:
+        st.info("El bucket no contiene archivos")
 
 # =============================
 # TAB 2 - AGENT
+# =============================
+
 # =============================
 
 with tab2:
