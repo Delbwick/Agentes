@@ -1,28 +1,27 @@
-# KaiBot Cloud Storage Manager + Content Agent
-# Archivo: gcloud_uploader_real.py
+# KaiBot Cloud Storage Manager + Content Agent (STABLE VERSION)
+# Demo + Producción controlada
 
 import streamlit as st
 from datetime import datetime
 import io
 import json
 import pandas as pd
-import os
 
 from google.cloud import storage
 from google.oauth2 import service_account
 from openai import OpenAI
 
-# =============================
+# =====================================================
 # Helpers GCP
-# =============================
+# =====================================================
 
-def get_gcs_client_from_json(sa_json_str):
+def get_gcs_client_from_json(sa_json_str: str) -> storage.Client:
     info = json.loads(sa_json_str)
     creds = service_account.Credentials.from_service_account_info(info)
     return storage.Client(credentials=creds, project=info.get("project_id"))
 
 
-def list_folders_and_files(client, bucket_name):
+def list_folders_and_files(client: storage.Client, bucket_name: str):
     bucket = client.bucket(bucket_name)
     blobs = bucket.list_blobs()
 
@@ -33,36 +32,56 @@ def list_folders_and_files(client, bucket_name):
         parts = b.name.split("/")
         if len(parts) > 1:
             folders.add(parts[0] + "/")
-        files.append({
-            "name": b.name,
-            "size": b.size,
-            "updated": b.updated,
-        })
+        files.append(
+            {
+                "name": b.name,
+                "size": b.size,
+                "updated": b.updated,
+            }
+        )
 
-    return sorted(list(folders)), files
+    return sorted(folders), files
 
 
-def upload_file(client, bucket_name, file, folder):
+def upload_file(client: storage.Client, bucket_name: str, file, folder: str):
     bucket = client.bucket(bucket_name)
     path = f"{folder.rstrip('/')}/{file.name}"
     blob = bucket.blob(path)
     blob.upload_from_file(file, rewind=True)
 
 
-def read_folder_texts(client, bucket_name, folder):
+# =====================================================
+# Context loader (SAFE)
+# =====================================================
+
+def load_selected_context(client, bucket_name, selected_files, max_chars):
     bucket = client.bucket(bucket_name)
-    blobs = bucket.list_blobs(prefix=folder)
     texts = []
-    for b in blobs:
-        if b.name.endswith("/"):
-            continue
-        content = b.download_as_text()
-        texts.append(f"### {b.name}\n{content}")
+    total_chars = 0
+
+    for name in selected_files:
+        blob = bucket.blob(name)
+        content = blob.download_as_text()
+
+        if total_chars + len(content) > max_chars:
+            remaining = max_chars - total_chars
+            if remaining <= 0:
+                break
+            content = content[:remaining]
+
+        texts.append(
+            f"""### {name}
+{content}"""
+        )
+
+        total_chars += len(content)
+
     return "\n\n".join(texts)
 
-# =============================
-# UI Config
-# =============================
+
+# =====================================================
+# UI CONFIG
+# =====================================================
 
 st.set_page_config(page_title="KaiBot Cloud Agent", layout="wide")
 
@@ -81,16 +100,17 @@ with col_logo:
     st.image("https://kaibot.es/wp-content/uploads/2020/07/image1.png", width=90)
 with col_title:
     st.title("KaiBot Cloud Storage & Content Agent")
-    st.caption("Gestión de archivos y agente de generación de contenidos")
+    st.caption("Gestión documental + agente de contenidos (modo demo y real)")
 
 st.markdown("---")
 
-# =============================
-# Sidebar
-# =============================
+# =====================================================
+# SIDEBAR
+# =====================================================
 
 with st.sidebar:
     st.header("⚙️ Configuración")
+
     bucket_name = st.text_input("Bucket GCS")
     sa_json = st.text_area("Service Account JSON", height=220)
     openai_key = st.text_input("OpenAI API Key", type="password")
@@ -98,7 +118,8 @@ with st.sidebar:
     if st.button("Conectar"):
         try:
             st.session_state.gcs = get_gcs_client_from_json(sa_json)
-            st.session_state.openai = OpenAI(api_key=openai_key)
+            if openai_key:
+                st.session_state.openai = OpenAI(api_key=openai_key)
             st.success("Conectado correctamente")
         except Exception as e:
             st.error(e)
@@ -109,29 +130,29 @@ if "gcs" not in st.session_state:
 
 client = st.session_state.gcs
 
-# =============================
-# Tabs
-# =============================
+# =====================================================
+# TABS
+# =====================================================
 
-tab1, tab2 = st.tabs(["📁 Gestión de Archivos", "🤖 Consulta al Agente"])
+tab1, tab2 = st.tabs(["📁 Gestión de Archivos", "🤖 Agentes"])
 
-# =============================
-# TAB 1 - FILES
-# =============================
+# =====================================================
+# TAB 1 - FILE MANAGEMENT
+# =====================================================
 
 with tab1:
     folders, files = list_folders_and_files(client, bucket_name)
 
-    st.subheader("📤 Subir archivos")
+    st.subheader("📤 Subida de archivos")
 
-    col_up1, col_up2 = st.columns([2, 1])
-    with col_up1:
+    col1, col2 = st.columns([2, 1])
+    with col1:
         folder = st.selectbox("Carpeta destino", options=folders)
         uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True)
-    with col_up2:
+    with col2:
         new_folder = st.text_input("Crear nueva carpeta")
 
-    target_folder = new_folder.strip() + "/" if new_folder else folder
+    target_folder = f"{new_folder.strip()}/" if new_folder else folder
 
     if st.button("Subir archivos") and uploaded:
         for f in uploaded:
@@ -158,17 +179,17 @@ with tab1:
     else:
         st.info("El bucket no contiene archivos")
 
-# =============================
-# TAB 2 - AGENT
-# =============================
+# =====================================================
+# TAB 2 - AGENTS
+# =====================================================
 
 with tab2:
-    st.subheader("🤖 Consulta a tu agente de generación de contenidos")
+    st.subheader("🤖 Agente real (OpenAI)")
 
     system_prompt = st.text_area(
-        "Instrucciones del agente (system prompt)",
+        "System prompt",
         value="""Eres un agente de generación de contenidos corporativos.
-Debes responder SIEMPRE en formato JSON válido siguiendo exactamente este esquema:
+Debes responder SIEMPRE en formato JSON válido siguiendo este esquema:
 {
   "summary": string,
   "key_points": [string],
@@ -178,97 +199,32 @@ No añadas texto fuera del JSON.""",
         height=180,
     )
 
-    user_query = st.text_area("Consulta", height=120)
-
-    st.markdown("---")
-    st.subheader("📂 Contexto documental a usar")
+    user_query = st.text_area("Consulta", height=100)
 
     folders, files = list_folders_and_files(client, bucket_name)
     file_names = [f["name"] for f in files]
 
-    selected_files = st.multiselect(
-        "Selecciona los archivos que el agente puede leer",
-        options=file_names,
-    )
-
-    st.markdown("---")
-    st.subheader("⚙️ Opciones avanzadas")
+    selected_files = st.multiselect("Archivos de contexto", options=file_names)
 
     max_chars = st.slider(
-        "Límite máximo de caracteres de contexto",
+        "Límite de caracteres de contexto",
         min_value=1000,
         max_value=20000,
         value=8000,
         step=500,
     )
 
-    def load_selected_context():
-        bucket = client.bucket(bucket_name)
-        texts = []
-        total_chars = 0
-
-        for name in selected_files:
-            blob = bucket.blob(name)
-            content = blob.download_as_text()
-            if total_chars + len(content) > max_chars:
-                remaining = max_chars - total_chars
-                if remaining <= 0:
-                    break
-                content = content[:remaining]
-            texts.append(f"### {name}
-{content}")
-            total_chars += len(content)
-
-        return "
-
-".join(texts)
-
-    if st.button("Ejecutar consulta"):
+    if st.button("Ejecutar agente real"):
+        if "openai" not in st.session_state:
+            st.error("No hay API key configurada")
+            st.stop()
         if not selected_files:
-            st.warning("Selecciona al menos un archivo como contexto")
+            st.warning("Selecciona archivos de contexto")
             st.stop()
 
-        context = load_selected_context()
-
-        try:
-            response = st.session_state.openai.responses.create(
-                model="gpt-4o-mini",
-                input=[
-                    {
-                        "role": "system",
-                        "content": system_prompt + "
-
-" + context,
-                    },
-                    {"role": "user", "content": user_query},
-                ],
-            )
-
-            output = response.output_text
-            st.json(json.loads(output))
-
-        except Exception:
-            st.error("⚠️ Error al consultar el agente. Revisa el límite de tokens o el billing.")
-
-    st.markdown("---")
-    st.subheader("🎯 Agente demo")
-    st.caption("Consultas de ejemplo para mostrar el funcionamiento del agente en modo demo")
-
-    demo_queries = [
-        "Resume los puntos clave de la documentación seleccionada",
-        "Extrae oportunidades de mejora a partir de los documentos",
-        "Genera un resumen ejecutivo para dirección",
-        "Detecta incoherencias o riesgos en la información",
-    ]
-
-    demo_query = st.selectbox("Selecciona una consulta demo", demo_queries)
-
-    if st.button("Ejecutar consulta demo"):
-        if not selected_files:
-            st.warning("Selecciona al menos un archivo como contexto")
-            st.stop()
-
-        context = load_selected_context()
+        context = load_selected_context(
+            client, bucket_name, selected_files, max_chars
+        )
 
         try:
             response = st.session_state.openai.responses.create(
@@ -278,50 +234,41 @@ No añadas texto fuera del JSON.""",
                         "role": "system",
                         "content": system_prompt + "\n\n" + context,
                     },
-                    {"role": "user", "content": demo_query},
+                    {"role": "user", "content": user_query},
                 ],
             )
 
-            output = response.output_text
-            st.json(json.loads(output))
-
+            st.json(json.loads(response.output_text))
         except Exception:
-            st.error("⚠️ Error al ejecutar la consulta demo.")
+            st.error("Error al ejecutar el agente real")
 
     st.markdown("---")
-    st.subheader("🧪 Agente simulado (sin APIs)")
-    st.caption("Modo demostración: genera una respuesta JSON simulada sin llamar a OpenAI")
+    st.subheader("🎯 Agente demo (guiado)")
 
-    simulated_query = st.text_input(
-        "Consulta para el agente simulado",
-        value="Genera un resumen ejecutivo de la documentación",
-    )
+    demo_queries = [
+        "Resume los puntos clave de la documentación",
+        "Genera un resumen ejecutivo",
+        "Detecta riesgos o incoherencias",
+    ]
 
-    if st.button("Generar respuesta simulada"):
-        simulated_response = {
-            "summary": "Resumen ejecutivo simulado para demostración del producto.",
-            "key_points": [
-                "Punto clave generado sin IA",
-                "Ejemplo de insight estructurado",
-                "Contenido ficticio para demo",
-            ],
-            "recommended_actions": [
-                "Acción recomendada simulada",
-                "Siguiente paso de ejemplo",
-            ],
-            "meta": {
-                "mode": "simulated",
-                "query": simulated_query,
-                "generated_at": datetime.utcnow().isoformat() + "Z",
-            },
-        }
+    demo_query = st.selectbox("Consulta demo", demo_queries)
 
-        st.json(simulated_response)
+    if st.button("Ejecutar agente demo"):
+        if "openai" not in st.session_state:
+            st.error("No hay API key configurada")
+            st.stop()
+        if not selected_files:
+            st.warning("Selecciona archivos de contexto")
+            st.stop()
 
-        export = json.dumps(simulated_response, indent=2)
-        st.download_button(
-            "⬇️ Descargar JSON",
-            export,
-            file_name="respuesta_agente_demo.json",
-            mime="application/json",
+        context = load_selected_context(
+            client, bucket_name, selected_files, max_chars
         )
+
+        try:
+            response = st.session_state.openai.responses.create(
+                model="gpt-4o-mini",
+                input=[
+                    {
+                        "role": "system",
+                        "content": system_prompt + "\n\n" +
