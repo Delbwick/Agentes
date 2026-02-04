@@ -162,10 +162,8 @@ with tab1:
 # TAB 2 - AGENT
 # =============================
 
-# =============================
-
 with tab2:
-    st.subheader("Consulta a tu agente de generación de contenidos")
+    st.subheader("🤖 Consulta a tu agente de generación de contenidos")
 
     system_prompt = st.text_area(
         "Instrucciones del agente (system prompt)",
@@ -182,25 +180,67 @@ No añadas texto fuera del JSON.""",
 
     user_query = st.text_area("Consulta", height=120)
 
+    st.markdown("---")
+    st.subheader("📂 Contexto documental a usar")
+
+    folders, files = list_folders_and_files(client, bucket_name)
+    file_names = [f["name"] for f in files]
+
+    selected_files = st.multiselect(
+        "Selecciona los archivos que el agente puede leer",
+        options=file_names,
+    )
+
+    st.markdown("---")
+    st.subheader("⚙️ Opciones avanzadas")
+
+    max_chars = st.slider(
+        "Límite máximo de caracteres de contexto",
+        min_value=1000,
+        max_value=20000,
+        value=8000,
+        step=500,
+    )
+
+    def load_selected_context():
+        bucket = client.bucket(bucket_name)
+        texts = []
+        total_chars = 0
+
+        for name in selected_files:
+            blob = bucket.blob(name)
+            content = blob.download_as_text()
+            if total_chars + len(content) > max_chars:
+                remaining = max_chars - total_chars
+                if remaining <= 0:
+                    break
+                content = content[:remaining]
+            texts.append(f"### {name}\n{content}")
+            total_chars += len(content)
+
+        return "\n\n".join(texts)
+
     if st.button("Ejecutar consulta"):
-        context = ""
-        for folder in [
-            "Documentos_agente/",
-            "documentacion_adicional/",
-            "documentos_validados/",
-        ]:
-            context += read_folder_texts(client, bucket_name, folder)
+        if not selected_files:
+            st.warning("Selecciona al menos un archivo como contexto")
+            st.stop()
 
-        response = st.session_state.openai.responses.create(
-            model="gpt-4o",
-            input=[
-                {
-                    "role": "system",
-                    "content": system_prompt + "\n\n" + context,
-                },
-                {"role": "user", "content": user_query},
-            ],
-        )
+        context = load_selected_context()
 
-        output = response.output_text
-        st.json(json.loads(output))
+        try:
+            response = st.session_state.openai.responses.create(
+                model="gpt-4o-mini",
+                input=[
+                    {
+                        "role": "system",
+                        "content": system_prompt + "\n\n" + context,
+                    },
+                    {"role": "user", "content": user_query},
+                ],
+            )
+
+            output = response.output_text
+            st.json(json.loads(output))
+
+        except Exception:
+            st.error("⚠️ Error al consultar el agente. Revisa el límite de tokens o el billing.")
