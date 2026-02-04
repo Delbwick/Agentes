@@ -275,20 +275,14 @@ if page == "Consulta a tu agente de generación de contenidos":
 
     system_prompt = st.text_area(
         "Instrucciones del agente (system prompt)",
-        value=(
-            "Eres un agente de generación de contenidos corporativos. "
-            "Debes responder SIEMPRE en formato JSON válido siguiendo este esquema:
-"
-            "{
-"
-            "  \"summary\": string,
-"
-            "  \"key_points\": [string],
-"
-            "  \"recommended_actions\": [string]
-"
-            "}"
-        ),
+        value="""Eres un agente de generación de contenidos corporativos.
+Debes responder SIEMPRE en formato JSON válido siguiendo exactamente este esquema:
+{
+  \"summary\": string,
+  \"key_points\": [string],
+  \"recommended_actions\": [string]
+}
+No añadas texto fuera del JSON.""",
         height=180,
     ),
     )
