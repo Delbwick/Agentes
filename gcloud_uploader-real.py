@@ -192,7 +192,7 @@ No añadas texto fuera del JSON.""",
             context += read_folder_texts(client, bucket_name, folder)
 
         response = st.session_state.openai.responses.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             input=[
                 {
                     "role": "system",
