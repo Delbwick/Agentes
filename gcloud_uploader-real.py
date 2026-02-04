@@ -215,10 +215,13 @@ No añadas texto fuera del JSON.""",
                 if remaining <= 0:
                     break
                 content = content[:remaining]
-            texts.append(f"### {name}\n{content}")
+            texts.append(f"### {name}
+{content}")
             total_chars += len(content)
 
-        return "\n\n".join(texts)
+        return "
+
+".join(texts)
 
     if st.button("Ejecutar consulta"):
         if not selected_files:
@@ -233,7 +236,9 @@ No añadas texto fuera del JSON.""",
                 input=[
                     {
                         "role": "system",
-                        "content": system_prompt + "\n\n" + context,
+                        "content": system_prompt + "
+
+" + context,
                     },
                     {"role": "user", "content": user_query},
                 ],
@@ -282,3 +287,41 @@ No añadas texto fuera del JSON.""",
 
         except Exception:
             st.error("⚠️ Error al ejecutar la consulta demo.")
+
+    st.markdown("---")
+    st.subheader("🧪 Agente simulado (sin APIs)")
+    st.caption("Modo demostración: genera una respuesta JSON simulada sin llamar a OpenAI")
+
+    simulated_query = st.text_input(
+        "Consulta para el agente simulado",
+        value="Genera un resumen ejecutivo de la documentación",
+    )
+
+    if st.button("Generar respuesta simulada"):
+        simulated_response = {
+            "summary": "Resumen ejecutivo simulado para demostración del producto.",
+            "key_points": [
+                "Punto clave generado sin IA",
+                "Ejemplo de insight estructurado",
+                "Contenido ficticio para demo",
+            ],
+            "recommended_actions": [
+                "Acción recomendada simulada",
+                "Siguiente paso de ejemplo",
+            ],
+            "meta": {
+                "mode": "simulated",
+                "query": simulated_query,
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+            },
+        }
+
+        st.json(simulated_response)
+
+        export = json.dumps(simulated_response, indent=2)
+        st.download_button(
+            "⬇️ Descargar JSON",
+            export,
+            file_name="respuesta_agente_demo.json",
+            mime="application/json",
+        )
