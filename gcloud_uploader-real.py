@@ -271,4 +271,48 @@ No añadas texto fuera del JSON.""",
                 input=[
                     {
                         "role": "system",
-                        "content": system_prompt + "\n\n" +
+                        "content": system_prompt + "\n\n" + context,
+                    },
+                    {"role": "user", "content": demo_query},
+                ],
+            )
+
+            st.json(json.loads(response.output_text))
+        except Exception:
+            st.error("Error al ejecutar el agente demo")
+
+    st.markdown("---")
+    st.subheader("🧪 Agente simulado (sin APIs)")
+
+    simulated_query = st.text_input(
+        "Consulta simulada",
+        value="Genera un resumen ejecutivo de la documentación",
+    )
+
+    if st.button("Generar respuesta simulada"):
+        simulated_response = {
+            "summary": "Resumen ejecutivo simulado para demostración.",
+            "key_points": [
+                "Insight simulado 1",
+                "Insight simulado 2",
+                "Insight simulado 3",
+            ],
+            "recommended_actions": [
+                "Acción simulada 1",
+                "Acción simulada 2",
+            ],
+            "meta": {
+                "mode": "simulated",
+                "query": simulated_query,
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+            },
+        }
+
+        st.json(simulated_response)
+
+        st.download_button(
+            "⬇️ Descargar JSON",
+            json.dumps(simulated_response, indent=2),
+            file_name="respuesta_agente_demo.json",
+            mime="application/json",
+        )
