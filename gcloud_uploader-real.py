@@ -170,8 +170,10 @@ with col1:
 
     # Obtener carpetas existentes reales del bucket
     try:
-        blobs = client.list_blobs(bucket_name, delimiter="/")
-        existing_folders = sorted([p.rstrip("/") for p in blobs.prefixes])
+        # Obtener carpetas existentes reales del bucket (IMPORTANTE: hay que iterar)
+        iterator = client.list_blobs(bucket_name, prefix="", delimiter="/")
+        _ = list(iterator)  # fuerza la iteración para poblar prefixes
+        existing_folders = sorted([p.rstrip("/") for p in iterator.prefixes])([p.rstrip("/") for p in blobs.prefixes])
     except Exception:
         existing_folders = []
 
