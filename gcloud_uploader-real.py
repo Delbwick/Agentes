@@ -85,6 +85,12 @@ def load_history(fs_client, limit=200):
 
 st.set_page_config(page_title="KaiBot Cloud Storage Manager", layout="wide")
 
+# Navegación
+page = st.sidebar.radio(
+    "🧭 Navegación",
+    ["Gestión de archivos", "Consulta a tu agente de generación de contenidos"],
+)
+
 st.markdown(
     """
     <style>
@@ -107,7 +113,7 @@ with col_logo:
     st.image("https://kaibot.es/wp-content/uploads/2020/07/image1.png", width=90)
 with col_title:
     st.title("KaiBot Cloud Storage Manager")
-    st.caption("Gestión corporativa de archivos sobre Google Cloud Storage")
+    st.caption("Gestión corporativa de archivos y agente de contenidos")
 
 st.markdown("---")
 
@@ -136,7 +142,8 @@ if not client:
     st.warning("Configura el acceso a GCloud en la barra lateral para continuar.")
     st.stop()
 
-col1, col2 = st.columns((2, 3))
+if page == "Gestión de archivos":
+    col1, col2 = st.columns((2, 3))((2, 3))
 
 # -----------------------------
 # Subida
@@ -242,7 +249,7 @@ with col2:
 # -----------------------------
 # Historial
 # -----------------------------
-if enable_history and fs_client:
+if page == "Gestión de archivos" means enable_history and fs_client:
     st.markdown("---")
     st.subheader("🕒 Historial de subidas")
     history = load_history(fs_client)
@@ -250,3 +257,49 @@ if enable_history and fs_client:
         st.dataframe(pd.DataFrame(history), use_container_width=True)
     else:
         st.caption("Sin historial aún")
+
+# -----------------------------
+# Agente de generación de contenidos
+# -----------------------------
+if page == "Consulta a tu agente de generación de contenidos":
+    st.subheader("🤖 Consulta a tu agente de generación de contenidos")
+
+    st.markdown(
+        "Este agente utiliza la información almacenada en Google Cloud Storage "
+        "(documentación adicional, archivos y contexto) para generar respuestas estructuradas."
+    )
+
+    openai_key = st.text_input("OpenAI API Key", type="password")
+    system_prompt = st.text_area(
+        "Instrucciones del agente (system prompt)",
+        value="Eres un agente de generación de contenidos corporativos. Responde siempre en formato JSON.",
+        height=120,
+    )
+
+    user_prompt = st.text_area(
+        "Consulta",
+        placeholder="Ej: Genera una descripción corporativa basada en la web y LinkedIn almacenados",
+        height=150,
+    )
+
+    if st.button("Consultar agente"):
+        if not openai_key or not user_prompt:
+            st.warning("Introduce la API Key y una consulta")
+        else:
+            # MOCK de respuesta (placeholder)
+            response = {
+                "query": user_prompt,
+                "status": "ok",
+                "generated_at": datetime.utcnow().isoformat(),
+                "result": {
+                    "summary": "Respuesta generada por el agente de contenidos.",
+                    "next_steps": [
+                        "Validar fuentes",
+                        "Ajustar tono",
+                        "Publicar contenido",
+                    ],
+                },
+            }
+
+            st.success("Respuesta generada")
+            st.json(response)
