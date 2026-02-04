@@ -290,6 +290,7 @@ if page == "Consulta a tu agente de generación de contenidos":
             "}"
         ),
         height=180,
+    ),
     )
 
     user_prompt = st.text_area(
