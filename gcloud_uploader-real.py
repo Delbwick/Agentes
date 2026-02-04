@@ -144,7 +144,7 @@ col1, col2 = st.columns((2, 3))
 with col1:
     st.subheader("📤 Subida de archivos")
 
-    # Carpetas existentes (prefixes reales)
+    # Ver carpetas existentes
     iterator = client.list_blobs(bucket_name, prefix="", delimiter="/")
     _ = list(iterator)
     existing_folders = sorted([p.rstrip("/") for p in iterator.prefixes])
@@ -163,7 +163,7 @@ with col1:
     uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True)
     tag = st.text_input("Etiqueta (tag)")
 
-    if st.button("Subir a GCloud"):
+    if st.button("Subir archivos"):
         if not uploaded:
             st.warning("No hay archivos seleccionados")
         else:
@@ -175,6 +175,32 @@ with col1:
                 if enable_history and fs_client:
                     save_history(fs_client, rec)
             st.success(f"{len(uploaded)} archivo(s) subidos correctamente")
+
+    st.markdown("---")
+    st.subheader("🧾 Documentación adicional")
+
+    web_url = st.text_input("Página web")
+    linkedin_url = st.text_input("LinkedIn")
+
+    if st.button("Guardar documentación"):
+        if not web_url and not linkedin_url:
+            st.warning("Introduce al menos un campo")
+        else:
+            payload = {
+                "web": web_url,
+                "linkedin": linkedin_url,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            json_bytes = io.BytesIO(json.dumps(payload, indent=2).encode("utf-8"))
+            filename = f"documentacion_adicional/info_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+            gcloud_upload_file(
+                client,
+                bucket_name,
+                json_bytes,
+                filename,
+                metadata={"type": "documentacion_adicional"},
+            )
+            st.success("Documentación guardada correctamente")
 
 # -----------------------------
 # Listado
