@@ -1,3 +1,4 @@
+
 """
 KaiBot Cloud Storage Manager
 Archivo: streamlit_gcloud_uploader.py
@@ -14,7 +15,6 @@ Requisitos:
 IMPORTANTE:
 - Se espera un JSON de Service Account válido (pegado en la UI o vía variable de entorno)
 """
-
 import streamlit as st
 from datetime import datetime
 import os
@@ -165,29 +165,6 @@ col1, col2 = st.columns((2, 3))
 with col1:
     st.subheader("📤 Subida de archivos")
 
-    # --- Selección de carpeta destino ---
-    st.markdown("**Destino en el bucket**")
-
-    # Obtener carpetas existentes reales del bucket
-    try:
-        # Obtener carpetas existentes reales del bucket (IMPORTANTE: hay que iterar)
-        iterator = client.list_blobs(bucket_name, prefix="", delimiter="/")
-        _ = list(iterator)  # fuerza la iteración para poblar prefixes
-        existing_folders = sorted([p.rstrip("/") for p in iterator.prefixes])([p.rstrip("/") for p in blobs.prefixes])
-    except Exception:
-        existing_folders = []
-
-    folder_mode = st.radio(
-        "¿Dónde quieres subir los archivos?",
-        options=["Elegir carpeta existente", "Crear nueva carpeta"],
-        horizontal=True,
-    )
-
-    if folder_mode == "Elegir carpeta existente" and existing_folders:
-        selected_folder = st.selectbox("Carpeta destino", existing_folders)
-    else:
-        selected_folder = st.text_input("Nombre de la carpeta destino", value="raw")
-
     uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True)
     tag = st.text_input("Etiqueta (tag)")
 
@@ -198,14 +175,11 @@ with col1:
             for f in uploaded:
                 buf = io.BytesIO(f.read())
                 meta = {"tag": tag} if tag else {}
-
-                destination_path = f"{selected_folder.strip('/')}/{f.name}"
-
                 rec = gcloud_upload_file(
                     client,
                     bucket_name,
                     buf,
-                    destination_path,
+                    f.name,
                     metadata=meta,
                 )
                 if enable_history and fs_client:
@@ -213,36 +187,33 @@ with col1:
             st.success(f"{len(uploaded)} archivo(s) subidos correctamente")
 
 with col2:
-    st.subheader("📁 Explorador de archivos")
+    st.subheader("📁 Archivos en el bucket")
 
-    # Explorador simple por carpetas (prefix)
-    current_prefix = st.session_state.get("current_prefix", "")
+    files = gcloud_list_files(client, bucket_name)
 
-    col_nav1, col_nav2 = st.columns([1, 4])
-    with col_nav1:
-        if current_prefix and st.button("⬅️ Subir nivel"):
-            st.session_state["current_prefix"] = "/".join(current_prefix.rstrip("/").split("/")[:-1])
-            st.experimental_rerun()
-
-    blobs = client.list_blobs(bucket_name, prefix=current_prefix, delimiter="/")
-
-    folders = sorted([p.replace(current_prefix, "") for p in blobs.prefixes])
-    files = []
-    for b in blobs:
-        if b.name != current_prefix:
-            files.append(b.name.replace(current_prefix, ""))
-
-    st.markdown("**Carpetas**")
-    if folders:
-        for f in folders:
-            if st.button(f"📂 {f}"):
-                st.session_state["current_prefix"] = current_prefix + f
-                st.experimental_rerun()
-    else:
-        st.caption("(Sin subcarpetas)")
-
-    st.markdown("**Archivos**")
     if files:
-        st.write(files)
+        df = pd.DataFrame(files)
+
+        # Filtros
+        tag_filter = st.text_input("Filtrar por tag")
+        if tag_filter:
+            df = df[df["metadata"].astype(str).str.contains(tag_filter)]
+
+        st.dataframe(df, use_container_width=True)
+
+        to_delete = st.multiselect("Borrar archivos", options=df["name"].tolist())
+        if st.button("Eliminar seleccionados"):
+            for name in to_delete:
+                gcloud_delete_file(client, bucket_name, name)
+            st.success("Archivos eliminados")
     else:
-        st.caption("(Sin archivos en esta carpeta)")
+        st.info("El bucket no contiene archivos")
+
+if enable_history and fs_client:
+    st.markdown("---")
+    st.subheader("🕒 Historial de subidas (Firestore)")
+    history = load_history(fs_client)
+    if history:
+        st.dataframe(pd.DataFrame(history), use_container_width=True)
+    else:
+        st.info("Sin historial aún")
