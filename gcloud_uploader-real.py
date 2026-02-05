@@ -90,6 +90,44 @@ with st.sidebar:
 client = st.session_state.get("gcs_client")
 if not client:
     st.stop()
+    
+with st.sidebar:
+    st.header("🤖 OpenAI – Agente real")
+
+    openai_api_key = st.text_input(
+        "OpenAI API Key",
+        type="password",
+        key="sb_openai_key"
+    )
+
+    openai_model = st.selectbox(
+        "Modelo",
+        ["gpt-4.1", "gpt-4o", "gpt-4o-mini"],
+        key="sb_openai_model"
+    )
+
+    openai_max_tokens = st.slider(
+        "Max tokens",
+        min_value=256,
+        max_value=4096,
+        value=1024,
+        step=128,
+        key="sb_openai_tokens"
+    )
+
+    openai_temperature = st.slider(
+        "Temperature",
+        0.0, 1.0, 0.3, 0.05,
+        key="sb_openai_temp"
+    )
+
+st.session_state["openai_config"] = {
+    "api_key": openai_api_key,
+    "model": openai_model,
+    "max_tokens": openai_max_tokens,
+    "temperature": openai_temperature,
+}
+
 
 # =========================================================
 # TABS
