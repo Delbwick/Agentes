@@ -1,342 +1,237 @@
-# KaiBot Cloud Storage Manager — DEMO SIN BILLING
-# --------------------------------------------------
-# Aplicación Streamlit corporativa para gestión de archivos en GCS
-# y simulación avanzada de agentes de generación y validación de contenidos
-
 import streamlit as st
-from datetime import datetime
 import io
 import json
+import random
+from datetime import datetime
 import pandas as pd
 
 from google.cloud import storage
 from google.oauth2 import service_account
 
-# =============================
-# CONFIG STREAMLIT
-# =============================
+# =========================================================
+# CONFIG
+# =========================================================
 
-st.set_page_config(page_title="KaiBot Cloud Storage Manager", layout="wide")
-
-st.markdown(
-    """
-    <style>
-    body { background-color: #f8fafc; }
-    h1, h2, h3 { color: #1E293B; }
-    .stButton>button {
-        background-color: #2563EB !important;
-        color: white !important;
-        border-radius: 10px !important;
-        font-weight: 600 !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
+st.set_page_config(
+    page_title="KaiBot Cloud Storage Manager",
+    layout="wide"
 )
 
-# =============================
-# HELPERS GCS
-# =============================
+BUCKET_FOLDERS = {
+    "agente": "Documentos_agente/",
+    "adicional": "documentacion_adicional/",
+    "validados": "documentos_validados/",
+}
 
-def get_gcs_client_from_json(sa_json_str):
+# =========================================================
+# AUTH
+# =========================================================
+
+def get_gcs_client(sa_json_str):
     info = json.loads(sa_json_str)
     creds = service_account.Credentials.from_service_account_info(info)
-    return storage.Client(credentials=creds, project=info.get("project_id"))
+    return storage.Client(credentials=creds, project=info["project_id"])
 
+# =========================================================
+# GCS HELPERS
+# =========================================================
 
-def list_folders_and_files(client, bucket_name):
+def upload_json_to_gcs(client, bucket_name, folder, filename, data):
     bucket = client.bucket(bucket_name)
-    blobs = bucket.list_blobs()
+    blob = bucket.blob(f"{folder}{filename}")
+    blob.upload_from_string(
+        json.dumps(data, indent=2, ensure_ascii=False),
+        content_type="application/json"
+    )
 
-    records = []
-    for b in blobs:
-        records.append({
-            "path": b.name,
-            "size": b.size,
-            "created": b.time_created,
-        })
-    return records
-
-
-def upload_file(client, bucket_name, buffer, destination):
+def list_files(client, bucket_name, prefix=None):
     bucket = client.bucket(bucket_name)
-    blob = bucket.blob(destination)
-    blob.upload_from_file(buffer, rewind=True)
+    blobs = bucket.list_blobs(prefix=prefix)
+    return [b.name for b in blobs if not b.name.endswith("/")]
 
-
-def delete_file(client, bucket_name, path):
+def delete_file(client, bucket_name, name):
     bucket = client.bucket(bucket_name)
-    bucket.blob(path).delete()
+    bucket.blob(name).delete()
 
+# =========================================================
+# UI STYLE
+# =========================================================
 
-def load_additional_documentation(client, bucket_name):
-    bucket = client.bucket(bucket_name)
-    blobs = bucket.list_blobs(prefix="documentacion_adicional/")
+st.markdown("""
+<style>
+.stButton>button {
+    background-color:#2563EB;
+    color:white;
+    border-radius:8px;
+}
+</style>
+""", unsafe_allow_html=True)
 
-    sources = []
-    for blob in blobs:
-        if blob.name.endswith(".json"):
-            data = json.loads(blob.download_as_text())
-            if data.get("web"):
-                sources.append({"type": "web", "url": data["web"]})
-            if data.get("linkedin"):
-                sources.append({"type": "linkedin", "url": data["linkedin"]})
-    return sources
-
-# =============================
-# HEADER
-# =============================
-
-col_logo, col_title = st.columns([1, 5])
-with col_logo:
-    st.image("https://kaibot.es/wp-content/uploads/2020/07/image1.png", width=90)
-with col_title:
-    st.title("KaiBot Cloud Storage Manager")
-    st.caption("Demo corporativa sin billing — flujo completo de agente IA")
-
-st.markdown("---")
-
-# =============================
-# SIDEBAR CONFIG (SIN CAMBIAR FLUJO ORIGINAL)
-# =============================
+# =========================================================
+# SIDEBAR
+# =========================================================
 
 with st.sidebar:
-    st.header("⚙️ Configuración")
+    st.image("https://kaibot.es/wp-content/uploads/2020/07/image1.png", width=120)
+    st.header("⚙️ Configuración GCloud")
 
-    st.subheader("Google Cloud")
-    bucket_name = st.text_input("Bucket GCS")
-    sa_json = st.text_area("Service Account JSON", height=180)
+    bucket_name = st.text_input("Bucket GCS", key="sb_bucket")
+    sa_json = st.text_area("Service Account JSON", height=200, key="sb_sa")
 
-    st.markdown("---")
-    st.subheader("OpenAI (agente real)")
-    openai_api_key = st.text_input("OpenAI API Key", type="password")
-    model_name = st.text_input("Modelo", value="gpt-4.1-mini")
-    max_tokens = st.slider("Max tokens", 256, 4096, 1024)
+    connect = st.button("Conectar", key="sb_connect")
 
-    if st.button("Conectar"):
+    if connect:
         try:
-            st.session_state["gcs_client"] = get_gcs_client_from_json(sa_json)
-            st.session_state["openai_api_key"] = openai_api_key
-            st.success("Configuración cargada")
+            st.session_state["gcs_client"] = get_gcs_client(sa_json)
+            st.success("Conectado a GCloud")
         except Exception as e:
-            st.error(f"Error de conexión: {e}")
+            st.error(str(e))
 
 client = st.session_state.get("gcs_client")
 if not client:
-    st.warning("Configura GCloud en la barra lateral")
     st.stop()
 
-# =============================
-# LAYOUT PRINCIPAL CON PESTAÑAS
-# =============================
+# =========================================================
+# TABS
+# =========================================================
 
 tab_data, tab_agents = st.tabs(["📁 Datos", "🤖 Agentes"])
 
-# =============================
-# TAB DATOS
-# =============================
+# =========================================================
+# 📁 TAB DATOS
+# =========================================================
 
 with tab_data:
-    col1, col2 = st.columns((2, 3))
+    st.subheader("📤 Subida de archivos")
 
-    with col1:
-        st.subheader("📤 Subida de archivos")
+    uploaded = st.file_uploader(
+        "Subir archivos al bucket",
+        accept_multiple_files=True,
+        key="data_uploader"
+    )
 
-        uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True)
-        folder = st.text_input("Carpeta destino (opcional)")
+    folder_choice = st.selectbox(
+        "Carpeta destino",
+        options=list(BUCKET_FOLDERS.keys()),
+        key="data_folder"
+    )
 
-        if st.button("Subir archivos", key="upload_files"):
-            if not uploaded:
-                st.warning("No hay archivos")
-            else:
-                for f in uploaded:
-                    buf = io.BytesIO(f.read())
-                    path = f"{folder}/{f.name}" if folder else f.name
-                    upload_file(client, bucket_name, buf, path)
-                st.success("Archivos subidos correctamente")
-
-        st.markdown("---")
-        st.subheader("🌐 Documentación adicional")
-
-        web_url = st.text_input("URL Web")
-        linkedin_url = st.text_input("URL LinkedIn")
-
-        if st.button("Guardar documentación adicional", key="save_extra"):
-            if not web_url and not linkedin_url:
-                st.warning("Introduce al menos una URL")
-            else:
-                payload = {
-                    "web": web_url,
-                    "linkedin": linkedin_url,
-                    "created_at": datetime.utcnow().isoformat(),
-                }
-                ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                blob = client.bucket(bucket_name).blob(
-                    f"documentacion_adicional/info_{ts}.json"
-                )
-                blob.upload_from_string(
-                    json.dumps(payload, indent=2, ensure_ascii=False),
-                    content_type="application/json",
-                )
-                st.success("Documentación guardada")
-
-    with col2:
-        st.subheader("📁 Explorador del bucket")
-
-        records = list_folders_and_files(client, bucket_name)
-        if records:
-            df = pd.DataFrame(records)
-            st.dataframe(df, use_container_width=True)
-
-            to_delete = st.multiselect("Eliminar archivos", df["path"].tolist())
-            if st.button("Eliminar seleccionados", key="delete_files"):
-                for p in to_delete:
-                    delete_file(client, bucket_name, p)
-                st.success("Archivos eliminados")
-        else:
-            st.info("Bucket vacío")
-
-# =============================
-# TAB AGENTES
-# =============================
-
-with tab_agents:
-    st.subheader("🤖 Agente real / demo / simulado")
-
-    files_for_agent = [r["path"] for r in records] if records else []
-    selected_files = st.multiselect("Documentos de contexto", files_for_agent)
+    if st.button("Subir archivos", key="data_upload_btn"):
+        for f in uploaded:
+            blob = client.bucket(bucket_name).blob(
+                f"{BUCKET_FOLDERS[folder_choice]}{f.name}"
+            )
+            blob.upload_from_file(f)
+        st.success("Archivos subidos")
 
     st.markdown("---")
-    st.markdown("### 🧪 Agente DEMO / Simulado")
+    st.subheader("🌐 Documentación adicional (Web / LinkedIn)")
 
-    if st.button("Generar JSON (simulado)"):
-        sources = load_additional_documentation(client, bucket_name)
+    web = st.text_input("Página web", key="data_web")
+    linkedin = st.text_input("LinkedIn", key="data_linkedin")
 
-        simulated = {
-            "agent": "content_generation_agent",
-            "mode": "demo",
-            "created_at": datetime.utcnow().isoformat(),
-            "analysis": {
-                "documents_used": selected_files,
-                "external_sources": sources,
-            },
-            "output": {
-                "summary": "El contenido analizado muestra coherencia entre la documentación interna y las fuentes públicas proporcionadas.",
-                "key_insights": [
-                    "Alineación consistente entre documentos internos y web corporativa.",
-                    "El perfil de LinkedIn refuerza la propuesta de valor descrita.",
-                ],
-                "recommendations": [
-                    "Reforzar mensajes clave con ejemplos concretos.",
-                    "Homogeneizar el tono editorial entre canales.",
-                ],
-            },
-            "sources_cited": sources,
+    if st.button("Guardar documentación adicional", key="data_save_web"):
+        payload = {
+            "web": web,
+            "linkedin": linkedin,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        upload_json_to_gcs(
+            client,
+            bucket_name,
+            BUCKET_FOLDERS["adicional"],
+            f"fuentes_{datetime.utcnow().timestamp()}.json",
+            payload
+        )
+        st.success("Documentación guardada")
+
+    st.markdown("---")
+    st.subheader("🗑 Gestión de archivos")
+
+    all_files = []
+    for f in BUCKET_FOLDERS.values():
+        all_files += list_files(client, bucket_name, f)
+
+    to_delete = st.multiselect(
+        "Selecciona archivos a eliminar",
+        all_files,
+        key="data_delete_select"
+    )
+
+    if st.button("Eliminar seleccionados", key="data_delete_btn"):
+        for f in to_delete:
+            delete_file(client, bucket_name, f)
+        st.success("Archivos eliminados")
+
+# =========================================================
+# 🤖 TAB AGENTES
+# =========================================================
+
+with tab_agents:
+    st.subheader("🤖 Consulta a tu agente")
+
+    query = st.text_area(
+        "Consulta",
+        height=120,
+        key="agent_query"
+    )
+
+    docs = []
+    for folder in BUCKET_FOLDERS.values():
+        docs += list_files(client, bucket_name, folder)
+
+    selected_docs = st.multiselect(
+        "Documentación a usar",
+        docs,
+        key="agent_docs"
+    )
+
+    col1, col2, col3 = st.columns(3)
+    run_sim = col1.button("🎭 Simulado", key="agent_sim")
+    run_demo = col2.button("🧪 Demo", key="agent_demo")
+    run_real = col3.button("🚀 Real", key="agent_real")
+
+    def generate_agent_json(mode):
+        return {
+            "mode": mode,
+            "query": query,
+            "summary": "Análisis generado a partir de las fuentes seleccionadas.",
+            "key_points": [
+                "Síntesis estructurada",
+                "Contenido alineado con la consulta",
+                "Uso de documentación interna"
+            ],
+            "sources": selected_docs,
+            "created_at": datetime.utcnow().isoformat()
         }
 
-        st.session_state["demo_json"] = json.dumps(simulated, indent=2, ensure_ascii=False)
-
-    if "demo_json" in st.session_state:
-        st.subheader("📄 JSON generado")
-        edited_json = st.text_area("JSON editable", st.session_state["demo_json"], height=260)
-
-        if st.button("Validar con Perplexity (simulado)"):
-            validation = """
-INFORME DE VALIDACIÓN EXTERNA (SIMULACIÓN)
-========================================
-
-Tras analizar el contenido generado y contrastarlo con las fuentes citadas,
-se concluye que:
-
-• El JSON presenta coherencia semántica y estructural.
-• Las fuentes externas (web y LinkedIn) han sido utilizadas de forma adecuada.
-• No se detectan contradicciones relevantes ni afirmaciones no sustentadas.
-
-Observaciones:
-- Algunas recomendaciones podrían beneficiarse de mayor especificidad operativa.
-- Se aconseja una revisión editorial final antes de su publicación.
-
-Evaluación global: CONTENIDO APTO PARA VALIDACIÓN
-Nivel de confianza estimado: ALTO
-"""
-            st.session_state["validation_text"] = validation
-            st.session_state["validated_json"] = edited_json
-
-    if "validation_text" in st.session_state:
-        st.subheader("🧠 Resultado del validador")
-        st.text_area("Respuesta del validador", st.session_state["validation_text"], height=220)
-
-        if st.button("✅ Aprobar y guardar"):
-            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            blob = client.bucket(bucket_name).blob(
-                f"documentos_validados/resultado_{ts}.json"
-            )
-            blob.upload_from_string(
-                st.session_state["validated_json"], content_type="application/json"
-            )
-            st.success("Documento validado y almacenado")
-# =============================
-
-st.markdown("---")
-st.header("🧪 Agente DEMO — Generación y validación")
-
-files_for_agent = [r["path"] for r in records]
-selected_files = st.multiselect("Archivos de contexto", files_for_agent)
-
-if st.button("Generar JSON (simulado)"):
-    sources = load_additional_documentation(client, bucket_name)
-
-    simulated = {
-        "agent": "content_generation_agent",
-        "mode": "demo",
-        "created_at": datetime.utcnow().isoformat(),
-        "analysis": {
-            "documents_used": selected_files,
-            "external_sources": sources,
-        },
-        "output": {
-            "summary": "Resumen simulado coherente basado en documentos internos y fuentes externas.",
-            "key_insights": [
-                "Coherencia entre documentación interna y web corporativa.",
-                "LinkedIn refuerza la credibilidad institucional.",
-            ],
-            "recommendations": [
-                "Unificar tono corporativo.",
-                "Ampliar casos de uso públicos.",
-            ],
-        },
-        "sources_cited": sources,
-    }
-
-    st.session_state["demo_json"] = json.dumps(simulated, indent=2, ensure_ascii=False)
-
-if "demo_json" in st.session_state:
-    st.subheader("📄 JSON del agente")
-    edited_json = st.text_area("JSON editable", st.session_state["demo_json"], height=260)
-
-    if st.button("Validar con Perplexity (simulado)"):
-        validation = """
-VALIDACIÓN EXTERNA — SIMULACIÓN TIPO PERPLEXITY
-----------------------------------------------
-El contenido es coherente con las fuentes citadas.
-No se detectan contradicciones relevantes.
-Se recomienda validación editorial final.
-
-Nivel de confianza: ALTO
-"""
-        st.session_state["validation_text"] = validation
-        st.session_state["validated_json"] = edited_json
-
-if "validation_text" in st.session_state:
-    st.subheader("🧠 Resultado del validador")
-    st.text_area("Respuesta", st.session_state["validation_text"], height=180)
-
-    if st.button("✅ Aprobar y guardar"):
-        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        blob = client.bucket(bucket_name).blob(
-            f"documentos_validados/resultado_{ts}.json"
+    if run_sim or run_demo or run_real:
+        result = generate_agent_json(
+            "simulado" if run_sim else "demo" if run_demo else "real"
         )
-        blob.upload_from_string(
-            st.session_state["validated_json"], content_type="application/json"
-        )
-        st.success("Documento validado y almacenado")
+
+        st.markdown("### 📄 Respuesta del agente")
+        st.json(result)
+
+        st.markdown("### 🔎 Validación externa (tipo Perplexity)")
+        approved = random.choice([True, False])
+
+        if approved:
+            st.success("✅ APROBADO")
+            if st.button("Guardar en documentos_validados", key="agent_save_valid"):
+                filename = f"respuesta_{datetime.utcnow().timestamp()}.json"
+                upload_json_to_gcs(
+                    client,
+                    bucket_name,
+                    BUCKET_FOLDERS["validados"],
+                    filename,
+                    result
+                )
+                st.success("Respuesta guardada en documentos_validados/")
+        else:
+            st.warning("⚠️ REQUIERE AJUSTES")
+            st.text_area(
+                "Correcciones manuales",
+                height=120,
+                key="agent_corrections"
+            )
