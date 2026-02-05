@@ -127,78 +127,154 @@ if not client:
     st.stop()
 
 # =============================
-# LAYOUT PRINCIPAL
+# LAYOUT PRINCIPAL CON PESTAÑAS
 # =============================
 
-col1, col2 = st.columns((2, 3))
+tab_data, tab_agents = st.tabs(["📁 Datos", "🤖 Agentes"])
 
-# -----------------------------
-# SUBIDA DE ARCHIVOS
-# -----------------------------
+# =============================
+# TAB DATOS
+# =============================
 
-with col1:
-    st.subheader("📤 Subida de archivos")
+with tab_data:
+    col1, col2 = st.columns((2, 3))
 
-    uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True)
-    folder = st.text_input("Carpeta destino (opcional)")
+    with col1:
+        st.subheader("📤 Subida de archivos")
 
-    if st.button("Subir archivos"):
-        if not uploaded:
-            st.warning("No hay archivos")
+        uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True)
+        folder = st.text_input("Carpeta destino (opcional)")
+
+        if st.button("Subir archivos", key="upload_files"):
+            if not uploaded:
+                st.warning("No hay archivos")
+            else:
+                for f in uploaded:
+                    buf = io.BytesIO(f.read())
+                    path = f"{folder}/{f.name}" if folder else f.name
+                    upload_file(client, bucket_name, buf, path)
+                st.success("Archivos subidos correctamente")
+
+        st.markdown("---")
+        st.subheader("🌐 Documentación adicional")
+
+        web_url = st.text_input("URL Web")
+        linkedin_url = st.text_input("URL LinkedIn")
+
+        if st.button("Guardar documentación adicional", key="save_extra"):
+            if not web_url and not linkedin_url:
+                st.warning("Introduce al menos una URL")
+            else:
+                payload = {
+                    "web": web_url,
+                    "linkedin": linkedin_url,
+                    "created_at": datetime.utcnow().isoformat(),
+                }
+                ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                blob = client.bucket(bucket_name).blob(
+                    f"documentacion_adicional/info_{ts}.json"
+                )
+                blob.upload_from_string(
+                    json.dumps(payload, indent=2, ensure_ascii=False),
+                    content_type="application/json",
+                )
+                st.success("Documentación guardada")
+
+    with col2:
+        st.subheader("📁 Explorador del bucket")
+
+        records = list_folders_and_files(client, bucket_name)
+        if records:
+            df = pd.DataFrame(records)
+            st.dataframe(df, use_container_width=True)
+
+            to_delete = st.multiselect("Eliminar archivos", df["path"].tolist())
+            if st.button("Eliminar seleccionados", key="delete_files"):
+                for p in to_delete:
+                    delete_file(client, bucket_name, p)
+                st.success("Archivos eliminados")
         else:
-            for f in uploaded:
-                buf = io.BytesIO(f.read())
-                path = f"{folder}/{f.name}" if folder else f.name
-                upload_file(client, bucket_name, buf, path)
-            st.success("Archivos subidos correctamente")
+            st.info("Bucket vacío")
+
+# =============================
+# TAB AGENTES
+# =============================
+
+with tab_agents:
+    st.subheader("🤖 Agente real / demo / simulado")
+
+    files_for_agent = [r["path"] for r in records] if records else []
+    selected_files = st.multiselect("Documentos de contexto", files_for_agent)
 
     st.markdown("---")
-    st.subheader("🌐 Documentación adicional")
+    st.markdown("### 🧪 Agente DEMO / Simulado")
 
-    web_url = st.text_input("URL Web")
-    linkedin_url = st.text_input("URL LinkedIn")
+    if st.button("Generar JSON (simulado)"):
+        sources = load_additional_documentation(client, bucket_name)
 
-    if st.button("Guardar documentación adicional"):
-        if not web_url and not linkedin_url:
-            st.warning("Introduce al menos una URL")
-        else:
-            payload = {
-                "web": web_url,
-                "linkedin": linkedin_url,
-                "created_at": datetime.utcnow().isoformat(),
-            }
+        simulated = {
+            "agent": "content_generation_agent",
+            "mode": "demo",
+            "created_at": datetime.utcnow().isoformat(),
+            "analysis": {
+                "documents_used": selected_files,
+                "external_sources": sources,
+            },
+            "output": {
+                "summary": "El contenido analizado muestra coherencia entre la documentación interna y las fuentes públicas proporcionadas.",
+                "key_insights": [
+                    "Alineación consistente entre documentos internos y web corporativa.",
+                    "El perfil de LinkedIn refuerza la propuesta de valor descrita.",
+                ],
+                "recommendations": [
+                    "Reforzar mensajes clave con ejemplos concretos.",
+                    "Homogeneizar el tono editorial entre canales.",
+                ],
+            },
+            "sources_cited": sources,
+        }
+
+        st.session_state["demo_json"] = json.dumps(simulated, indent=2, ensure_ascii=False)
+
+    if "demo_json" in st.session_state:
+        st.subheader("📄 JSON generado")
+        edited_json = st.text_area("JSON editable", st.session_state["demo_json"], height=260)
+
+        if st.button("Validar con Perplexity (simulado)"):
+            validation = """
+INFORME DE VALIDACIÓN EXTERNA (SIMULACIÓN)
+========================================
+
+Tras analizar el contenido generado y contrastarlo con las fuentes citadas,
+se concluye que:
+
+• El JSON presenta coherencia semántica y estructural.
+• Las fuentes externas (web y LinkedIn) han sido utilizadas de forma adecuada.
+• No se detectan contradicciones relevantes ni afirmaciones no sustentadas.
+
+Observaciones:
+- Algunas recomendaciones podrían beneficiarse de mayor especificidad operativa.
+- Se aconseja una revisión editorial final antes de su publicación.
+
+Evaluación global: CONTENIDO APTO PARA VALIDACIÓN
+Nivel de confianza estimado: ALTO
+"""
+            st.session_state["validation_text"] = validation
+            st.session_state["validated_json"] = edited_json
+
+    if "validation_text" in st.session_state:
+        st.subheader("🧠 Resultado del validador")
+        st.text_area("Respuesta del validador", st.session_state["validation_text"], height=220)
+
+        if st.button("✅ Aprobar y guardar"):
             ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
             blob = client.bucket(bucket_name).blob(
-                f"documentacion_adicional/info_{ts}.json"
+                f"documentos_validados/resultado_{ts}.json"
             )
             blob.upload_from_string(
-                json.dumps(payload, indent=2, ensure_ascii=False),
-                content_type="application/json",
+                st.session_state["validated_json"], content_type="application/json"
             )
-            st.success("Documentación guardada")
-
-# -----------------------------
-# EXPLORADOR
-# -----------------------------
-
-with col2:
-    st.subheader("📁 Explorador del bucket")
-
-    records = list_folders_and_files(client, bucket_name)
-    if records:
-        df = pd.DataFrame(records)
-        st.dataframe(df, use_container_width=True)
-
-        to_delete = st.multiselect("Eliminar archivos", df["path"].tolist())
-        if st.button("Eliminar seleccionados"):
-            for p in to_delete:
-                delete_file(client, bucket_name, p)
-            st.success("Archivos eliminados")
-    else:
-        st.info("Bucket vacío")
-
-# =============================
-# AGENTE SIMULADO AVANZADO
+            st.success("Documento validado y almacenado")
 # =============================
 
 st.markdown("---")
