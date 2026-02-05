@@ -97,18 +97,27 @@ with col_title:
 st.markdown("---")
 
 # =============================
-# SIDEBAR CONFIG
+# SIDEBAR CONFIG (SIN CAMBIAR FLUJO ORIGINAL)
 # =============================
 
 with st.sidebar:
-    st.header("⚙️ Configuración GCloud")
+    st.header("⚙️ Configuración")
+
+    st.subheader("Google Cloud")
     bucket_name = st.text_input("Bucket GCS")
-    sa_json = st.text_area("Service Account JSON", height=220)
+    sa_json = st.text_area("Service Account JSON", height=180)
+
+    st.markdown("---")
+    st.subheader("OpenAI (agente real)")
+    openai_api_key = st.text_input("OpenAI API Key", type="password")
+    model_name = st.text_input("Modelo", value="gpt-4.1-mini")
+    max_tokens = st.slider("Max tokens", 256, 4096, 1024)
 
     if st.button("Conectar"):
         try:
             st.session_state["gcs_client"] = get_gcs_client_from_json(sa_json)
-            st.success("Conectado correctamente")
+            st.session_state["openai_api_key"] = openai_api_key
+            st.success("Configuración cargada")
         except Exception as e:
             st.error(f"Error de conexión: {e}")
 
