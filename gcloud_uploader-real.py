@@ -316,3 +316,73 @@ No añadas texto fuera del JSON.""",
             file_name="respuesta_agente_demo.json",
             mime="application/json",
         )
+
+
+# =============================
+# AGENTE SIMULADO (SIN APIs)
+# =============================
+
+st.markdown("---")
+st.header("🧪 Agente DEMO / Simulación completa")
+st.caption("Flujo demo: generación JSON → validación simulada tipo Perplexity → aprobación")
+
+# --- Generación simulada del JSON
+if st.button("Generar JSON (simulado)"):
+    simulated_json = {
+        "summary": "Resumen simulado del contenido basado en los documentos seleccionados.",
+        "key_points": [
+            "Punto clave 1 generado en modo demo",
+            "Punto clave 2 generado en modo demo",
+            "Punto clave 3 generado en modo demo",
+        ],
+        "recommended_actions": [
+            "Acción recomendada A",
+            "Acción recomendada B",
+        ],
+    }
+    st.session_state["demo_json"] = json.dumps(simulated_json, indent=2, ensure_ascii=False)
+
+# Mostrar / editar JSON
+if "demo_json" in st.session_state:
+    st.subheader("📄 JSON generado por el agente")
+    edited_json = st.text_area(
+        "JSON editable (puedes corregirlo antes de validar)",
+        value=st.session_state["demo_json"],
+        height=260,
+    )
+
+    # --- Validación simulada tipo Perplexity
+    if st.button("Validar con Perplexity (simulado)"):
+        validation_text = (
+            "VALIDACIÓN SIMULADA (Perplexity)\n"
+            "----------------------------------\n"
+            "El contenido es coherente, claro y alineado con el contexto proporcionado.\n"
+            "Se recomienda validar el tono final antes de publicación."
+        )
+        st.session_state["validation_text"] = validation_text
+        st.session_state["validated_json"] = edited_json
+
+# Mostrar validación
+if "validation_text" in st.session_state:
+    st.subheader("🧠 Respuesta del validador (texto)")
+    st.text_area(
+        "Resultado de validación",
+        value=st.session_state["validation_text"],
+        height=160,
+    )
+
+    # --- Aprobación final
+    col_ok, col_cancel = st.columns(2)
+
+    with col_ok:
+        if st.button("✅ Aprobar y guardar en documentos_validados/"):
+            bucket = client.bucket(bucket_name)
+            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            blob = bucket.blob(f"documentos_validados/resultado_{ts}.json")
+            blob.upload_from_string(
+                st.session_state["validated_json"], content_type="application/json"
+            )
+            st.success("Documento validado y almacenado correctamente")
+
+    with col_cancel:
+        st.info("Puedes modificar el JSON y volver a validar antes de aprobar")
