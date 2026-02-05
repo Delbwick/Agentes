@@ -160,6 +160,27 @@ with tab1:
         st.success(f"{len(uploaded)} archivo(s) subidos correctamente")
 
     st.markdown("---")
+    st.subheader("🌐 Documentación adicional (Web / LinkedIn)")
+
+    web = st.text_input("Página web", key="data_web")
+    linkedin = st.text_input("LinkedIn", key="data_linkedin")
+
+    if st.button("Guardar documentación adicional", key="data_save_web"):
+        payload = {
+            "web": web,
+            "linkedin": linkedin,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        upload_json_to_gcs(
+            client,
+            bucket_name,
+            BUCKET_FOLDERS["adicional"],
+            f"fuentes_{datetime.utcnow().timestamp()}.json",
+            payload
+        )
+        st.success("Documentación guardada")
+
+    st.markdown("---")
     st.subheader("📁 Contenido del bucket")
 
     if files:
