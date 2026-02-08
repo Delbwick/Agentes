@@ -71,6 +71,65 @@ def upload_json_to_gcs(client: storage.Client, bucket_name: str, folder: str, fi
     blob.upload_from_string(json.dumps(data, indent=2, ensure_ascii=False), content_type="application/json")
     return path
 
+# =====================================================
+# Perplexity Agent
+# =====================================================
+
+def call_perplexity_agent(api_key: str, system_prompt: str, user_query: str, context: str = "") -> dict:
+    """
+    Llama a Perplexity API y retorna respuesta en JSON
+    
+    Args:
+        api_key: API key de Perplexity
+        system_prompt: Instrucciones del sistema
+        user_query: Consulta del usuario
+        context: Contexto adicional de documentos
+    
+    Returns:
+        dict con la respuesta parseada
+    """
+    try:
+        from openai import OpenAI
+        
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.perplexity.ai"
+        )
+        
+        # Preparar mensaje completo
+        full_message = user_query
+        if context:
+            full_message = f"""CONTEXTO:
+{context}
+
+---
+
+CONSULTA:
+{user_query}"""
+        
+        # Llamar a Perplexity
+        response = client.chat.completions.create(
+            model="llama-3.1-sonar-small-128k-online",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": full_message}
+            ]
+        )
+        
+        response_text = response.choices[0].message.content
+        
+        # Limpiar markdown
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+        
+        return json.loads(response_text)
+        
+    except json.JSONDecodeError:
+        raise ValueError("La respuesta de Perplexity no es un JSON válido")
+    except Exception as e:
+        raise Exception(f"Error al llamar a Perplexity: {str(e)}")
 
 # =====================================================
 # Context loader
@@ -258,69 +317,293 @@ with tab1:
         st.info("ℹ️ El bucket no contiene archivos")
 
 # =====================================================
-# TAB 2 - AGENTS
+# TAB 2 - AGENTE FINAL CON PERPLEXITY
 # =====================================================
 
 with tab2:
-    st.subheader("🤖 Agente IA (OpenAI)")
+    st.header("🤖 Agente de Contenidos con Perplexity")
+    st.caption("Consulta → Perplexity → Validación → Guardado")
     
-    if "openai" not in st.session_state:
-        st.warning("⚠️ Configura la API key de OpenAI en el sidebar")
+    # Verificar API key de Perplexity
+    if "perplexity_key" not in st.session_state:
+        with st.expander("⚙️ Configurar Perplexity API", expanded=True):
+            perplexity_key = st.text_input("Perplexity API Key", type="password", key="pplx_input")
+            if st.button("Guardar API Key"):
+                if perplexity_key:
+                    st.session_state.perplexity_key = perplexity_key
+                    st.success("✅ API Key guardada")
+                    st.rerun()
+    
+    if "perplexity_key" not in st.session_state:
+        st.warning("⚠️ Configura tu API Key de Perplexity para continuar")
         st.stop()
     
+    # --- PASO 1: CONFIGURACIÓN DE LA CONSULTA ---
+    st.subheader("📝 Paso 1: Configuración")
+    
     system_prompt = st.text_area(
-        "System prompt",
-        value="""Eres un agente de generación de contenidos corporativos.
-Debes responder SIEMPRE en formato JSON válido siguiendo este esquema:
+        "System prompt para Perplexity",
+        value="""Eres un agente experto en análisis de contenidos corporativos y generación de insights estratégicos.
+
+Analiza el contexto proporcionado y responde en formato JSON válido con esta estructura:
 {
-  "summary": "resumen ejecutivo",
-  "key_points": ["punto 1", "punto 2", "punto 3"],
-  "recommended_actions": ["acción 1", "acción 2"]
-}""",
-        height=180
+  "summary": "Resumen ejecutivo conciso (2-3 líneas)",
+  "key_points": [
+    "Punto clave 1",
+    "Punto clave 2",
+    "Punto clave 3"
+  ],
+  "recommended_actions": [
+    "Acción recomendada 1",
+    "Acción recomendada 2"
+  ],
+  "sources": [
+    "Fuente 1",
+    "Fuente 2"
+  ]
+}
+
+Sé preciso, profesional y basa tus respuestas en datos verificables.""",
+        height=200
     )
     
+    # Selección de archivos de contexto
     folders, files = list_folders_and_files(client, bucket_name)
     file_names = [f["name"] for f in files]
     
-    selected_files = st.multiselect("📄 Archivos de contexto", options=file_names)
+    selected_files = st.multiselect(
+        "📄 Selecciona archivos para contexto",
+        options=file_names,
+        help="Estos archivos se usarán como contexto para la consulta"
+    )
     
-    col1, col2 = st.columns(2)
+    max_chars = st.slider(
+        "Límite de caracteres de contexto",
+        min_value=2000,
+        max_value=30000,
+        value=10000,
+        step=1000,
+        help="Controla cuánto contexto enviar a Perplexity"
+    )
+    
+    # Tipo de consulta
+    col1, col2 = st.columns([2, 1])
     with col1:
-        max_chars = st.slider("Límite caracteres contexto", 1000, 20000, 8000, 500)
-    with col2:
-        mode = st.radio("Modo", ["Consulta personalizada", "Consultas predefinidas"])
+        query_mode = st.radio(
+            "Tipo de consulta",
+            ["Personalizada", "Plantilla"],
+            horizontal=True
+        )
     
-    if mode == "Consulta personalizada":
-        user_query = st.text_area("Tu consulta", height=100)
+    if query_mode == "Personalizada":
+        user_query = st.text_area(
+            "Tu consulta",
+            placeholder="Ejemplo: Analiza las tendencias de mercado y sugiere 3 acciones estratégicas prioritarias",
+            height=100
+        )
     else:
-        user_query = st.selectbox("Consulta predefinida", [
-            "Resume los puntos clave de la documentación",
-            "Genera un resumen ejecutivo",
-            "Detecta riesgos o incoherencias"
-        ])
+        templates = {
+            "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional de la documentación proporcionada, destacando los puntos más relevantes para la toma de decisiones.",
+            "Análisis DAFO": "Realiza un análisis DAFO (Debilidades, Amenazas, Fortalezas, Oportunidades) basado en la información del contexto.",
+            "Plan de Acción": "Identifica los 5 puntos clave más importantes y proporciona un plan de acción detallado para cada uno.",
+            "Detección de Riesgos": "Analiza el contexto e identifica posibles riesgos, incoherencias o puntos de mejora.",
+            "Benchmark Competitivo": "Analiza la posición competitiva y genera recomendaciones estratégicas."
+        }
+        
+        selected_template = st.selectbox("Selecciona plantilla", list(templates.keys()))
+        user_query = st.text_area(
+            "Consulta (editable)",
+            value=templates[selected_template],
+            height=100
+        )
     
-    if st.button("🚀 Ejecutar agente"):
-        if not selected_files:
-            st.warning("⚠️ Selecciona al menos un archivo de contexto")
+    # --- PASO 2: EJECUTAR CONSULTA ---
+    st.markdown("---")
+    st.subheader("🚀 Paso 2: Ejecutar Consulta")
+    
+    col_exec, col_clear = st.columns([3, 1])
+    
+    with col_exec:
+        execute_query = st.button(
+            "▶️ Consultar a Perplexity",
+            type="primary",
+            use_container_width=True
+        )
+    
+    with col_clear:
+        if st.button("🗑️ Limpiar", use_container_width=True):
+            if "perplexity_response" in st.session_state:
+                del st.session_state.perplexity_response
+            if "edited_response" in st.session_state:
+                del st.session_state.edited_response
+            st.rerun()
+    
+    if execute_query:
+        if not user_query.strip():
+            st.error("❌ La consulta no puede estar vacía")
             st.stop()
         
-        with st.spinner("Procesando..."):
+        if not selected_files:
+            st.warning("⚠️ No has seleccionado archivos. La consulta se hará sin contexto adicional.")
+        
+        with st.spinner("🔄 Consultando a Perplexity..."):
             try:
-                context = load_selected_context(client, bucket_name, selected_files, max_chars)
-                result = call_openai_agent(st.session_state.openai, system_prompt, context, user_query)
+                # Cargar contexto de archivos
+                context = ""
+                if selected_files:
+                    context = load_selected_context(client, bucket_name, selected_files, max_chars)
                 
-                st.success("✅ Respuesta generada")
-                st.json(result)
+                # Preparar el prompt completo
+                full_prompt = user_query
+                if context:
+                    full_prompt = f"""CONTEXTO DE DOCUMENTOS:
+{context}
+
+---
+
+CONSULTA:
+{user_query}"""
                 
-                st.download_button(
-                    "⬬ Descargar JSON",
-                    json.dumps(result, indent=2, ensure_ascii=False),
-                    f"respuesta_{int(datetime.utcnow().timestamp())}.json",
-                    "application/json"
+                # Llamar a Perplexity
+                from openai import OpenAI
+                
+                perplexity_client = OpenAI(
+                    api_key=st.session_state.perplexity_key,
+                    base_url="https://api.perplexity.ai"
                 )
+                
+                response = perplexity_client.chat.completions.create(
+                    model="llama-3.1-sonar-small-128k-online",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": full_prompt}
+                    ]
+                )
+                
+                response_text = response.choices[0].message.content
+                
+                # Intentar parsear como JSON
+                try:
+                    # Limpiar markdown si existe
+                    if "```json" in response_text:
+                        response_text = response_text.split("```json")[1].split("```")[0].strip()
+                    elif "```" in response_text:
+                        response_text = response_text.split("```")[1].split("```")[0].strip()
+                    
+                    response_json = json.loads(response_text)
+                    
+                    # Añadir metadata
+                    response_json["metadata"] = {
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "query": user_query,
+                        "model": "llama-3.1-sonar-small-128k-online",
+                        "context_files": selected_files,
+                        "context_chars": len(context)
+                    }
+                    
+                    st.session_state.perplexity_response = response_json
+                    st.success("✅ Respuesta recibida de Perplexity")
+                    
+                except json.JSONDecodeError:
+                    st.error("❌ La respuesta no está en formato JSON válido")
+                    st.code(response_text)
+                    st.stop()
+                
             except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
+                st.error(f"❌ Error al consultar Perplexity: {str(e)}")
+                st.stop()
+    
+    # --- PASO 3: MOSTRAR Y EDITAR RESPUESTA ---
+    if "perplexity_response" in st.session_state:
+        st.markdown("---")
+        st.subheader("📊 Paso 3: Revisar y Editar Respuesta")
+        
+        # Mostrar vista previa
+        with st.expander("👁️ Vista Previa Estructurada", expanded=True):
+            response_data = st.session_state.perplexity_response
+            
+            st.markdown(f"**📝 Resumen:**")
+            st.info(response_data.get("summary", "N/A"))
+            
+            st.markdown("**🎯 Puntos Clave:**")
+            for i, point in enumerate(response_data.get("key_points", []), 1):
+                st.markdown(f"{i}. {point}")
+            
+            st.markdown("**✅ Acciones Recomendadas:**")
+            for i, action in enumerate(response_data.get("recommended_actions", []), 1):
+                st.markdown(f"{i}. {action}")
+            
+            if "sources" in response_data and response_data["sources"]:
+                st.markdown("**🔗 Fuentes:**")
+                for source in response_data["sources"]:
+                    st.markdown(f"- {source}")
+        
+        # Editor JSON
+        st.markdown("**✏️ Editor JSON**")
+        st.caption("Puedes editar la respuesta antes de guardarla")
+        
+        if "edited_response" not in st.session_state:
+            st.session_state.edited_response = json.dumps(
+                st.session_state.perplexity_response,
+                indent=2,
+                ensure_ascii=False
+            )
+        
+        edited_json = st.text_area(
+            "JSON editable",
+            value=st.session_state.edited_response,
+            height=400,
+            key="json_editor"
+        )
+        
+        # Validar JSON editado
+        try:
+            edited_data = json.loads(edited_json)
+            st.success("✅ JSON válido")
+            json_is_valid = True
+        except json.JSONDecodeError as e:
+            st.error(f"❌ JSON inválido: {str(e)}")
+            json_is_valid = False
+        
+        # --- PASO 4: GUARDAR ---
+        st.markdown("---")
+        st.subheader("💾 Paso 4: Guardar Respuesta")
+        
+        col_save, col_download = st.columns(2)
+        
+        with col_save:
+            if st.button("💾 Guardar en GCS (respuestas_validadas/)", use_container_width=True, disabled=not json_is_valid):
+                try:
+                    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                    filename = f"respuesta_validada_{timestamp}.json"
+                    
+                    upload_json_to_gcs(
+                        client,
+                        bucket_name,
+                        BUCKET_FOLDERS["validados"],
+                        filename,
+                        edited_data
+                    )
+                    
+                    st.success(f"✅ Guardado como: {filename}")
+                    st.balloons()
+                    
+                    # Limpiar sesión
+                    del st.session_state.perplexity_response
+                    del st.session_state.edited_response
+                    
+                except Exception as e:
+                    st.error(f"❌ Error al guardar: {str(e)}")
+        
+        with col_download:
+            st.download_button(
+                "⬇️ Descargar JSON",
+                edited_json,
+                file_name=f"respuesta_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                use_container_width=True,
+                disabled=not json_is_valid
+            )
 
 # =====================================================
 # TAB 3 - DEMO MODE
