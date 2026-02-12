@@ -21,7 +21,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS personalizado - Tema KaiBot (Azul profesional + Gris)
+# CSS personalizado - Sidebar con gris azulado y elementos blancos
 st.markdown("""
     <style>
     /* Colores de marca KaiBot */
@@ -30,6 +30,7 @@ st.markdown("""
         --kaibot-dark: #1E293B;
         --kaibot-gray: #64748B;
         --kaibot-light: #F8FAFC;
+        --sidebar-bg: #475569; /* Gris azulado */
     }
     
     /* Fondo general */
@@ -62,13 +63,91 @@ st.markdown("""
         color: white;
     }
     
-    /* Sidebar */
+    /* ===== SIDEBAR - Gris azulado con todo en blanco ===== */
     [data-testid="stSidebar"] {
-        background-color: var(--kaibot-dark);
+        background-color: var(--sidebar-bg);
     }
     
-    [data-testid="stSidebar"] .stMarkdown {
-        color: white;
+    /* Todos los textos del sidebar en blanco */
+    [data-testid="stSidebar"] * {
+        color: white !important;
+    }
+    
+    /* Títulos y markdown en blanco */
+    [data-testid="stSidebar"] .stMarkdown,
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] label {
+        color: white !important;
+    }
+    
+    /* Inputs del sidebar con borde blanco y texto blanco */
+    [data-testid="stSidebar"] input,
+    [data-testid="stSidebar"] textarea,
+    [data-testid="stSidebar"] select {
+        background-color: rgba(255, 255, 255, 0.1) !important;
+        border: 1px solid white !important;
+        color: white !important;
+    }
+    
+    /* Placeholder de inputs en blanco */
+    [data-testid="stSidebar"] input::placeholder,
+    [data-testid="stSidebar"] textarea::placeholder {
+        color: rgba(255, 255, 255, 0.7) !important;
+    }
+    
+    /* Botones del sidebar */
+    [data-testid="stSidebar"] .stButton>button {
+        background-color: transparent;
+        border: 1px solid white;
+        color: white !important;
+    }
+    
+    [data-testid="stSidebar"] .stButton>button:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        border: 1px solid white;
+    }
+    
+    /* Botones primarios del sidebar */
+    [data-testid="stSidebar"] .stButton>button[kind="primary"] {
+        background-color: var(--kaibot-blue);
+        border: 1px solid var(--kaibot-blue);
+        color: white !important;
+    }
+    
+    [data-testid="stSidebar"] .stButton>button[kind="primary"]:hover {
+        background-color: #0052A3;
+        border: 1px solid #0052A3;
+    }
+    
+    /* Expanders del sidebar */
+    [data-testid="stSidebar"] .streamlit-expanderHeader {
+        background-color: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        color: white !important;
+    }
+    
+    [data-testid="stSidebar"] .streamlit-expanderHeader:hover {
+        background-color: rgba(255, 255, 255, 0.15);
+    }
+    
+    /* Contenido de expanders */
+    [data-testid="stSidebar"] .streamlit-expanderContent {
+        background-color: rgba(0, 0, 0, 0.1);
+        border-left: 1px solid rgba(255, 255, 255, 0.3);
+    }
+    
+    /* Divisores del sidebar */
+    [data-testid="stSidebar"] hr {
+        border-color: rgba(255, 255, 255, 0.3) !important;
+    }
+    
+    /* Caption/subtítulos del sidebar */
+    [data-testid="stSidebar"] .stCaption {
+        color: rgba(255, 255, 255, 0.8) !important;
     }
     
     /* Info boxes */
