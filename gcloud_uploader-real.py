@@ -7,6 +7,32 @@ import pandas as pd
 from google.cloud import storage
 from google.oauth2 import service_account
 from openai import OpenAI
+import re
+
+# =====================================================
+# CONFIGURACIÓN DE PÁGINA (FAVICON Y COLOR)
+# =====================================================
+
+st.set_page_config(
+    page_title="KaiBot Cloud Agent",
+    page_icon="https://kaibot.es/wp-content/uploads/2020/07/image1.png",  # Favicon
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# CSS personalizado para color azul en pestaña y mejoras visuales
+st.markdown("""
+    <style>
+    body { background-color: #f8fafc; }
+    h1, h2, h3 { color: #1E293B; }
+    .stButton>button { width: 100%; }
+    
+    /* Color azul para elementos destacados */
+    .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
+        background-color: #2563eb;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # =====================================================
 # CONFIGURACIÓN
@@ -17,6 +43,49 @@ BUCKET_FOLDERS = {
     "adicional": "adicional/",
     "validados": "documentos_validados/"
 }
+# =====================================================
+# Helper para generar nombres de archivo
+# =====================================================
+
+def generate_smart_filename(json_data: dict, prefix: str = "validado") -> str:
+    """
+    Genera nombre de archivo basado en el resumen del JSON
+    
+    Args:
+        json_data: Diccionario con los datos
+        prefix: Prefijo del archivo (default: "validado")
+    
+    Returns:
+        Nombre de archivo formato: resumen-breve_YYYYMMDD_HHMMSS.json
+    """
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    
+    # Extraer resumen
+    summary = json_data.get("summary", "")
+    
+    if summary:
+        # Limpiar y acortar el resumen
+        # Tomar primeras 5-7 palabras significativas
+        words = re.findall(r'\b\w+\b', summary.lower())
+        # Filtrar palabras comunes
+        stopwords = {'el', 'la', 'los', 'las', 'de', 'del', 'y', 'en', 'un', 'una', 'es', 'por', 'para', 'con', 'a', 'que', 'se'}
+        meaningful_words = [w for w in words if w not in stopwords and len(w) > 3]
+        
+        # Tomar hasta 4 palabras
+        short_summary = '_'.join(meaningful_words[:4])
+        
+        # Limitar longitud total
+        if len(short_summary) > 50:
+            short_summary = short_summary[:50]
+        
+        filename = f"{short_summary}_{timestamp}.json"
+    else:
+        filename = f"{prefix}_{timestamp}.json"
+    
+    # Asegurar que el nombre es válido (sin caracteres especiales problemáticos)
+    filename = re.sub(r'[^\w\-_.]', '_', filename)
+    
+    return filename
 
 # =====================================================
 # Helpers GCP
@@ -318,12 +387,12 @@ with tab1:
         st.info("ℹ️ El bucket no contiene archivos")
 
 # =====================================================
-# TAB 2 - AGENTE DUAL: OPENAI → PERPLEXITY
+# TAB 2 - AGENTE DUAL: OPENAI → PERPLEXITY (MEJORADO)
 # =====================================================
 
 with tab2:
     st.header("🤖 Agente Dual: OpenAI + Perplexity")
-    st.caption("Paso 1: OpenAI analiza documentos → Paso 2: Perplexity valida/enriquece")
+    st.caption("Paso 1: OpenAI analiza documentos (opcional) → Paso 2: Perplexity valida/enriquece")
     
     # Verificar APIs
     apis_configured = True
@@ -379,7 +448,7 @@ with tab2:
             "System Prompt - OpenAI (Análisis de Documentos)",
             value="""Eres un analista experto en contenidos corporativos.
 
-Tu tarea es analizar los documentos proporcionados y responder a la consulta del usuario de forma estructurada.
+Tu tarea es analizar la consulta del usuario y, si se proporcionan documentos, basar tu análisis en ellos.
 
 IMPORTANTE: Debes responder en formato JSON válido con esta estructura:
 
@@ -400,7 +469,7 @@ IMPORTANTE: Debes responder en formato JSON válido con esta estructura:
   ]
 }
 
-Basa tu análisis ÚNICAMENTE en los documentos proporcionados y responde específicamente a lo que el usuario pregunta.""",
+Si hay documentos de contexto, bástate en ellos. Si no hay documentos, responde basándote en tu conocimiento general.""",
             height=180,
             key="openai_system"
         )
@@ -441,17 +510,20 @@ NO incluyas texto antes o después del JSON. Solo responde con el objeto JSON.""
             key="perplexity_system"
         )
     
-    # Selección de archivos
+    # Selección de archivos (AHORA OPCIONAL)
     folders, files = list_folders_and_files(client, bucket_name)
     file_names = [f["name"] for f in files]
+    
+    st.markdown("**📄 Archivos de Contexto (Opcional)**")
+    st.caption("Puedes seleccionar archivos para análisis o dejar vacío para consultas generales")
     
     col1, col2 = st.columns([3, 1])
     
     with col1:
         selected_files = st.multiselect(
-            "📄 Archivos para análisis",
+            "Selecciona archivos (opcional)",
             options=file_names,
-            help="OpenAI analizará estos documentos"
+            help="Si no seleccionas archivos, OpenAI responderá basándose en conocimiento general"
         )
     
     with col2:
@@ -460,8 +532,15 @@ NO incluyas texto antes o después del JSON. Solo responde con el objeto JSON.""
             min_value=2000,
             max_value=50000,
             value=15000,
-            step=1000
+            step=1000,
+            disabled=len(selected_files) == 0
         )
+    
+    # Indicador de modo
+    if selected_files:
+        st.info(f"📁 Modo: Análisis con {len(selected_files)} archivo(s)")
+    else:
+        st.info("💭 Modo: Consulta general sin documentos")
     
     # Consulta del usuario
     st.markdown("**Consulta**")
@@ -475,18 +554,21 @@ NO incluyas texto antes o después del JSON. Solo responde con el objeto JSON.""
     if query_mode == "Personalizada":
         user_query = st.text_area(
             "Escribe tu consulta",
-            placeholder="Ejemplo: Analiza las tendencias principales de mercado y genera 3 recomendaciones estratégicas priorizadas",
+            placeholder="Ejemplo: Analiza las tendencias principales de IA en 2025 y genera 3 recomendaciones estratégicas",
             height=120,
             key="custom_query"
         )
     else:
+        # Plantillas adaptadas para funcionar con y sin archivos
         templates = {
-            "Análisis Estratégico Completo": "Realiza un análisis estratégico completo de los documentos identificando tendencias clave, oportunidades y riesgos. Proporciona recomendaciones accionables validadas con información actual del mercado.",
-            "Resumen Ejecutivo para Dirección": "Genera un resumen ejecutivo profesional destacando los puntos más relevantes para la toma de decisiones. Valida los datos con fuentes actuales y confiables del sector.",
-            "Análisis DAFO Validado": "Realiza un análisis DAFO (Debilidades, Amenazas, Fortalezas, Oportunidades) basado en los documentos. Valida cada punto con tendencias actuales y fuentes verificables.",
-            "Plan de Acción Priorizado": "Identifica los 5 puntos más importantes y crea un plan de acción detallado y priorizado. Valida con mejores prácticas actuales del sector.",
-            "Benchmark Competitivo": "Analiza el contenido y realiza un benchmark competitivo comparando con tendencias actuales del mercado. Incluye fuentes verificables.",
-            "Detección de Riesgos y Oportunidades": "Identifica riesgos potenciales y oportunidades de mejora en la documentación. Valida con información actual del sector y regulaciones vigentes."
+            "Análisis Estratégico Completo": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos. Proporciona recomendaciones accionables validadas con información actual.",
+            "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los puntos más relevantes para la toma de decisiones. Valida los datos con fuentes actuales y confiables.",
+            "Análisis DAFO": "Realiza un análisis DAFO (Debilidades, Amenazas, Fortalezas, Oportunidades). Valida cada punto con tendencias actuales y fuentes verificables.",
+            "Plan de Acción Priorizado": "Identifica los 5 puntos más importantes y crea un plan de acción detallado y priorizado. Valida con mejores prácticas actuales.",
+            "Benchmark Competitivo": "Realiza un benchmark competitivo comparando con tendencias actuales del mercado. Incluye fuentes verificables.",
+            "Detección de Riesgos y Oportunidades": "Identifica riesgos potenciales y oportunidades de mejora. Valida con información actual y regulaciones vigentes.",
+            "Tendencias de IA y Tecnología": "Analiza las últimas tendencias en inteligencia artificial y tecnología para 2025. Proporciona insights accionables.",
+            "Análisis de Mercado Actual": "Analiza el estado actual del mercado en el sector especificado con datos recientes y fuentes verificables."
         }
         
         selected_template = st.selectbox(
@@ -528,27 +610,24 @@ NO incluyas texto antes o después del JSON. Solo responde con el objeto JSON.""
             st.error("❌ La consulta no puede estar vacía")
             st.stop()
         
-        if not selected_files:
-            st.error("❌ Debes seleccionar al menos un archivo para analizar")
-            st.stop()
-        
-        with st.spinner("🔄 OpenAI analizando documentos..."):
+        with st.spinner("🔄 OpenAI analizando..."):
             try:
-                # Cargar contexto
-                context = load_selected_context(client, bucket_name, selected_files, max_chars)
+                # Preparar mensaje base
+                user_message = f"CONSULTA DEL USUARIO:\n{user_query}"
+                
+                # Cargar contexto solo si hay archivos seleccionados
+                if selected_files:
+                    context = load_selected_context(client, bucket_name, selected_files, max_chars)
+                    user_message += f"\n\n---\n\nDOCUMENTOS DE CONTEXTO:\n{context}"
+                else:
+                    user_message += "\n\n---\n\nNOTA: No se proporcionaron documentos de contexto. Responde basándote en conocimiento general y datos actuales."
                 
                 # Llamar a OpenAI
                 response = st.session_state.openai.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
                         {"role": "system", "content": openai_prompt},
-                        {"role": "user", "content": f"""CONSULTA DEL USUARIO:
-{user_query}
-
----
-
-DOCUMENTOS DE CONTEXTO:
-{context}"""}
+                        {"role": "user", "content": user_message}
                     ],
                     response_format={"type": "json_object"}
                 )
@@ -562,8 +641,9 @@ DOCUMENTOS DE CONTEXTO:
                     "agent": "openai",
                     "model": "gpt-4o-mini",
                     "query": user_query,
-                    "context_files": selected_files,
-                    "context_chars": len(context)
+                    "context_files": selected_files if selected_files else [],
+                    "context_chars": len(context) if selected_files else 0,
+                    "mode": "with_context" if selected_files else "general_query"
                 }
                 
                 st.session_state.openai_response = response_json
@@ -582,6 +662,13 @@ DOCUMENTOS DE CONTEXTO:
         st.markdown("---")
         with st.expander("📊 Resultado de OpenAI", expanded=True):
             openai_data = st.session_state.openai_response
+            
+            # Mostrar modo de operación
+            mode = openai_data.get("metadata", {}).get("mode", "unknown")
+            if mode == "with_context":
+                st.success(f"📁 Análisis basado en {len(openai_data.get('metadata', {}).get('context_files', []))} documento(s)")
+            else:
+                st.info("💭 Análisis general sin documentos específicos")
             
             st.markdown("**📝 Resumen:**")
             st.info(openai_data.get("summary", "N/A"))
@@ -679,7 +766,6 @@ Responde SOLO con un JSON válido, sin texto adicional."""
                         validated_json = json.loads(clean_text)
                     except json.JSONDecodeError:
                         # Intentar extraer JSON con regex
-                        import re
                         json_match = re.search(r'\{.*\}', clean_text, re.DOTALL)
                         if json_match:
                             validated_json = json.loads(json_match.group())
@@ -692,7 +778,8 @@ Responde SOLO con un JSON válido, sin texto adicional."""
                         "agent": "perplexity",
                         "model": perplexity_model,
                         "original_query": user_query,
-                        "openai_analysis_timestamp": openai_data.get("metadata", {}).get("timestamp", "N/A")
+                        "openai_analysis_timestamp": openai_data.get("metadata", {}).get("timestamp", "N/A"),
+                        "analysis_mode": openai_data.get("metadata", {}).get("mode", "unknown")
                     }
                     
                     st.session_state.perplexity_response = validated_json
@@ -741,20 +828,20 @@ Responde SOLO con un JSON válido, sin texto adicional."""
                 confidence = final_data["confidence_level"].lower()
                 if confidence == "alto":
                     emoji = "🟢"
-                    color = "success"
                 elif confidence == "medio":
                     emoji = "🟡"
-                    color = "warning"
                 else:
                     emoji = "🔴"
-                    color = "error"
                 
                 st.markdown(f"**{emoji} Nivel de Confianza:** {confidence.upper()}")
             
             if "sources" in final_data and final_data["sources"]:
                 st.markdown("**🔗 Fuentes Verificables:**")
                 for i, source in enumerate(final_data["sources"], 1):
-                    st.markdown(f"{i}. [{source}]({source})")
+                    if source.startswith("http"):
+                        st.markdown(f"{i}. [{source}]({source})")
+                    else:
+                        st.markdown(f"{i}. {source}")
         
         # Comparación OpenAI vs Perplexity
         with st.expander("🔄 Comparar: OpenAI vs Perplexity"):
@@ -801,6 +888,11 @@ Responde SOLO con un JSON válido, sin texto adicional."""
             st.error(f"❌ JSON inválido: {str(e)}")
             json_is_valid = False
         
+        # Preview del nombre de archivo
+        if json_is_valid:
+            preview_filename = generate_smart_filename(edited_data)
+            st.info(f"📝 Nombre de archivo: `{preview_filename}`")
+        
         # --- PASO 5: GUARDAR ---
         st.markdown("---")
         st.subheader("💾 Paso 5: Guardar Respuesta Final")
@@ -815,8 +907,8 @@ Responde SOLO con un JSON válido, sin texto adicional."""
                 type="primary"
             ):
                 try:
-                    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                    filename = f"validado_{timestamp}.json"
+                    # Generar nombre inteligente basado en el resumen
+                    filename = generate_smart_filename(edited_data)
                     
                     upload_json_to_gcs(
                         client,
@@ -830,7 +922,7 @@ Responde SOLO con un JSON válido, sin texto adicional."""
                     st.info(f"📁 Ruta: {BUCKET_FOLDERS['validados']}{filename}")
                     st.balloons()
                     
-                    # Limpiar sesión después de guardar
+                    # Botón para nueva consulta
                     if st.button("🔄 Nueva consulta"):
                         for key in ["openai_response", "perplexity_response", "edited_response"]:
                             if key in st.session_state:
@@ -841,10 +933,12 @@ Responde SOLO con un JSON válido, sin texto adicional."""
                     st.error(f"❌ Error al guardar en GCS: {str(e)}")
         
         with col_download:
+            download_filename = generate_smart_filename(edited_data) if json_is_valid else f"validado_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+            
             st.download_button(
                 "⬇️ Descargar JSON",
                 edited_json,
-                file_name=f"validado_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json",
+                file_name=download_filename,
                 mime="application/json",
                 use_container_width=True,
                 disabled=not json_is_valid
@@ -857,8 +951,8 @@ Responde SOLO con un JSON válido, sin texto adicional."""
                 disabled=not json_is_valid
             ):
                 try:
-                    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                    filename = f"validado_{timestamp}.json"
+                    # Generar nombre inteligente
+                    filename = generate_smart_filename(edited_data)
                     
                     # Guardar en GCS
                     upload_json_to_gcs(
