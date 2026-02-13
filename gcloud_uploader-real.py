@@ -23,13 +23,30 @@ st.set_page_config(
 # CSS personalizado para color azul en pestaña y mejoras visuales
 st.markdown("""
     <style>
-    body { background-color: #f8fafc; }
-    h1, h2, h3 { color: #1E293B; }
-    .stButton>button { width: 100%; }
+    /* Títulos */
+    h1, h2, h3 {
+        color: var(--kaibot-dark);
+        font-weight: 600;
+    }
     
-    /* Color azul para elementos destacados */
+    /* Botones primarios */
+    .stButton>button[kind="primary"] {
+        background-color: var(--kaibot-blue);
+        color: white;
+        border: none;
+        font-weight: 600;
+    }
+    
+    .stButton>button[kind="primary"]:hover {
+        background-color: #0052A3;
+        border: none;
+    }
+    
+    /* Tabs activos */
     .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
-        background-color: #2563eb;
+        background-color: var(--kaibot-blue);
+        color: white;
+    
     }
     </style>
 """, unsafe_allow_html=True)
