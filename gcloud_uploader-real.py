@@ -23,6 +23,15 @@ st.set_page_config(
 # CSS personalizado para color azul en pestaña y mejoras visuales
 st.markdown("""
     <style>
+     /* Colores de marca KaiBot */
+    :root {
+        --kaibot-blue: #0066CC;
+        --kaibot-dark: #1E293B;
+        --kaibot-gray: #64748B;
+        --kaibot-light: #F8FAFC;
+        --sidebar-bg: #475569; /* Gris azulado */
+    }
+    
     /* Títulos */
     h1, h2, h3 {
         color: var(--kaibot-dark);
