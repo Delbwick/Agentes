@@ -20,16 +20,21 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS personalizado para color azul en pestaña y mejoras visuales
+# CSS personalizado - Tema KaiBot con pestañas en negro/gris
 st.markdown("""
     <style>
-     /* Colores de marca KaiBot */
+    /* Colores de marca KaiBot */
     :root {
         --kaibot-blue: #0066CC;
         --kaibot-dark: #1E293B;
         --kaibot-gray: #64748B;
         --kaibot-light: #F8FAFC;
         --sidebar-bg: #475569; /* Gris azulado */
+    }
+    
+    /* Fondo general */
+    .main {
+        background-color: #F8FAFC;
     }
     
     /* Títulos */
@@ -51,11 +56,155 @@ st.markdown("""
         border: none;
     }
     
-    /* Tabs activos */
+    /* ===== TABS - Estilo Negro/Gris ===== */
+    /* Contenedor de tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: #1E293B;
+        padding: 8px;
+        border-radius: 8px 8px 0 0;
+    }
+    
+    /* Tabs no seleccionados */
+    .stTabs [data-baseweb="tab-list"] button[role="tab"] {
+        background-color: #334155;
+        color: #E2E8F0;
+        border: none;
+        border-radius: 6px 6px 0 0;
+        padding: 12px 24px;
+        font-weight: 500;
+        font-size: 15px;
+    }
+    
+    /* Tab hover */
+    .stTabs [data-baseweb="tab-list"] button[role="tab"]:hover {
+        background-color: #475569;
+        color: white;
+    }
+    
+    /* Tab seleccionado */
     .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
         background-color: var(--kaibot-blue);
         color: white;
+        font-weight: 600;
+    }
     
+    /* Contenido del tab */
+    .stTabs [data-baseweb="tab-panel"] {
+        background-color: white;
+        padding: 24px;
+        border-radius: 0 0 8px 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    /* ===== SIDEBAR - Gris azulado con todo en blanco ===== */
+    [data-testid="stSidebar"] {
+        background-color: var(--sidebar-bg);
+    }
+    
+    /* Todos los textos del sidebar en blanco */
+    [data-testid="stSidebar"] * {
+        color: white !important;
+    }
+    
+    /* Títulos y markdown en blanco */
+    [data-testid="stSidebar"] .stMarkdown,
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] label {
+        color: white !important;
+    }
+    
+    /* Inputs del sidebar con borde blanco y texto blanco */
+    [data-testid="stSidebar"] input,
+    [data-testid="stSidebar"] textarea,
+    [data-testid="stSidebar"] select {
+        background-color: rgba(255, 255, 255, 0.1) !important;
+        border: 1px solid white !important;
+        color: white !important;
+    }
+    
+    /* Placeholder de inputs en blanco */
+    [data-testid="stSidebar"] input::placeholder,
+    [data-testid="stSidebar"] textarea::placeholder {
+        color: rgba(255, 255, 255, 0.7) !important;
+    }
+    
+    /* Botones del sidebar */
+    [data-testid="stSidebar"] .stButton>button {
+        background-color: transparent;
+        border: 1px solid white;
+        color: white !important;
+    }
+    
+    [data-testid="stSidebar"] .stButton>button:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        border: 1px solid white;
+    }
+    
+    /* Botones primarios del sidebar */
+    [data-testid="stSidebar"] .stButton>button[kind="primary"] {
+        background-color: var(--kaibot-blue);
+        border: 1px solid var(--kaibot-blue);
+        color: white !important;
+    }
+    
+    [data-testid="stSidebar"] .stButton>button[kind="primary"]:hover {
+        background-color: #0052A3;
+        border: 1px solid #0052A3;
+    }
+    
+    /* Expanders del sidebar */
+    [data-testid="stSidebar"] .streamlit-expanderHeader {
+        background-color: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        color: white !important;
+    }
+    
+    [data-testid="stSidebar"] .streamlit-expanderHeader:hover {
+        background-color: rgba(255, 255, 255, 0.15);
+    }
+    
+    /* Contenido de expanders */
+    [data-testid="stSidebar"] .streamlit-expanderContent {
+        background-color: rgba(0, 0, 0, 0.1);
+        border-left: 1px solid rgba(255, 255, 255, 0.3);
+    }
+    
+    /* Divisores del sidebar */
+    [data-testid="stSidebar"] hr {
+        border-color: rgba(255, 255, 255, 0.3) !important;
+    }
+    
+    /* Caption/subtítulos del sidebar */
+    [data-testid="stSidebar"] .stCaption {
+        color: rgba(255, 255, 255, 0.8) !important;
+    }
+    
+    /* Info boxes */
+    .stInfo {
+        background-color: #EBF5FF;
+        border-left: 4px solid var(--kaibot-blue);
+    }
+    
+    /* Success boxes */
+    .stSuccess {
+        background-color: #ECFDF5;
+        border-left: 4px solid #10B981;
+    }
+    
+    /* Botones width completo */
+    .stButton>button {
+        width: 100%;
+    }
+    
+    /* Eliminamos padding excesivo */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -67,8 +216,10 @@ st.markdown("""
 BUCKET_FOLDERS = {
     "documentos": "documentos/",
     "adicional": "adicional/",
-    "validados": "documentos_validados/"
+    "validados": "documentos_validados/",
+    "prompts": "prompts/"  # Carpeta del prompt
 }
+
 # =====================================================
 # Helper para generar nombres de archivo
 # =====================================================
@@ -257,6 +408,80 @@ def save_analysis_with_metadata(client: storage.Client, bucket_name: str, folder
         return path
     except Exception as e:
         raise Exception(f"Error al guardar con metadatos: {str(e)}")
+
+# =====================================================
+# Sistema de Gestión de Prompts
+# =====================================================
+
+def save_prompt_to_bucket(client: storage.Client, bucket_name: str, prompt_data: dict, metadata: dict):
+    """
+    Guarda un prompt en el bucket con metadatos
+    
+    Args:
+        client: Cliente GCS
+        bucket_name: Nombre del bucket
+        prompt_data: Diccionario con 'openai_prompt' y 'perplexity_prompt'
+        metadata: Diccionario con 'nombre', 'descripcion', 'uso'
+    
+    Returns:
+        Nombre del archivo guardado
+    """
+    try:
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        
+        # Crear nombre de archivo descriptivo
+        nombre_limpio = re.sub(r'[^\w\-_.]', '_', metadata.get("nombre", "prompt"))
+        filename = f"{nombre_limpio}_{timestamp}.json"
+        
+        # Preparar contenido del archivo
+        content = {
+            "nombre": metadata.get("nombre", ""),
+            "descripcion": metadata.get("descripcion", ""),
+            "uso": metadata.get("uso", ""),
+            "created_at": datetime.utcnow().isoformat(),
+            "prompts": {
+                "openai": prompt_data.get("openai_prompt", ""),
+                "perplexity": prompt_data.get("perplexity_prompt", "")
+            }
+        }
+        
+        # Guardar en bucket
+        bucket = client.bucket(bucket_name)
+        path = f"{BUCKET_FOLDERS['prompts']}{filename}"
+        blob = bucket.blob(path)
+        
+        # Subir JSON
+        blob.upload_from_string(
+            json.dumps(content, indent=2, ensure_ascii=False),
+            content_type="application/json"
+        )
+        
+        # Añadir metadatos para la tabla
+        blob.metadata = {
+            "tipo": "Prompt System",
+            "objetivo": metadata.get("uso", "General"),
+            "fuentes_fiables": "true",
+            "notas": metadata.get("descripcion", "")
+        }
+        blob.patch()
+        
+        return filename
+        
+    except Exception as e:
+        raise Exception(f"Error al guardar prompt: {str(e)}")
+
+
+def load_prompt_from_bucket(client: storage.Client, bucket_name: str, file_path: str) -> dict:
+    """Carga un prompt guardado del bucket"""
+    try:
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(file_path)
+        content = blob.download_as_text()
+        return json.loads(content)
+    except Exception as e:
+        raise Exception(f"Error al cargar prompt: {str(e)}")
+
+
         
 # =====================================================
 # Perplexity Agent
@@ -665,76 +890,248 @@ with tab2:
     st.subheader("📝 Paso 1: Configuración")
     
     with st.expander("⚙️ Configuración de Prompts", expanded=False):
-        # System prompt para OpenAI
-        openai_prompt = st.text_area(
-            "System Prompt - OpenAI (Análisis de Documentos)",
-            value="""Eres un analista experto en contenidos corporativos.
+        st.markdown("### 📝 Gestión de Prompts")
+        
+        # Cargar prompts guardados (opcional)
+        folders, files = list_folders_and_files(client, bucket_name)
+        prompt_files = [f["name"] for f in files if f["name"].startswith(BUCKET_FOLDERS["prompts"])]
+        
+        if prompt_files:
+            col_load, col_new = st.columns([3, 1])
+            
+            with col_load:
+                load_prompt = st.selectbox(
+                    "📂 Cargar prompt guardado",
+                    ["-- Usar prompts por defecto --"] + prompt_files,
+                    key="load_prompt_select"
+                )
+            
+            with col_new:
+                if st.button("🔄 Cargar", use_container_width=True):
+                    if load_prompt != "-- Usar prompts por defecto --":
+                        try:
+                            loaded = load_prompt_from_bucket(client, bucket_name, load_prompt)
+                            st.session_state.loaded_openai_prompt = loaded["prompts"]["openai"]
+                            st.session_state.loaded_perplexity_prompt = loaded["prompts"]["perplexity"]
+                            st.success(f"✅ Prompt cargado: {loaded.get('nombre', 'Sin nombre')}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error al cargar: {str(e)}")
+        
+        st.markdown("---")
+        
+        # System prompt para OpenAI (MEJORADO Y ROBUSTO)
+        default_openai_prompt = """Eres un analista estratégico experto en generación de contenidos corporativos B2B con más de 15 años de experiencia.
 
-Tu tarea es analizar la consulta del usuario y, si se proporcionan documentos, basar tu análisis en ellos.
+**TU MISIÓN:**
+Analizar información y generar insights accionables de alto valor para directivos y responsables de marketing industrial.
 
-IMPORTANTE: Debes responder en formato JSON válido con esta estructura:
+**CONTEXTO DE TRABAJO:**
+- Audiencia: Directores de marketing, CEOs de empresas B2B industriales
+- Sector: Marketing digital B2B, tecnología industrial, LifeSciences, MedTech
+- Objetivo: Generar contenido que impulse generación de leads y posicionamiento de marca
 
+**INSTRUCCIONES DE ANÁLISIS:**
+1. Si se proporcionan documentos, PRIORIZA la información contenida en ellos
+2. Si NO hay documentos, utiliza tu conocimiento actualizado sobre tendencias B2B
+3. Enfócate en RESULTADOS MEDIBLES y ROI
+4. Identifica OPORTUNIDADES CONCRETAS, no generalidades
+5. Proporciona DATOS Y CIFRAS cuando sea posible
+
+**ESTRUCTURA DE RESPUESTA (JSON OBLIGATORIO):**
 {
-  "summary": "Resumen ejecutivo respondiendo a la consulta (2-3 líneas)",
+  "summary": "Resumen ejecutivo de 2-3 líneas enfocado en el valor estratégico y oportunidades identificadas",
   "key_points": [
-    "Punto clave 1 relacionado con la consulta",
-    "Punto clave 2 relacionado con la consulta",
-    "Punto clave 3 relacionado con la consulta"
+    "Punto 1: Insight específico con dato cuantificable o tendencia clara",
+    "Punto 2: Oportunidad de mercado o ventaja competitiva identificada",
+    "Punto 3: Riesgo o barrera que requiere atención estratégica"
   ],
   "recommended_actions": [
-    "Acción recomendada 1 basada en el análisis",
-    "Acción recomendada 2 basada en el análisis"
+    "Acción 1: Específica, medible y con plazo sugerido (ej: implementar en Q2 2026)",
+    "Acción 2: Con ROI estimado o KPI de éxito asociado"
   ],
   "topics_to_validate": [
-    "Tema 1 que requiere validación externa",
-    "Tema 2 que requiere validación externa"
+    "Dato o tendencia que requiere validación con fuentes externas actuales",
+    "Regulación o cambio de mercado que debe verificarse online"
   ]
 }
 
-Si hay documentos de contexto, bástate en ellos. Si no hay documentos, responde basándote en tu conocimiento general.""",
-            height=180,
-            key="openai_system"
+**ESTILO DE COMUNICACIÓN:**
+- Directo y orientado a la acción
+- Lenguaje profesional B2B, evita jerga innecesaria
+- Enfoque en impacto de negocio y generación de oportunidades
+- Tono: Consultor estratégico experimentado
+
+**IMPORTANTE:**
+- Responde EXCLUSIVAMENTE en formato JSON válido
+- NO añadas texto antes o después del JSON
+- Si hay documentos: basar el 80% del análisis en ellos
+- Si NO hay documentos: usar conocimiento general actualizado de marketing B2B"""
+
+        openai_prompt = st.text_area(
+            "System Prompt - OpenAI (Análisis Estratégico)",
+            value=st.session_state.get("loaded_openai_prompt", default_openai_prompt),
+            height=250,
+            key="openai_system",
+            help="Este prompt define cómo OpenAI analiza y estructura la información"
         )
         
-        # System prompt para Perplexity
-        perplexity_prompt = st.text_area(
-            "System Prompt - Perplexity (Validación y Enriquecimiento)",
-            value="""Eres un validador experto que verifica y enriquece análisis con información actualizada de fuentes confiables.
+        st.markdown("---")
+        
+        # System prompt para Perplexity (MEJORADO Y ROBUSTO)
+        default_perplexity_prompt = """Eres un validador experto en fact-checking y enriquecimiento de contenido estratégico B2B con acceso a información online en tiempo real.
 
-Recibirás un análisis previo en JSON. Tu tarea es:
-1. Validar la información con fuentes actuales y confiables online
-2. Enriquecer con datos adicionales relevantes
-3. Añadir fuentes verificables (URLs)
+**TU MISIÓN:**
+Validar, contrastar y enriquecer análisis estratégicos utilizando ÚNICAMENTE fuentes confiables y actuales de internet.
 
-IMPORTANTE: Devuelve SOLO un JSON válido con esta estructura exacta:
+**FUENTES PRIORITARIAS (en orden de preferencia):**
+1. **Fuentes primarias oficiales:**
+   - Sitios web corporativos de empresas mencionadas
+   - Informes oficiales de consultoras (Gartner, McKinsey, Forrester, BCG)
+   - Publicaciones de organismos gubernamentales y reguladores
+   
+2. **Medios especializados B2B:**
+   - Marketing directo / Marketing B2B
+   - TechCrunch, VentureBeat (para tecnología)
+   - MedTech Dive, FierceBiotech (para LifeSciences)
+   - Industry-specific journals
 
+3. **Fuentes de datos verificables:**
+   - Statista, eMarketer
+   - Google Trends, SimilarWeb
+   - Estudios de mercado publicados
+
+**FUENTES A EVITAR:**
+- Blogs personales sin autoridad demostrable
+- Foros y sitios de opinión (Reddit, Quora)
+- Contenido generado por IA sin verificación
+- Fuentes sin fecha de publicación o anteriores a 2024
+
+**PROCESO DE VALIDACIÓN:**
+1. **Contrastar cada key_point del análisis:**
+   - Buscar 2-3 fuentes independientes que confirmen o refuten
+   - Si hay discrepancia, indicarlo en validation_notes
+   
+2. **Enriquecer con datos actuales:**
+   - Añadir cifras, porcentajes, fechas concretas
+   - Incluir tendencias de los últimos 6-12 meses
+   - Mencionar regulaciones o cambios recientes relevantes
+
+3. **Validar recommended_actions:**
+   - Verificar viabilidad con casos de éxito recientes
+   - Contrastar con mejores prácticas actuales del sector
+
+**NIVEL DE CONFIANZA:**
+- **Alto:** 3+ fuentes fiables coinciden, datos recientes (últimos 6 meses)
+- **Medio:** 2 fuentes fiables, o datos de hace 6-12 meses
+- **Bajo:** 1 fuente o datos mayores de 12 meses
+
+**ESTRUCTURA DE RESPUESTA (JSON OBLIGATORIO):**
 {
-  "summary": "Resumen validado y mejorado con información actual",
+  "summary": "Resumen validado con datos actualizados y fuentes verificadas",
   "key_points": [
-    "Punto clave validado 1 con información actualizada",
-    "Punto clave validado 2 con información actualizada",
-    "Punto clave validado 3 con información actualizada"
+    "Punto validado 1 con dato específico de fuente actual (incluir fecha si es relevante)",
+    "Punto validado 2 con contexto de mercado actualizado",
+    "Punto validado 3 con comparativa o benchmark reciente"
   ],
   "recommended_actions": [
-    "Acción recomendada validada 1 con contexto actual",
-    "Acción recomendada validada 2 con contexto actual"
+    "Acción validada 1 con caso de éxito o best practice documentado",
+    "Acción validada 2 con ROI o métrica de referencia del sector"
   ],
-  "validation_notes": "Notas sobre qué se validó y qué se encontró en las fuentes",
+  "validation_notes": "Resumen de qué se validó, qué discrepancias se encontraron (si las hay), y qué información se enriqueció. Mencionar si algún dato del análisis original NO pudo ser verificado.",
   "sources": [
-    "URL completa de fuente verificable 1",
-    "URL completa de fuente verificable 2"
+    "https://url-completa-fuente-1.com (Título del artículo o recurso - Fecha)",
+    "https://url-completa-fuente-2.com (Título del artículo o recurso - Fecha)",
+    "https://url-completa-fuente-3.com (Título del artículo o recurso - Fecha)"
   ],
   "confidence_level": "alto"
 }
 
-NO incluyas texto antes o después del JSON. Solo responde con el objeto JSON.""",
-            height=180,
-            key="perplexity_system"
+**FORMATO DE FUENTES:**
+Cada URL debe incluir:
+- URL completa y funcional
+- Título descriptivo del recurso
+- Fecha de publicación (si está disponible)
+Ejemplo: "https://www.gartner.com/report-2026 (Top Marketing Trends 2026 - Enero 2026)"
+
+**IMPORTANTE:**
+- Responde EXCLUSIVAMENTE en formato JSON válido
+- NO añadas texto markdown, preambles o explicaciones fuera del JSON
+- SIEMPRE incluir mínimo 3 fuentes verificables (URLs completas)
+- Si no puedes validar algo, indícalo explícitamente en validation_notes
+- Prioriza fuentes de 2025-2026 sobre anteriores"""
+
+        perplexity_prompt = st.text_area(
+            "System Prompt - Perplexity (Validación con Fuentes Online)",
+            value=st.session_state.get("loaded_perplexity_prompt", default_perplexity_prompt),
+            height=250,
+            key="perplexity_system",
+            help="Este prompt define cómo Perplexity valida con fuentes online"
         )
+        
+        # --- GUARDAR PROMPTS ---
+        st.markdown("---")
+        st.markdown("### 💾 Guardar Configuración de Prompts")
+        
+        col_save1, col_save2 = st.columns(2)
+        
+        with col_save1:
+            prompt_nombre = st.text_input(
+                "Nombre del prompt",
+                placeholder="Ej: Marketing B2B Industrial",
+                key="prompt_name"
+            )
+            
+            prompt_uso = st.selectbox(
+                "Uso principal",
+                ["General", "Marketing B2B", "LifeSciences", "Tecnología Industrial", 
+                 "Análisis Competitivo", "Contenido Científico", "Social Media"],
+                key="prompt_usage"
+            )
+        
+        with col_save2:
+            prompt_descripcion = st.text_area(
+                "Descripción",
+                placeholder="Describe para qué casos usar este prompt...",
+                height=100,
+                key="prompt_description"
+            )
+        
+        if st.button("💾 Guardar Prompts en Bucket", type="primary", use_container_width=True):
+            if not prompt_nombre:
+                st.error("❌ Debes dar un nombre al prompt")
+            else:
+                try:
+                    prompt_data = {
+                        "openai_prompt": openai_prompt,
+                        "perplexity_prompt": perplexity_prompt
+                    }
+                    
+                    metadata = {
+                        "nombre": prompt_nombre,
+                        "descripcion": prompt_descripcion,
+                        "uso": prompt_uso
+                    }
+                    
+                    filename = save_prompt_to_bucket(client, bucket_name, prompt_data, metadata)
+                    
+                    st.success(f"✅ Prompts guardados: {filename}")
+                    st.info("📁 Podrás verlos y editarlos en el TAB 'Gestión de Archivos'")
+                    
+                    # Limpiar estados de carga
+                    if "loaded_openai_prompt" in st.session_state:
+                        del st.session_state.loaded_openai_prompt
+                    if "loaded_perplexity_prompt" in st.session_state:
+                        del st.session_state.loaded_perplexity_prompt
+                    
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error al guardar: {str(e)}")
     
     # Selección de archivos (AHORA OPCIONAL)
     folders, files = list_folders_and_files(client, bucket_name)
-    file_names = [f["name"] for f in files]
+    file_names = [f["name"] for f in files if not f["name"].startswith(BUCKET_FOLDERS["prompts"])]
     
     st.markdown("**📄 Archivos de Contexto (Opcional)**")
     st.caption("Puedes seleccionar archivos para análisis o dejar vacío para consultas generales")
@@ -776,21 +1173,21 @@ NO incluyas texto antes o después del JSON. Solo responde con el objeto JSON.""
     if query_mode == "Personalizada":
         user_query = st.text_area(
             "Escribe tu consulta",
-            placeholder="Ejemplo: Analiza las tendencias principales de IA en 2025 y genera 3 recomendaciones estratégicas",
+            placeholder="Ejemplo: Analiza las tendencias de marketing B2B industrial para 2026 y genera 3 recomendaciones estratégicas priorizadas",
             height=120,
             key="custom_query"
         )
     else:
         # Plantillas adaptadas para funcionar con y sin archivos
         templates = {
-            "Análisis Estratégico Completo": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos. Proporciona recomendaciones accionables validadas con información actual.",
-            "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los puntos más relevantes para la toma de decisiones. Valida los datos con fuentes actuales y confiables.",
-            "Análisis DAFO": "Realiza un análisis DAFO (Debilidades, Amenazas, Fortalezas, Oportunidades). Valida cada punto con tendencias actuales y fuentes verificables.",
-            "Plan de Acción Priorizado": "Identifica los 5 puntos más importantes y crea un plan de acción detallado y priorizado. Valida con mejores prácticas actuales.",
-            "Benchmark Competitivo": "Realiza un benchmark competitivo comparando con tendencias actuales del mercado. Incluye fuentes verificables.",
-            "Detección de Riesgos y Oportunidades": "Identifica riesgos potenciales y oportunidades de mejora. Valida con información actual y regulaciones vigentes.",
-            "Tendencias de IA y Tecnología": "Analiza las últimas tendencias en inteligencia artificial y tecnología para 2025. Proporciona insights accionables.",
-            "Análisis de Mercado Actual": "Analiza el estado actual del mercado en el sector especificado con datos recientes y fuentes verificables."
+            "Análisis Estratégico Completo": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos en marketing B2B industrial. Proporciona recomendaciones accionables con ROI estimado y plazos de implementación.",
+            "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los 3 puntos más relevantes para la toma de decisiones en generación de leads B2B. Incluye datos cuantificables y fuentes verificables.",
+            "Análisis DAFO": "Realiza un análisis DAFO (Debilidades, Amenazas, Fortalezas, Oportunidades) enfocado en estrategia digital B2B. Valida cada punto con tendencias actuales del sector industrial.",
+            "Plan de Acción Priorizado": "Identifica los 5 puntos más importantes para mejorar la generación de leads B2B y crea un plan de acción detallado con KPIs, plazos y recursos necesarios.",
+            "Benchmark Competitivo": "Realiza un análisis competitivo del sector comparando estrategias de marketing digital B2B. Incluye datos de inversión publicitaria, canales utilizados y resultados obtenidos por competidores.",
+            "Contenido para LinkedIn": "Genera ideas de contenido para LinkedIn enfocadas en thought leadership B2B industrial. Incluye temas, formatos y calendario sugerido para los próximos 3 meses.",
+            "Estrategia Ferias B2B": "Analiza las mejores prácticas para participación en ferias industriales B2B combinando estrategia digital pre-evento, durante y post-evento para maximizar ROI.",
+            "Tendencias LifeSciences 2026": "Analiza las últimas tendencias en marketing digital para empresas de LifeSciences y MedTech. Identifica oportunidades de posicionamiento y generación de leads especializados."
         }
         
         selected_template = st.selectbox(
@@ -838,6 +1235,7 @@ NO incluyas texto antes o después del JSON. Solo responde con el objeto JSON.""
                 user_message = f"CONSULTA DEL USUARIO:\n{user_query}"
                 
                 # Cargar contexto solo si hay archivos seleccionados
+                context = ""
                 if selected_files:
                     context = load_selected_context(client, bucket_name, selected_files, max_chars)
                     user_message += f"\n\n---\n\nDOCUMENTOS DE CONTEXTO:\n{context}"
@@ -864,7 +1262,7 @@ NO incluyas texto antes o después del JSON. Solo responde con el objeto JSON.""
                     "model": "gpt-4o-mini",
                     "query": user_query,
                     "context_files": selected_files if selected_files else [],
-                    "context_chars": len(context) if selected_files else 0,
+                    "context_chars": len(context) if context else 0,
                     "mode": "with_context" if selected_files else "general_query"
                 }
                 
@@ -960,7 +1358,7 @@ CONSULTA ORIGINAL DEL USUARIO:
 INSTRUCCIONES:
 1. Valida cada punto del análisis con fuentes actuales online
 2. Enriquece la información con datos relevantes y recientes
-3. Proporciona URLs de fuentes verificables
+3. Proporciona URLs de fuentes verificables con título y fecha
 4. Indica el nivel de confianza de la validación
 
 Responde SOLO con un JSON válido, sin texto adicional."""
@@ -1109,11 +1507,6 @@ Responde SOLO con un JSON válido, sin texto adicional."""
         except json.JSONDecodeError as e:
             st.error(f"❌ JSON inválido: {str(e)}")
             json_is_valid = False
-        
-        # Preview del nombre de archivo
-        if json_is_valid:
-            preview_filename = generate_smart_filename(edited_data)
-            st.info(f"📝 Nombre de archivo: `{preview_filename}`")
         
         # --- PASO 5: GUARDAR CON METADATOS ---
         st.markdown("---")
