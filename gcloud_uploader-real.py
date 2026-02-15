@@ -166,7 +166,87 @@ def upload_json_to_gcs(client: storage.Client, bucket_name: str, folder: str, fi
     blob = bucket.blob(path)
     blob.upload_from_string(json.dumps(data, indent=2, ensure_ascii=False), content_type="application/json")
     return path
+# =====================================================
+# Sistema de Metadatos de Archivos
+# =====================================================
 
+def get_file_metadata(client: storage.Client, bucket_name: str, file_path: str) -> dict:
+    """Obtiene metadatos personalizados de un archivo"""
+    try:
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(file_path)
+        blob.reload()
+        
+        # Obtener metadatos custom
+        metadata = blob.metadata or {}
+        
+        return {
+            "tipo": metadata.get("tipo", ""),
+            "notas": metadata.get("notas", ""),
+            "objetivo": metadata.get("objetivo", ""),
+            "fuentes_fiables": metadata.get("fuentes_fiables", "").lower() == "true"
+        }
+    except Exception:
+        return {
+            "tipo": "",
+            "notas": "",
+            "objetivo": "",
+            "fuentes_fiables": False
+        }
+
+
+def update_file_metadata(client: storage.Client, bucket_name: str, file_path: str, metadata: dict):
+    """Actualiza metadatos personalizados de un archivo"""
+    try:
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(file_path)
+        blob.reload()
+        
+        # Preparar metadatos
+        custom_metadata = {
+            "tipo": metadata.get("tipo", ""),
+            "notas": metadata.get("notas", ""),
+            "objetivo": metadata.get("objetivo", ""),
+            "fuentes_fiables": str(metadata.get("fuentes_fiables", False))
+        }
+        
+        # Actualizar
+        blob.metadata = custom_metadata
+        blob.patch()
+        
+        return True
+    except Exception as e:
+        st.error(f"Error actualizando metadatos: {str(e)}")
+        return False
+
+
+def save_analysis_with_metadata(client: storage.Client, bucket_name: str, folder: str, 
+                                filename: str, data: dict, analysis_metadata: dict):
+    """Guarda JSON con metadatos enriquecidos"""
+    try:
+        bucket = client.bucket(bucket_name)
+        path = f"{folder.rstrip('/')}/{filename}"
+        blob = bucket.blob(path)
+        
+        # Subir contenido JSON
+        blob.upload_from_string(
+            json.dumps(data, indent=2, ensure_ascii=False),
+            content_type="application/json"
+        )
+        
+        # Añadir metadatos custom
+        blob.metadata = {
+            "tipo": analysis_metadata.get("tipo", "Análisis IA"),
+            "notas": analysis_metadata.get("notas", ""),
+            "objetivo": analysis_metadata.get("objetivo", ""),
+            "fuentes_fiables": str(analysis_metadata.get("fuentes_fiables", True))
+        }
+        blob.patch()
+        
+        return path
+    except Exception as e:
+        raise Exception(f"Error al guardar con metadatos: {str(e)}")
+        
 # =====================================================
 # Perplexity Agent
 # =====================================================
@@ -337,7 +417,7 @@ bucket_name = st.session_state.bucket_name
 tab1, tab2, tab3 = st.tabs(["📁 Gestión de Archivos", "🤖 Agentes IA", "🧪 Modo Demo"])
 
 # =====================================================
-# TAB 1 - FILE MANAGEMENT
+# TAB 1 - FILE MANAGEMENT CON METADATOS
 # =====================================================
 
 with tab1:
@@ -350,7 +430,7 @@ with tab1:
         folder = st.selectbox("Carpeta destino", options=folders if folders else ["documentos/"])
         uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True)
     with col2:
-        new_folder = st.text_input("Crear nueva carpeta")
+        new_folder = st.text_input("Nueva carpeta")
     
     target_folder = f"{new_folder.strip()}/" if new_folder else folder
     
@@ -392,13 +472,97 @@ with tab1:
             st.warning("Introduce al menos un campo")
     
     st.markdown("---")
-    st.subheader("📁 Contenido del bucket")
+    st.subheader("📁 Contenido del bucket con Metadatos")
     
     if files:
+        # Crear DataFrame con todos los campos
         df = pd.DataFrame(files)
-        st.dataframe(df, use_container_width=True)
         
-        to_delete = st.multiselect("Selecciona archivos a eliminar", options=df["name"].tolist())
+        # Reordenar columnas para mejor visualización
+        column_order = ["name", "tipo", "objetivo", "fuentes_fiables", "notas", "size", "updated"]
+        df = df[[col for col in column_order if col in df.columns]]
+        
+        # Configurar formato de columnas
+        column_config = {
+            "name": st.column_config.TextColumn("📄 Archivo", width="medium"),
+            "tipo": st.column_config.TextColumn("🏷️ Tipo", width="small"),
+            "objetivo": st.column_config.TextColumn("🎯 Objetivo", width="medium"),
+            "fuentes_fiables": st.column_config.CheckboxColumn("✅ Fuentes Fiables", width="small"),
+            "notas": st.column_config.TextColumn("📝 Notas", width="large"),
+            "size": st.column_config.NumberColumn("💾 Tamaño (bytes)", width="small"),
+            "updated": st.column_config.DatetimeColumn("📅 Actualizado", width="small")
+        }
+        
+        # Mostrar tabla editable
+        st.dataframe(
+            df,
+            use_container_width=True,
+            column_config=column_config,
+            hide_index=True
+        )
+        
+        # Editor de metadatos
+        st.markdown("---")
+        st.subheader("✏️ Editar Metadatos de Archivo")
+        
+        selected_file = st.selectbox(
+            "Selecciona archivo para editar metadatos",
+            options=df["name"].tolist(),
+            key="metadata_editor_select"
+        )
+        
+        if selected_file:
+            # Obtener metadatos actuales
+            current_metadata = get_file_metadata(client, bucket_name, selected_file)
+            
+            col_meta1, col_meta2 = st.columns(2)
+            
+            with col_meta1:
+                tipo = st.text_input(
+                    "🏷️ Tipo de contenido",
+                    value=current_metadata["tipo"],
+                    placeholder="Ej: Análisis IA, Documento técnico, Informe..."
+                )
+                
+                objetivo = st.selectbox(
+                    "🎯 Objetivo del contenido",
+                    ["", "Publicación Científica", "Social Media", "Blog Post", "Informe Interno", 
+                     "Marketing B2B", "Presentación", "White Paper", "Caso de Estudio"],
+                    index=0 if not current_metadata["objetivo"] else 
+                          ["", "Publicación Científica", "Social Media", "Blog Post", "Informe Interno", 
+                           "Marketing B2B", "Presentación", "White Paper", "Caso de Estudio"].index(current_metadata["objetivo"])
+                          if current_metadata["objetivo"] in ["", "Publicación Científica", "Social Media", "Blog Post", "Informe Interno", 
+                           "Marketing B2B", "Presentación", "White Paper", "Caso de Estudio"] else 0
+                )
+            
+            with col_meta2:
+                fuentes_fiables = st.checkbox(
+                    "✅ Fuentes fiables verificadas",
+                    value=current_metadata["fuentes_fiables"]
+                )
+                
+                notas = st.text_area(
+                    "📝 Notas importantes",
+                    value=current_metadata["notas"],
+                    height=100,
+                    placeholder="Añade notas, contexto o información relevante sobre este archivo..."
+                )
+            
+            if st.button("💾 Guardar Metadatos", type="primary"):
+                new_metadata = {
+                    "tipo": tipo,
+                    "objetivo": objetivo,
+                    "fuentes_fiables": fuentes_fiables,
+                    "notas": notas
+                }
+                
+                if update_file_metadata(client, bucket_name, selected_file, new_metadata):
+                    st.success(f"✅ Metadatos actualizados para {selected_file}")
+                    st.rerun()
+        
+        # Eliminar archivos
+        st.markdown("---")
+        to_delete = st.multiselect("🗑️ Selecciona archivos a eliminar", options=df["name"].tolist())
         
         if st.button("🗑️ Eliminar seleccionados") and to_delete:
             bucket = client.bucket(bucket_name)
@@ -919,9 +1083,47 @@ Responde SOLO con un JSON válido, sin texto adicional."""
             preview_filename = generate_smart_filename(edited_data)
             st.info(f"📝 Nombre de archivo: `{preview_filename}`")
         
-        # --- PASO 5: GUARDAR ---
+        # --- PASO 5: GUARDAR CON METADATOS ---
         st.markdown("---")
-        st.subheader("💾 Paso 5: Guardar Respuesta Final")
+        st.subheader("💾 Paso 5: Configurar y Guardar")
+        
+        # Formulario de metadatos
+        with st.expander("📋 Metadatos del contenido", expanded=True):
+            col_m1, col_m2 = st.columns(2)
+            
+            with col_m1:
+                content_tipo = st.text_input(
+                    "🏷️ Tipo",
+                    value="Análisis IA Validado",
+                    placeholder="Análisis IA, Informe..."
+                )
+                
+                content_objetivo = st.selectbox(
+                    "🎯 Objetivo",
+                    ["Publicación Científica", "Social Media", "Blog Post", "Informe Interno", 
+                     "Marketing B2B", "Presentación", "White Paper", "Caso de Estudio"],
+                    index=4  # Marketing B2B por defecto
+                )
+            
+            with col_m2:
+                # Determinar si hay fuentes fiables
+                has_sources = bool(final_data.get("sources", []))
+                content_fuentes = st.checkbox(
+                    "✅ Fuentes fiables verificadas",
+                    value=has_sources,
+                    help="Perplexity ha validado con fuentes online" if has_sources else "Sin validación de fuentes"
+                )
+                
+                content_notas = st.text_area(
+                    "📝 Notas",
+                    value=f"Consulta: {user_query[:100]}..." if len(user_query) > 100 else f"Consulta: {user_query}",
+                    height=100
+                )
+        
+        # Preview del nombre de archivo
+        if json_is_valid:
+            preview_filename = generate_smart_filename(edited_data)
+            st.info(f"📝 Nombre de archivo: `{preview_filename}`")
         
         col_save, col_download, col_both = st.columns(3)
         
@@ -936,15 +1138,25 @@ Responde SOLO con un JSON válido, sin texto adicional."""
                     # Generar nombre inteligente basado en el resumen
                     filename = generate_smart_filename(edited_data)
                     
-                    upload_json_to_gcs(
+                    # Preparar metadatos
+                    analysis_metadata = {
+                        "tipo": content_tipo,
+                        "objetivo": content_objetivo,
+                        "fuentes_fiables": content_fuentes,
+                        "notas": content_notas
+                    }
+                    
+                    # Guardar con metadatos
+                    save_analysis_with_metadata(
                         client,
                         bucket_name,
                         BUCKET_FOLDERS["validados"],
                         filename,
-                        edited_data
+                        edited_data,
+                        analysis_metadata
                     )
                     
-                    st.success(f"✅ Guardado correctamente")
+                    st.success(f"✅ Guardado correctamente con metadatos")
                     st.info(f"📁 Ruta: {BUCKET_FOLDERS['validados']}{filename}")
                     st.balloons()
                     
@@ -980,16 +1192,25 @@ Responde SOLO con un JSON válido, sin texto adicional."""
                     # Generar nombre inteligente
                     filename = generate_smart_filename(edited_data)
                     
-                    # Guardar en GCS
-                    upload_json_to_gcs(
+                    # Preparar metadatos
+                    analysis_metadata = {
+                        "tipo": content_tipo,
+                        "objetivo": content_objetivo,
+                        "fuentes_fiables": content_fuentes,
+                        "notas": content_notas
+                    }
+                    
+                    # Guardar en GCS con metadatos
+                    save_analysis_with_metadata(
                         client,
                         bucket_name,
                         BUCKET_FOLDERS["validados"],
                         filename,
-                        edited_data
+                        edited_data,
+                        analysis_metadata
                     )
                     
-                    st.success(f"✅ Guardado en GCS")
+                    st.success(f"✅ Guardado en GCS con metadatos")
                     st.info(f"📁 {BUCKET_FOLDERS['validados']}{filename}")
                     
                     # Trigger de descarga
