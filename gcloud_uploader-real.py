@@ -472,110 +472,131 @@ with tab1:
             st.warning("Introduce al menos un campo")
     
     st.markdown("---")
-    st.subheader("📁 Contenido del bucket con Metadatos")
-    
-    if files:
-        # Crear DataFrame con todos los campos
-        df = pd.DataFrame(files)
-        
-        # Reordenar columnas para mejor visualización
-        column_order = ["name", "tipo", "objetivo", "fuentes_fiables", "notas", "size", "updated"]
-        df = df[[col for col in column_order if col in df.columns]]
-        
-        # Configurar formato de columnas
-        column_config = {
-            "name": st.column_config.TextColumn("📄 Archivo", width="medium"),
-            "tipo": st.column_config.TextColumn("🏷️ Tipo", width="small"),
-            "objetivo": st.column_config.TextColumn("🎯 Objetivo", width="medium"),
-            "fuentes_fiables": st.column_config.CheckboxColumn("✅ Fuentes Fiables", width="small"),
-            "notas": st.column_config.TextColumn("📝 Notas", width="large"),
-            "size": st.column_config.NumberColumn("💾 Tamaño (bytes)", width="small"),
-            "updated": st.column_config.DatetimeColumn("📅 Actualizado", width="small")
-        }
-        
-        # Mostrar tabla editable
-        st.dataframe(
-            df,
-            use_container_width=True,
-            column_config=column_config,
-            hide_index=True
-        )
-        
-        # Editor de metadatos
-        st.markdown("---")
-        st.subheader("✏️ Editar Metadatos de Archivo")
-        
-        selected_file = st.selectbox(
-            "Selecciona archivo para editar metadatos",
-            options=df["name"].tolist(),
-            key="metadata_editor_select"
-        )
-        
-        if selected_file:
-            # Obtener metadatos actuales
-            current_metadata = get_file_metadata(client, bucket_name, selected_file)
-            
-            col_meta1, col_meta2 = st.columns(2)
-            
-            with col_meta1:
-                tipo = st.text_input(
-                    "🏷️ Tipo de contenido",
-                    value=current_metadata["tipo"],
-                    placeholder="Ej: Análisis IA, Documento técnico, Informe..."
-                )
-                
-                objetivo = st.selectbox(
-                    "🎯 Objetivo del contenido",
-                    ["", "Publicación Científica", "Social Media", "Blog Post", "Informe Interno", 
-                     "Marketing B2B", "Presentación", "White Paper", "Caso de Estudio"],
-                    index=0 if not current_metadata["objetivo"] else 
-                          ["", "Publicación Científica", "Social Media", "Blog Post", "Informe Interno", 
-                           "Marketing B2B", "Presentación", "White Paper", "Caso de Estudio"].index(current_metadata["objetivo"])
-                          if current_metadata["objetivo"] in ["", "Publicación Científica", "Social Media", "Blog Post", "Informe Interno", 
-                           "Marketing B2B", "Presentación", "White Paper", "Caso de Estudio"] else 0
-                )
-            
-            with col_meta2:
-                fuentes_fiables = st.checkbox(
-                    "✅ Fuentes fiables verificadas",
-                    value=current_metadata["fuentes_fiables"]
-                )
-                
-                notas = st.text_area(
-                    "📝 Notas importantes",
-                    value=current_metadata["notas"],
-                    height=100,
-                    placeholder="Añade notas, contexto o información relevante sobre este archivo..."
-                )
-            
-            if st.button("💾 Guardar Metadatos", type="primary"):
-                new_metadata = {
-                    "tipo": tipo,
-                    "objetivo": objetivo,
-                    "fuentes_fiables": fuentes_fiables,
-                    "notas": notas
-                }
-                
-                if update_file_metadata(client, bucket_name, selected_file, new_metadata):
-                    st.success(f"✅ Metadatos actualizados para {selected_file}")
-                    st.rerun()
-        
-        # Eliminar archivos
-        st.markdown("---")
-        to_delete = st.multiselect("🗑️ Selecciona archivos a eliminar", options=df["name"].tolist())
-        
-        if st.button("🗑️ Eliminar seleccionados") and to_delete:
-            bucket = client.bucket(bucket_name)
-            for name in to_delete:
-                try:
-                    bucket.blob(name).delete()
-                except Exception as e:
-                    st.error(f"Error eliminando {name}: {str(e)}")
-            st.success(f"✅ {len(to_delete)} archivo(s) eliminados")
-            st.rerun()
-    else:
-        st.info("ℹ️ El bucket no contiene archivos")
+st.subheader("📁 Contenido del bucket con Metadatos")
 
+if files:
+    # Crear DataFrame asegurando que todas las columnas existen
+    df = pd.DataFrame(files)
+    
+    # Asegurar que todas las columnas necesarias existan (aunque estén vacías)
+    required_columns = {
+        "name": "",
+        "tipo": "",
+        "objetivo": "",
+        "fuentes_fiables": False,
+        "notas": "",
+        "size": 0,
+        "updated": None
+    }
+    
+    # Añadir columnas faltantes con valores por defecto
+    for col, default_value in required_columns.items():
+        if col not in df.columns:
+            df[col] = default_value
+    
+    # Reordenar columnas para mejor visualización
+    column_order = ["name", "tipo", "objetivo", "fuentes_fiables", "notas", "size", "updated"]
+    df = df[column_order]
+    
+    # Configurar formato de columnas
+    column_config = {
+        "name": st.column_config.TextColumn("📄 Archivo", width="medium"),
+        "tipo": st.column_config.TextColumn("🏷️ Tipo", width="small"),
+        "objetivo": st.column_config.TextColumn("🎯 Objetivo", width="medium"),
+        "fuentes_fiables": st.column_config.CheckboxColumn("✅ Fuentes Fiables", width="small"),
+        "notas": st.column_config.TextColumn("📝 Notas", width="large"),
+        "size": st.column_config.NumberColumn("💾 Tamaño (bytes)", width="small"),
+        "updated": st.column_config.DatetimeColumn("📅 Actualizado", width="small")
+    }
+    
+    # Mostrar tabla editable
+    st.dataframe(
+        df,
+        use_container_width=True,
+        column_config=column_config,
+        hide_index=True
+    )
+    
+    # Editor de metadatos
+    st.markdown("---")
+    st.subheader("✏️ Editar Metadatos de Archivo")
+    
+    selected_file = st.selectbox(
+        "Selecciona archivo para editar metadatos",
+        options=df["name"].tolist(),
+        key="metadata_editor_select"
+    )
+    
+    if selected_file:
+        # Obtener metadatos actuales
+        current_metadata = get_file_metadata(client, bucket_name, selected_file)
+        
+        col_meta1, col_meta2 = st.columns(2)
+        
+        with col_meta1:
+            tipo = st.text_input(
+                "🏷️ Tipo de contenido",
+                value=current_metadata["tipo"],
+                placeholder="Ej: Análisis IA, Documento técnico, Informe..."
+            )
+            
+            objetivo_options = ["", "Publicación Científica", "Social Media", "Blog Post", "Informe Interno", 
+                               "Marketing B2B", "Presentación", "White Paper", "Caso de Estudio"]
+            
+            # Determinar índice actual
+            current_objetivo = current_metadata["objetivo"]
+            if current_objetivo in objetivo_options:
+                objetivo_index = objetivo_options.index(current_objetivo)
+            else:
+                objetivo_index = 0
+            
+            objetivo = st.selectbox(
+                "🎯 Objetivo del contenido",
+                objetivo_options,
+                index=objetivo_index
+            )
+        
+        with col_meta2:
+            fuentes_fiables = st.checkbox(
+                "✅ Fuentes fiables verificadas",
+                value=current_metadata["fuentes_fiables"]
+            )
+            
+            notas = st.text_area(
+                "📝 Notas importantes",
+                value=current_metadata["notas"],
+                height=100,
+                placeholder="Añade notas, contexto o información relevante sobre este archivo..."
+            )
+        
+        if st.button("💾 Guardar Metadatos", type="primary"):
+            new_metadata = {
+                "tipo": tipo,
+                "objetivo": objetivo,
+                "fuentes_fiables": fuentes_fiables,
+                "notas": notas
+            }
+            
+            if update_file_metadata(client, bucket_name, selected_file, new_metadata):
+                st.success(f"✅ Metadatos actualizados para {selected_file}")
+                st.rerun()
+    
+    # Eliminar archivos
+    st.markdown("---")
+    to_delete = st.multiselect("🗑️ Selecciona archivos a eliminar", options=df["name"].tolist())
+    
+    if st.button("🗑️ Eliminar seleccionados") and to_delete:
+        bucket = client.bucket(bucket_name)
+        for name in to_delete:
+            try:
+                bucket.blob(name).delete()
+            except Exception as e:
+                st.error(f"Error eliminando {name}: {str(e)}")
+        st.success(f"✅ {len(to_delete)} archivo(s) eliminados")
+        st.rerun()
+else:
+    st.info("ℹ️ El bucket no contiene archivos")
+        
 # =====================================================
 # TAB 2 - AGENTE DUAL: OPENAI → PERPLEXITY (MEJORADO)
 # =====================================================
