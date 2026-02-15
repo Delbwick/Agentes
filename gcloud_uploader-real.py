@@ -130,7 +130,7 @@ def get_gcs_client_from_json(sa_json_str: str) -> storage.Client:
 
 
 def list_folders_and_files(client: storage.Client, bucket_name: str):
-    """Lista carpetas y archivos del bucket"""
+    """Lista carpetas y archivos del bucket con metadatos enriquecidos"""
     bucket = client.bucket(bucket_name)
     blobs = list(bucket.list_blobs())
     
@@ -141,10 +141,21 @@ def list_folders_and_files(client: storage.Client, bucket_name: str):
         parts = b.name.split("/")
         if len(parts) > 1:
             folders.add(parts[0] + "/")
+        
+        # IMPORTANTE: Recargar el blob para obtener metadatos actualizados
+        b.reload()
+        
+        # Obtener metadatos custom
+        metadata = b.metadata or {}
+        
         files.append({
             "name": b.name,
             "size": b.size,
             "updated": b.updated,
+            "tipo": metadata.get("tipo", ""),
+            "notas": metadata.get("notas", ""),
+            "objetivo": metadata.get("objetivo", ""),
+            "fuentes_fiables": metadata.get("fuentes_fiables", "").lower() == "true"
         })
     
     return sorted(folders), files
