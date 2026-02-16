@@ -834,7 +834,7 @@ else:
     st.info("ℹ️ El bucket no contiene archivos")
         
 # =====================================================
-# TAB 2 - AGENTE DUAL: OPENAI → PERPLEXITY (MEJORADO)
+# TAB 2 - AGENTE DUAL: OPENAI → PERPLEXITY (OPTIMIZADO)
 # =====================================================
 
 with tab2:
@@ -1129,7 +1129,7 @@ Ejemplo: "https://www.gartner.com/report-2026 (Top Marketing Trends 2026 - Enero
                 except Exception as e:
                     st.error(f"❌ Error al guardar: {str(e)}")
     
-    # Selección de archivos (AHORA OPCIONAL)
+    # Selección de archivos (AHORA OPCIONAL) - Filtrar prompts
     folders, files = list_folders_and_files(client, bucket_name)
     file_names = [f["name"] for f in files if not f["name"].startswith(BUCKET_FOLDERS["prompts"])]
     
@@ -1207,7 +1207,25 @@ Ejemplo: "https://www.gartner.com/report-2026 (Top Marketing Trends 2026 - Enero
     st.markdown("---")
     st.subheader("🔵 Paso 2: Análisis con OpenAI")
     
-    col_exec1, col_clear1 = st.columns([3, 1])
+    # Selector de modelo de OpenAI
+    col_model_openai, col_exec1, col_clear1 = st.columns([2, 2, 1])
+    
+    with col_model_openai:
+        openai_models = {
+            "GPT-4o Mini (Recomendado - Rápido)": "gpt-4o-mini",
+            "GPT-4o (Avanzado)": "gpt-4o",
+            "GPT-4 Turbo": "gpt-4-turbo-preview",
+            "GPT-3.5 Turbo": "gpt-3.5-turbo"
+        }
+        
+        selected_openai_model_name = st.selectbox(
+            "Modelo OpenAI",
+            list(openai_models.keys()),
+            index=0,
+            help="GPT-4o Mini es ideal para análisis B2B con excelente relación calidad-precio"
+        )
+        
+        openai_model = openai_models[selected_openai_model_name]
     
     with col_exec1:
         execute_openai = st.button(
@@ -1217,7 +1235,7 @@ Ejemplo: "https://www.gartner.com/report-2026 (Top Marketing Trends 2026 - Enero
         )
     
     with col_clear1:
-        if st.button("🗑️ Limpiar Todo", use_container_width=True):
+        if st.button("🗑️ Limpiar", use_container_width=True):
             keys_to_delete = ["openai_response", "perplexity_response", "edited_response"]
             for key in keys_to_delete:
                 if key in st.session_state:
@@ -1229,7 +1247,7 @@ Ejemplo: "https://www.gartner.com/report-2026 (Top Marketing Trends 2026 - Enero
             st.error("❌ La consulta no puede estar vacía")
             st.stop()
         
-        with st.spinner("🔄 OpenAI analizando..."):
+        with st.spinner(f"🔄 OpenAI ({openai_model}) analizando..."):
             try:
                 # Preparar mensaje base
                 user_message = f"CONSULTA DEL USUARIO:\n{user_query}"
@@ -1242,9 +1260,9 @@ Ejemplo: "https://www.gartner.com/report-2026 (Top Marketing Trends 2026 - Enero
                 else:
                     user_message += "\n\n---\n\nNOTA: No se proporcionaron documentos de contexto. Responde basándote en conocimiento general y datos actuales."
                 
-                # Llamar a OpenAI
+                # Llamar a OpenAI con el modelo seleccionado
                 response = st.session_state.openai.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model=openai_model,
                     messages=[
                         {"role": "system", "content": openai_prompt},
                         {"role": "user", "content": user_message}
@@ -1259,7 +1277,7 @@ Ejemplo: "https://www.gartner.com/report-2026 (Top Marketing Trends 2026 - Enero
                 response_json["metadata"] = {
                     "timestamp": datetime.utcnow().isoformat(),
                     "agent": "openai",
-                    "model": "gpt-4o-mini",
+                    "model": openai_model,
                     "query": user_query,
                     "context_files": selected_files if selected_files else [],
                     "context_chars": len(context) if context else 0,
@@ -1267,7 +1285,7 @@ Ejemplo: "https://www.gartner.com/report-2026 (Top Marketing Trends 2026 - Enero
                 }
                 
                 st.session_state.openai_response = response_json
-                st.success("✅ Análisis completado por OpenAI")
+                st.success(f"✅ Análisis completado por OpenAI ({openai_model})")
                 st.rerun()
                 
             except json.JSONDecodeError as je:
@@ -1285,10 +1303,12 @@ Ejemplo: "https://www.gartner.com/report-2026 (Top Marketing Trends 2026 - Enero
             
             # Mostrar modo de operación
             mode = openai_data.get("metadata", {}).get("mode", "unknown")
+            model_used = openai_data.get("metadata", {}).get("model", "N/A")
+            
             if mode == "with_context":
-                st.success(f"📁 Análisis basado en {len(openai_data.get('metadata', {}).get('context_files', []))} documento(s)")
+                st.success(f"📁 Análisis con {len(openai_data.get('metadata', {}).get('context_files', []))} documento(s) | Modelo: {model_used}")
             else:
-                st.info("💭 Análisis general sin documentos específicos")
+                st.info(f"💭 Análisis general sin documentos | Modelo: {model_used}")
             
             st.markdown("**📝 Resumen:**")
             st.info(openai_data.get("summary", "N/A"))
@@ -1317,23 +1337,31 @@ Ejemplo: "https://www.gartner.com/report-2026 (Top Marketing Trends 2026 - Enero
         st.info("💡 Perplexity validará el análisis de OpenAI con fuentes online actuales y verificables")
         
         # Selector de modelo de Perplexity
-        perplexity_models = {
-            "Sonar (Recomendado - Online)": "sonar",
-            "Sonar Pro (Avanzado - Online)": "sonar-pro",
-            "Llama 3.1 8B": "llama-3.1-8b-instruct",
-            "Llama 3.1 70B": "llama-3.1-70b-instruct"
-        }
+        col_model_perplexity, col_exec_perplexity = st.columns([2, 2])
         
-        selected_model_name = st.selectbox(
-            "Modelo de Perplexity",
-            list(perplexity_models.keys()),
-            index=0,
-            help="Los modelos 'Sonar' tienen acceso a búsqueda web en tiempo real"
-        )
+        with col_model_perplexity:
+            perplexity_models = {
+                "Sonar (Recomendado - Online)": "sonar",
+                "Sonar Pro (Avanzado - Online)": "sonar-pro",
+                "Llama 3.1 8B": "llama-3.1-8b-instruct",
+                "Llama 3.1 70B": "llama-3.1-70b-instruct"
+            }
+            
+            selected_model_name = st.selectbox(
+                "Modelo de Perplexity",
+                list(perplexity_models.keys()),
+                index=0,
+                help="Los modelos 'Sonar' tienen acceso a búsqueda web en tiempo real"
+            )
+            
+            perplexity_model = perplexity_models[selected_model_name]
         
-        perplexity_model = perplexity_models[selected_model_name]
+        with col_exec_perplexity:
+            st.markdown("")  # Espaciado
+            st.markdown("")  # Espaciado
+            execute_perplexity = st.button("▶️ Validar con Perplexity", type="primary", use_container_width=True)
         
-        if st.button("▶️ Validar con Perplexity", type="primary", use_container_width=True):
+        if execute_perplexity:
             with st.spinner(f"🔄 Perplexity ({perplexity_model}) validando y enriqueciendo..."):
                 try:
                     from openai import OpenAI
@@ -1399,11 +1427,12 @@ Responde SOLO con un JSON válido, sin texto adicional."""
                         "model": perplexity_model,
                         "original_query": user_query,
                         "openai_analysis_timestamp": openai_data.get("metadata", {}).get("timestamp", "N/A"),
+                        "openai_model": openai_data.get("metadata", {}).get("model", "N/A"),
                         "analysis_mode": openai_data.get("metadata", {}).get("mode", "unknown")
                     }
                     
                     st.session_state.perplexity_response = validated_json
-                    st.success("✅ Validación completada por Perplexity")
+                    st.success(f"✅ Validación completada por Perplexity ({perplexity_model})")
                     st.rerun()
                     
                 except json.JSONDecodeError as je:
@@ -1428,6 +1457,11 @@ Responde SOLO con un JSON válido, sin texto adicional."""
         # Vista previa estructurada
         with st.expander("👁️ Vista Previa Detallada", expanded=True):
             final_data = st.session_state.perplexity_response
+            
+            # Mostrar modelos usados
+            openai_model_used = final_data.get("metadata", {}).get("openai_model", "N/A")
+            perplexity_model_used = final_data.get("metadata", {}).get("model", "N/A")
+            st.caption(f"🤖 OpenAI: {openai_model_used} | 🔍 Perplexity: {perplexity_model_used}")
             
             st.markdown("**📝 Resumen Validado:**")
             st.success(final_data.get("summary", "N/A"))
