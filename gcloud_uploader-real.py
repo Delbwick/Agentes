@@ -614,7 +614,7 @@ with col_logo:
     st.image("https://kaibot.es/wp-content/uploads/2020/07/image1.png", width=90)
 with col_title:
     st.title("KaiBot Cloud Storage & Content Agent")
-    st.caption("Gestión documental + agente de contenidos (modo real)")
+    st.caption("Gestión documental + agente de contenidos (modo demo y real)")
 
 st.markdown("---")
 
@@ -708,22 +708,22 @@ with tab1:
             st.warning("Introduce al menos un campo")
     
     st.markdown("---")
-    st.subheader("📁 Contenido del bucket con Metadatos")
+st.subheader("📁 Contenido del bucket con Metadatos")
 
-    if files:
-        # Crear DataFrame asegurando que todas las columnas existen
-        df = pd.DataFrame(files)
+if files:
+    # Crear DataFrame asegurando que todas las columnas existen
+    df = pd.DataFrame(files)
     
-        # Asegurar que todas las columnas necesarias existan (aunque estén vacías)
-        required_columns = {
-            "name": "",
-            "tipo": "",
-            "objetivo": "",
-            "fuentes_fiables": False,
-            "notas": "",
-            "size": 0,
-            "updated": None
-        }
+    # Asegurar que todas las columnas necesarias existan (aunque estén vacías)
+    required_columns = {
+        "name": "",
+        "tipo": "",
+        "objetivo": "",
+        "fuentes_fiables": False,
+        "notas": "",
+        "size": 0,
+        "updated": None
+    }
     
     # Añadir columnas faltantes con valores por defecto
     for col, default_value in required_columns.items():
