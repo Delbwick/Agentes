@@ -124,7 +124,7 @@ st.markdown("""
     [data-testid="stSidebar"] select {
         background-color: rgba(255, 255, 255, 0.1) !important;
         border: 1px solid white !important;
-        color: white !important;
+        color: #1E3A8A !important; /* Azul oscuro en lugar de blanco */;
     }
     
     /* Placeholder de inputs en blanco */
