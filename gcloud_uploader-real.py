@@ -1684,6 +1684,7 @@ Responde SOLO con un JSON válido, sin texto adicional."""
                     
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
+                    
 # =====================================================
 # TAB 3 - DEMO MODE
 # =====================================================
