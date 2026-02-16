@@ -853,110 +853,194 @@ with tab1:
             hide_index=True
         )
         
-       # =====================================================
-# Previsualización de archivos
-# =====================================================
-
-def preview_file(client: storage.Client, bucket_name: str, file_path: str):
-    """Previsualiza el contenido de un archivo según su tipo"""
-    try:
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(file_path)
-        blob.reload()  # Cargar información completa del blob
+        # PREVISUALIZACIÓN DE ARCHIVOS
+        st.markdown("---")
+        st.subheader("👁️ Previsualizar Archivo")
         
-        # Obtener tamaño seguro
-        file_size = blob.size if blob.size is not None else 0
-        file_size_kb = file_size / 1024 if file_size > 0 else 0
+        col_preview, col_download = st.columns([3, 1])
         
-        # Obtener extensión del archivo
-        file_ext = file_path.split('.')[-1].lower()
-        
-        # Archivos JSON
-        if file_ext == 'json':
-            content = blob.download_as_text()
-            data = json.loads(content)
-            st.json(data)
-            return True
-        
-        # Archivos de texto
-        elif file_ext in ['txt', 'md', 'csv', 'log']:
-            content = blob.download_as_text()
-            st.code(content, language='text')
-            return True
-        
-        # Archivos Python
-        elif file_ext == 'py':
-            content = blob.download_as_text()
-            st.code(content, language='python')
-            return True
-        
-        # Archivos JavaScript/TypeScript
-        elif file_ext in ['js', 'jsx', 'ts', 'tsx']:
-            content = blob.download_as_text()
-            st.code(content, language='javascript')
-            return True
-        
-        # Archivos HTML/CSS
-        elif file_ext in ['html', 'css']:
-            content = blob.download_as_text()
-            st.code(content, language='html')
-            return True
-        
-        # Imágenes
-        elif file_ext in ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']:
-            image_bytes = blob.download_as_bytes()
-            st.image(image_bytes, caption=file_path, use_container_width=True)
-            return True
-        
-        # PDFs (mostrar info)
-        elif file_ext == 'pdf':
-            st.info(f"📄 Archivo PDF: {file_path}")
-            st.write(f"**Tamaño:** {file_size_kb:.2f} KB")
-            st.warning("💡 Descarga el archivo para visualizarlo completamente")
-            # Botón de descarga
-            pdf_bytes = blob.download_as_bytes()
-            st.download_button(
-                "⬇️ Descargar PDF",
-                pdf_bytes,
-                file_name=file_path.split('/')[-1],
-                mime="application/pdf"
+        with col_preview:
+            preview_file_select = st.selectbox(
+                "Selecciona archivo para previsualizar",
+                options=df["name"].tolist(),
+                key="preview_file_select"
             )
-            return True
         
-        # Archivos de Office (mostrar info)
-        elif file_ext in ['docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt']:
-            st.info(f"📎 Archivo de Office: {file_path}")
-            st.write(f"**Tipo:** {file_ext.upper()}")
-            st.write(f"**Tamaño:** {file_size_kb:.2f} KB")
-            st.warning("💡 Descarga el archivo para visualizarlo")
-            # Botón de descarga
-            file_bytes = blob.download_as_bytes()
-            mime_types = {
-                'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                'doc': 'application/msword',
-                'xls': 'application/vnd.ms-excel',
-                'ppt': 'application/vnd.ms-powerpoint'
-            }
-            st.download_button(
-                f"⬇️ Descargar {file_ext.upper()}",
-                file_bytes,
-                file_name=file_path.split('/')[-1],
-                mime=mime_types.get(file_ext, 'application/octet-stream')
-            )
-            return True
+        with col_download:
+            st.markdown("")  # Espaciado
+            st.markdown("")  # Espaciado
+            if st.button("🔍 Previsualizar", type="primary", use_container_width=True):
+                st.session_state.show_preview = preview_file_select
         
-        else:
-            st.warning(f"⚠️ Tipo de archivo no soportado para previsualización: .{file_ext}")
-            st.info("📊 Información del archivo:")
-            st.write(f"**Nombre:** {file_path}")
-            st.write(f"**Tamaño:** {file_size_kb:.2f} KB")
-            return False
+        # Mostrar previsualización
+        if "show_preview" in st.session_state and st.session_state.show_preview:
+            with st.expander(f"📄 {st.session_state.show_preview}", expanded=True):
+                # Previsualización inline
+                try:
+                    bucket = client.bucket(bucket_name)
+                    blob = bucket.blob(st.session_state.show_preview)
+                    blob.reload()
+                    
+                    file_size = blob.size if blob.size is not None else 0
+                    file_size_kb = file_size / 1024 if file_size > 0 else 0
+                    file_ext = st.session_state.show_preview.split('.')[-1].lower()
+                    
+                    # JSON
+                    if file_ext == 'json':
+                        content = blob.download_as_text()
+                        data = json.loads(content)
+                        st.json(data)
+                    
+                    # Texto
+                    elif file_ext in ['txt', 'md', 'csv', 'log']:
+                        content = blob.download_as_text()
+                        st.code(content, language='text')
+                    
+                    # Python
+                    elif file_ext == 'py':
+                        content = blob.download_as_text()
+                        st.code(content, language='python')
+                    
+                    # JavaScript/TypeScript
+                    elif file_ext in ['js', 'jsx', 'ts', 'tsx']:
+                        content = blob.download_as_text()
+                        st.code(content, language='javascript')
+                    
+                    # HTML/CSS
+                    elif file_ext in ['html', 'css']:
+                        content = blob.download_as_text()
+                        st.code(content, language='html')
+                    
+                    # Imágenes
+                    elif file_ext in ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']:
+                        image_bytes = blob.download_as_bytes()
+                        st.image(image_bytes, caption=st.session_state.show_preview, use_container_width=True)
+                    
+                    # PDFs
+                    elif file_ext == 'pdf':
+                        st.info(f"📄 Archivo PDF")
+                        st.write(f"**Tamaño:** {file_size_kb:.2f} KB")
+                        st.warning("💡 Descarga el archivo para visualizarlo completamente")
+                        pdf_bytes = blob.download_as_bytes()
+                        st.download_button(
+                            "⬇️ Descargar PDF",
+                            pdf_bytes,
+                            file_name=st.session_state.show_preview.split('/')[-1],
+                            mime="application/pdf"
+                        )
+                    
+                    # Office
+                    elif file_ext in ['docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt']:
+                        st.info(f"📎 Archivo de Office: {file_ext.upper()}")
+                        st.write(f"**Tamaño:** {file_size_kb:.2f} KB")
+                        st.warning("💡 Descarga el archivo para visualizarlo")
+                        file_bytes = blob.download_as_bytes()
+                        mime_types = {
+                            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                            'doc': 'application/msword',
+                            'xls': 'application/vnd.ms-excel',
+                            'ppt': 'application/vnd.ms-powerpoint'
+                        }
+                        st.download_button(
+                            f"⬇️ Descargar {file_ext.upper()}",
+                            file_bytes,
+                            file_name=st.session_state.show_preview.split('/')[-1],
+                            mime=mime_types.get(file_ext, 'application/octet-stream')
+                        )
+                    
+                    else:
+                        st.warning(f"⚠️ Tipo de archivo no soportado para previsualización: .{file_ext}")
+                        st.info("📊 Información del archivo:")
+                        st.write(f"**Nombre:** {st.session_state.show_preview}")
+                        st.write(f"**Tamaño:** {file_size_kb:.2f} KB")
+                
+                except Exception as e:
+                    st.error(f"❌ Error al previsualizar: {str(e)}")
+        
+        # Editor de metadatos
+        st.markdown("---")
+        st.subheader("✏️ Editar Metadatos de Archivo")
+        
+        selected_file = st.selectbox(
+            "Selecciona archivo para editar metadatos",
+            options=df["name"].tolist(),
+            key="metadata_editor_select"
+        )
+        
+        if selected_file:
+            # Obtener metadatos actuales
+            current_metadata = get_file_metadata(client, bucket_name, selected_file)
             
-    except Exception as e:
-        st.error(f"❌ Error al previsualizar: {str(e)}")
-        return False
+            col_meta1, col_meta2 = st.columns(2)
+            
+            with col_meta1:
+                tipo = st.text_input(
+                    "🏷️ Tipo de contenido",
+                    value=current_metadata["tipo"],
+                    placeholder="Ej: Análisis IA, Documento técnico, Informe..."
+                )
+                
+                objetivo_options = ["", "Publicación Científica", "Social Media", "Blog Post", "Informe Interno", 
+                                   "Marketing B2B", "Presentación", "White Paper", "Caso de Estudio"]
+                
+                # Determinar índice actual
+                current_objetivo = current_metadata["objetivo"]
+                if current_objetivo in objetivo_options:
+                    objetivo_index = objetivo_options.index(current_objetivo)
+                else:
+                    objetivo_index = 0
+                
+                objetivo = st.selectbox(
+                    "🎯 Objetivo del contenido",
+                    objetivo_options,
+                    index=objetivo_index
+                )
+            
+            with col_meta2:
+                fuentes_fiables = st.checkbox(
+                    "✅ Fuentes fiables verificadas",
+                    value=current_metadata["fuentes_fiables"]
+                )
+                
+                notas = st.text_area(
+                    "📝 Notas importantes",
+                    value=current_metadata["notas"],
+                    height=100,
+                    placeholder="Añade notas, contexto o información relevante sobre este archivo..."
+                )
+            
+            if st.button("💾 Guardar Metadatos", type="primary"):
+                new_metadata = {
+                    "tipo": tipo,
+                    "objetivo": objetivo,
+                    "fuentes_fiables": fuentes_fiables,
+                    "notas": notas
+                }
+                
+                if update_file_metadata(client, bucket_name, selected_file, new_metadata):
+                    st.success(f"✅ Metadatos actualizados para {selected_file}")
+                    st.rerun()
+        
+        # Eliminar archivos
+        st.markdown("---")
+        to_delete = st.multiselect("🗑️ Selecciona archivos a eliminar", options=df["name"].tolist())
+        
+        if st.button("🗑️ Eliminar seleccionados") and to_delete:
+            bucket = client.bucket(bucket_name)
+            for name in to_delete:
+                try:
+                    bucket.blob(name).delete()
+                except Exception as e:
+                    st.error(f"Error eliminando {name}: {str(e)}")
+            st.success(f"✅ {len(to_delete)} archivo(s) eliminados")
+            st.rerun()
+    else:
+        st.info("ℹ️ El bucket no contiene archivos")
+        
+        
+
         
         
         # Editor de metadatos
