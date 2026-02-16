@@ -853,29 +853,110 @@ with tab1:
             hide_index=True
         )
         
-        # NUEVA SECCIÓN: PREVISUALIZACIÓN DE ARCHIVOS
-        st.markdown("---")
-        st.subheader("👁️ Previsualizar Archivo")
+       # =====================================================
+# Previsualización de archivos
+# =====================================================
+
+def preview_file(client: storage.Client, bucket_name: str, file_path: str):
+    """Previsualiza el contenido de un archivo según su tipo"""
+    try:
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(file_path)
+        blob.reload()  # Cargar información completa del blob
         
-        col_preview, col_download = st.columns([3, 1])
+        # Obtener tamaño seguro
+        file_size = blob.size if blob.size is not None else 0
+        file_size_kb = file_size / 1024 if file_size > 0 else 0
         
-        with col_preview:
-            preview_file_select = st.selectbox(
-                "Selecciona archivo para previsualizar",
-                options=df["name"].tolist(),
-                key="preview_file_select"
+        # Obtener extensión del archivo
+        file_ext = file_path.split('.')[-1].lower()
+        
+        # Archivos JSON
+        if file_ext == 'json':
+            content = blob.download_as_text()
+            data = json.loads(content)
+            st.json(data)
+            return True
+        
+        # Archivos de texto
+        elif file_ext in ['txt', 'md', 'csv', 'log']:
+            content = blob.download_as_text()
+            st.code(content, language='text')
+            return True
+        
+        # Archivos Python
+        elif file_ext == 'py':
+            content = blob.download_as_text()
+            st.code(content, language='python')
+            return True
+        
+        # Archivos JavaScript/TypeScript
+        elif file_ext in ['js', 'jsx', 'ts', 'tsx']:
+            content = blob.download_as_text()
+            st.code(content, language='javascript')
+            return True
+        
+        # Archivos HTML/CSS
+        elif file_ext in ['html', 'css']:
+            content = blob.download_as_text()
+            st.code(content, language='html')
+            return True
+        
+        # Imágenes
+        elif file_ext in ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']:
+            image_bytes = blob.download_as_bytes()
+            st.image(image_bytes, caption=file_path, use_container_width=True)
+            return True
+        
+        # PDFs (mostrar info)
+        elif file_ext == 'pdf':
+            st.info(f"📄 Archivo PDF: {file_path}")
+            st.write(f"**Tamaño:** {file_size_kb:.2f} KB")
+            st.warning("💡 Descarga el archivo para visualizarlo completamente")
+            # Botón de descarga
+            pdf_bytes = blob.download_as_bytes()
+            st.download_button(
+                "⬇️ Descargar PDF",
+                pdf_bytes,
+                file_name=file_path.split('/')[-1],
+                mime="application/pdf"
             )
+            return True
         
-        with col_download:
-            st.markdown("")  # Espaciado
-            st.markdown("")  # Espaciado
-            if st.button("🔍 Previsualizar", type="primary", use_container_width=True):
-                st.session_state.show_preview = preview_file_select
+        # Archivos de Office (mostrar info)
+        elif file_ext in ['docx', 'xlsx', 'pptx', 'doc', 'xls', 'ppt']:
+            st.info(f"📎 Archivo de Office: {file_path}")
+            st.write(f"**Tipo:** {file_ext.upper()}")
+            st.write(f"**Tamaño:** {file_size_kb:.2f} KB")
+            st.warning("💡 Descarga el archivo para visualizarlo")
+            # Botón de descarga
+            file_bytes = blob.download_as_bytes()
+            mime_types = {
+                'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                'doc': 'application/msword',
+                'xls': 'application/vnd.ms-excel',
+                'ppt': 'application/vnd.ms-powerpoint'
+            }
+            st.download_button(
+                f"⬇️ Descargar {file_ext.upper()}",
+                file_bytes,
+                file_name=file_path.split('/')[-1],
+                mime=mime_types.get(file_ext, 'application/octet-stream')
+            )
+            return True
         
-        # Mostrar previsualización
-        if "show_preview" in st.session_state and st.session_state.show_preview:
-            with st.expander(f"📄 {st.session_state.show_preview}", expanded=True):
-                preview_file(client, bucket_name, st.session_state.show_preview)
+        else:
+            st.warning(f"⚠️ Tipo de archivo no soportado para previsualización: .{file_ext}")
+            st.info("📊 Información del archivo:")
+            st.write(f"**Nombre:** {file_path}")
+            st.write(f"**Tamaño:** {file_size_kb:.2f} KB")
+            return False
+            
+    except Exception as e:
+        st.error(f"❌ Error al previsualizar: {str(e)}")
+        return False
         
         
         # Editor de metadatos
