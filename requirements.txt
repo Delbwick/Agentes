@@ -3,4 +3,11 @@ pandas
 google-cloud-storage
 google-cloud-firestore
 openai>=1.0.0
-gspread
+
+numpy>=1.26.0
+
+gspread>=6.0.0
+google-auth>=2.28.0
+
+python-dotenv>=1.0.0
+plotly>=5.20.0
