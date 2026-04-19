@@ -30,125 +30,49 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* VARIABLES - TEMA BLANCO/NEGRO/GRIS */
     :root {
-        --kaibot-primary: #111827;
-        --kaibot-primary-hover: #374151;
-        --kaibot-bg: #F9FAFB;
-        --kaibot-sidebar-bg: #FFFFFF;
-        --kaibot-text: #111827;
-        --kaibot-text-muted: #6B7280;
-        --border-color: #E5E7EB;
+        --kaibot-blue: #0066CC;
+        --kaibot-blue-hover: #0052A3;
+        --kaibot-dark: #1E293B;
+        --kaibot-gray: #64748B;
+        --kaibot-light: #F8FAFC;
+        --sidebar-bg: #0F172A;
         --success: #10B981;
         --warning: #F59E0B;
         --danger: #EF4444;
     }
     
-    /* Fondo general */
-    .main { background-color: var(--kaibot-bg) !important; }
-    h1, h2, h3, h4 { color: var(--kaibot-text) !important; font-weight: 700; }
-    p, span, div, label { color: var(--kaibot-text) !important; }
-
-    /* SIDEBAR BLANCO/LIMPIO */
-    [data-testid="stSidebar"] { 
-        background-color: var(--kaibot-sidebar-bg) !important; 
-        border-right: 1px solid var(--border-color) !important;
-    }
-    [data-testid="stSidebar"] * { 
-        color: var(--kaibot-text) !important; 
-    }
+    .main { background-color: var(--kaibot-light); }
+    h1, h2, h3, h4 { color: var(--kaibot-dark); font-weight: 600; }
+    
+    /* SIDEBAR OSCURO - ESTILO ORIGINAL */
+    [data-testid="stSidebar"] { background-color: var(--sidebar-bg); }
+    [data-testid="stSidebar"] * { color: white !important; }
     [data-testid="stSidebar"] input, [data-testid="stSidebar"] textarea, [data-testid="stSidebar"] select {
-        background: #F3F4F6 !important; 
-        border: 1px solid var(--border-color) !important; 
-        color: black !important;
-        border-radius: 6px;
-    }
-    [data-testid="stSidebar"] .stButton > button {
-        background-color: var(--kaibot-primary) !important; 
-        color: white !important;
-        border: none !important;
-        border-radius: 6px;
-    }
-    [data-testid="stSidebar"] .stButton > button:hover {
-        background-color: var(--kaibot-primary-hover) !important;
+        background: rgba(255,255,255,0.08) !important; 
+        border: 1px solid rgba(255,255,255,0.2) !important; 
         color: white !important;
     }
-
-    /* BOTONES - TEXTO BLANCO SIEMPRE VISIBLE */
-    .stButton > button[kind="primary"], 
-    .stButton > button { 
-        background-color: var(--kaibot-primary) !important; 
-        color: white !important;
-        border: none !important; 
-        font-weight: 600; 
-        border-radius: 6px;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-    }
-    .stButton > button[kind="primary"]:hover, 
-    .stButton > button:hover { 
-        background-color: var(--kaibot-primary-hover) !important; 
-        color: white !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.15);
-    }
-
-    /* PESTAÑAS/TABS - CORREGIDO */
-    .stTabs [data-baseweb="tab-list"] { 
-        background: transparent !important; 
-        border-bottom: 1px solid var(--border-color) !important; 
-        gap: 4px; 
-    }
-    .stTabs [data-baseweb="tab-list"] button[role="tab"] { 
-        background: transparent !important; 
-        color: var(--kaibot-text-muted) !important; 
-        font-weight: 500; 
-        border-radius: 6px 6px 0 0; 
-        padding: 10px 20px; 
-        border: none !important;
-    }
-    .stTabs [data-baseweb="tab-list"] button[role="tab"]:hover {
-        color: var(--kaibot-text) !important;
-        background: #F3F4F6 !important;
-    }
-    /* PESTAÑA ACTIVA - FONDO OSCURO + TEXTO BLANCO */
-    .stTabs [data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] { 
-        background: var(--kaibot-primary) !important; 
-        color: white !important;
-        font-weight: 600; 
-        border-bottom: 3px solid var(--kaibot-primary) !important;
-    }
-    .stTabs [data-baseweb="tab-panel"] { 
-        padding: 24px !important; 
-        background: white !important; 
-        border-radius: 0 0 8px 8px; 
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05); 
-        border: 1px solid var(--border-color) !important;
-        border-top: none !important;
-    }
-    .stTabs [data-baseweb="tab-panel"] * {
-        color: var(--kaibot-text) !important;
-    }
-
+    
     /* TARJETAS KPI */
     .kpi-card { 
-        background: white !important; 
-        padding: 20px; 
+        background: white; 
+        padding: 16px; 
         border-radius: 8px; 
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05); 
+        box-shadow: 0 2px 6px rgba(0,0,0,0.05); 
         text-align: center; 
-        border: 1px solid var(--border-color) !important;
     }
-    .kpi-value { font-size: 2rem; font-weight: 800; color: var(--kaibot-primary) !important; margin: 8px 0; }
-    .kpi-label { font-size: 0.8rem; color: var(--kaibot-text-muted) !important; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+    .kpi-value { font-size: 1.8rem; font-weight: 700; color: var(--kaibot-dark); margin: 4px 0; }
+    .kpi-label { font-size: 0.85rem; color: var(--kaibot-gray); text-transform: uppercase; letter-spacing: 0.5px; }
     
     /* FOOTER */
-    .kaibot-footer { text-align: center; color: var(--kaibot-text-muted) !important; font-size: 0.8rem; margin-top: 40px; padding: 20px 0; border-top: 1px solid var(--border-color) !important; }
-    
-    /* ELEMENTOS GENERALES */
-    .stAlert, .stInfo, .stWarning, .stError, .stSuccess {
-        color: var(--kaibot-text) !important;
-    }
-    .stDataFrame {
-        color: var(--kaibot-text) !important;
+    .kaibot-footer { 
+        text-align: center; 
+        color: var(--kaibot-gray); 
+        font-size: 0.85rem; 
+        margin-top: 40px; 
+        padding: 20px 0; 
+        border-top: 1px solid #E2E8F0; 
     }
 </style>
 """, unsafe_allow_html=True)
