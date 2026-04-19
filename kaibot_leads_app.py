@@ -393,6 +393,7 @@ st.caption("Gestión, análisis y scoring inteligente de leads B2B. Con integrac
 st.markdown("---")
 
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard KPIs", "📋 Lista Interactiva", "🔍 Detalle & Análisis IA", "➕ Nuevo Lead"])
+# TAB 1: KPIs Horizontales
 
 with tab1:
     c1, c2, c3, c4 = st.columns(4)
@@ -420,26 +421,7 @@ with tab1:
         st.bar_chart(df_f.groupby("VERTICAL_EMPRESA")["VALOR_LEAD"].sum().rename("Valor por Vertical"), use_container_width=True)
     with c2:
         st.bar_chart(df_f.groupby("TIPO_FORM")["VALOR_LEAD"].mean().rename("Valor Medio por Formulario"), use_container_width=True)
-# TAB 1: KPIs Horizontales
-with tab1:
-    c1, c2, c3, c4 = st.columns(4)
-    total_leads = len(df_f)
-    valor_total = df_f["VALOR_LEAD"].sum()
-    coste_total = df_f["COSTE_DEL_LEAD"].sum()
-    roi_global = ((valor_total - coste_total) / coste_total) if coste_total > 0 else 0
-    clientes = len(df_f[df_f["SON_CLIENTE"]=="Sí"])
-    
-    def kpi_card(label, value, sub=""):
-        st.markdown(f'<div class="kpi-card"><div class="kpi-label">{label}</div><div class="kpi-value">{value}</div><div style="color:var(--kaibot-gray);font-size:0.8rem;">{sub}</div></div>', unsafe_allow_html=True)
-    kpi_card("Leads Activos", total_leads, "Filtrados")
-    kpi_card("Valor Pipeline", f"{valor_total:,.0f}€", f"{coste_total:,.0f}€ invertidos")
-    kpi_card("ROI Global", f"{roi_global:.2f}x", "Retorno")
-    kpi_card("Clientes Reales", f"{clientes} ({clientes/max(total_leads,1)*100:.1f}%)", "Conversión")
-    
-    st.markdown("---")
-    c1, c2 = st.columns(2)
-    with c1: st.bar_chart(df_f.groupby("VERTICAL_EMPRESA")["VALOR_LEAD"].sum().rename("Valor por Vertical"), use_container_width=True)
-    with c2: st.bar_chart(df_f.groupby("TIPO_FORM")["VALOR_LEAD"].mean().rename("Valor Medio por Formulario"), use_container_width=True)
+
 
 # TAB 2: Lista Interactiva
 with tab2:
