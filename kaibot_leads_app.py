@@ -30,18 +30,15 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* VARIABLES DE ESTILO MINIMALISTA (B&N/Grises) */
+    /* --- VARIABLES MINIMALISTAS (B&N/Grises) --- */
     :root {
         --kaibot-primary: #111827; /* Negro casi puro */
         --kaibot-primary-hover: #374151; /* Gris oscuro */
-        --kaibot-bg: #F9FAFB; /* Fondo app gris muy claro */
+        --kaibot-bg: #F9FAFB; /* Fondo app muy claro */
         --kaibot-sidebar-bg: #FFFFFF; /* Sidebar blanco */
         --kaibot-text: #111827;
         --kaibot-text-muted: #6B7280;
         --border-color: #E5E7EB;
-        --success: #10B981;
-        --warning: #F59E0B;
-        --danger: #EF4444;
     }
 
     /* Fondo general */
@@ -49,7 +46,7 @@ st.markdown("""
     h1, h2, h3, h4 { color: var(--kaibot-text); font-weight: 700; letter-spacing: -0.5px; }
     p, span, div { color: var(--kaibot-text); }
 
-    /* SIDEBAR LIMPIO */
+    /* --- SIDEBAR LIMPIO --- */
     [data-testid="stSidebar"] { 
         background-color: var(--kaibot-sidebar-bg); 
         border-right: 1px solid var(--border-color);
@@ -61,12 +58,12 @@ st.markdown("""
     [data-testid="stSidebar"] input, [data-testid="stSidebar"] textarea, [data-testid="stSidebar"] select {
         background: #F3F4F6 !important; 
         border: 1px solid var(--border-color) !important; 
-        color: black !important;
+        color: black !important; /* Forzar texto negro */
         border-radius: 6px;
     }
     [data-testid="stSidebar"] .stButton > button {
         background-color: var(--kaibot-primary) !important; 
-        color: white !important;
+        color: white !important; /* Forzar texto blanco */
         border: none !important;
         border-radius: 6px;
     }
@@ -74,21 +71,24 @@ st.markdown("""
         background-color: var(--kaibot-primary-hover) !important;
     }
 
-    /* BOTONES PRINCIPALES */
-    .stButton > button[kind="primary"], .stButton > button { 
-        background-color: var(--kaibot-primary); 
-        color: white; 
-        border: none; 
+    /* --- BOTONES PRINCIPALES (Corrección de visibilidad) --- */
+    .stButton > button[kind="primary"], 
+    .stButton > button { 
+        background-color: var(--kaibot-primary) !important; 
+        color: white !important; /* CORRECCIÓN: Texto blanco siempre */
+        border: none !important; 
         font-weight: 600; 
         border-radius: 6px;
         box-shadow: 0 1px 2px rgba(0,0,0,0.1);
     }
-    .stButton > button[kind="primary"]:hover, .stButton > button:hover { 
-        background-color: var(--kaibot-primary-hover); 
+    .stButton > button[kind="primary"]:hover, 
+    .stButton > button:hover { 
+        background-color: var(--kaibot-primary-hover) !important; 
+        color: white !important;
         box-shadow: 0 2px 4px rgba(0,0,0,0.15);
     }
 
-    /* TABS MINIMALISTAS */
+    /* --- PESTAÑAS / TABS (Corrección de visibilidad) --- */
     .stTabs [data-baseweb="tab-list"] { 
         background: transparent; 
         border-bottom: 1px solid var(--border-color); 
@@ -96,14 +96,15 @@ st.markdown("""
     }
     .stTabs [data-baseweb="tab-list"] button[role="tab"] { 
         background: transparent; 
-        color: var(--kaibot-text-muted); 
+        color: var(--kaibot-text-muted) !important; 
         font-weight: 500; 
         border-radius: 6px 6px 0 0; 
         padding: 10px 20px; 
     }
+    /* Estado ACTIVO de la pestaña */
     .stTabs [data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] { 
-        background: var(--kaibot-primary); 
-        color: white; 
+        background: var(--kaibot-primary) !important; 
+        color: white !important; /* CORRECCIÓN: Texto blanco sobre fondo oscuro */
         font-weight: 600; 
         border-bottom: 3px solid var(--kaibot-primary); 
     }
@@ -116,7 +117,7 @@ st.markdown("""
         border-top: none;
     }
 
-    /* KPI CARDS */
+    /* --- TARJETAS KPI --- */
     .kpi-card { 
         background: white; 
         padding: 20px; 
@@ -128,7 +129,7 @@ st.markdown("""
     .kpi-value { font-size: 2rem; font-weight: 800; color: var(--kaibot-primary); margin: 8px 0; }
     .kpi-label { font-size: 0.8rem; color: var(--kaibot-text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
     
-    /* FOOTER */
+    /* --- FOOTER --- */
     .kaibot-footer { text-align: center; color: var(--kaibot-text-muted); font-size: 0.8rem; margin-top: 40px; padding: 20px 0; border-top: 1px solid var(--border-color); }
 </style>
 """, unsafe_allow_html=True)
