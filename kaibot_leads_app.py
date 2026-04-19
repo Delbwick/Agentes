@@ -30,52 +30,55 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* --- VARIABLES MINIMALISTAS (B&N/Grises) --- */
+    /* VARIABLES - TEMA BLANCO/NEGRO/GRIS */
     :root {
-        --kaibot-primary: #111827; /* Negro casi puro */
-        --kaibot-primary-hover: #374151; /* Gris oscuro */
-        --kaibot-bg: #F9FAFB; /* Fondo app muy claro */
-        --kaibot-sidebar-bg: #FFFFFF; /* Sidebar blanco */
+        --kaibot-primary: #111827;
+        --kaibot-primary-hover: #374151;
+        --kaibot-bg: #F9FAFB;
+        --kaibot-sidebar-bg: #FFFFFF;
         --kaibot-text: #111827;
         --kaibot-text-muted: #6B7280;
         --border-color: #E5E7EB;
+        --success: #10B981;
+        --warning: #F59E0B;
+        --danger: #EF4444;
     }
-
+    
     /* Fondo general */
-    .main { background-color: var(--kaibot-bg); }
-    h1, h2, h3, h4 { color: var(--kaibot-text); font-weight: 700; letter-spacing: -0.5px; }
-    p, span, div { color: var(--kaibot-text); }
+    .main { background-color: var(--kaibot-bg) !important; }
+    h1, h2, h3, h4 { color: var(--kaibot-text) !important; font-weight: 700; }
+    p, span, div, label { color: var(--kaibot-text) !important; }
 
-    /* --- SIDEBAR LIMPIO --- */
+    /* SIDEBAR BLANCO/LIMPIO */
     [data-testid="stSidebar"] { 
-        background-color: var(--kaibot-sidebar-bg); 
-        border-right: 1px solid var(--border-color);
+        background-color: var(--kaibot-sidebar-bg) !important; 
+        border-right: 1px solid var(--border-color) !important;
     }
     [data-testid="stSidebar"] * { 
         color: var(--kaibot-text) !important; 
     }
-    /* Inputs y selects del sidebar */
     [data-testid="stSidebar"] input, [data-testid="stSidebar"] textarea, [data-testid="stSidebar"] select {
         background: #F3F4F6 !important; 
         border: 1px solid var(--border-color) !important; 
-        color: black !important; /* Forzar texto negro */
+        color: black !important;
         border-radius: 6px;
     }
     [data-testid="stSidebar"] .stButton > button {
         background-color: var(--kaibot-primary) !important; 
-        color: white !important; /* Forzar texto blanco */
+        color: white !important;
         border: none !important;
         border-radius: 6px;
     }
     [data-testid="stSidebar"] .stButton > button:hover {
         background-color: var(--kaibot-primary-hover) !important;
+        color: white !important;
     }
 
-    /* --- BOTONES PRINCIPALES (Corrección de visibilidad) --- */
+    /* BOTONES - TEXTO BLANCO SIEMPRE VISIBLE */
     .stButton > button[kind="primary"], 
     .stButton > button { 
         background-color: var(--kaibot-primary) !important; 
-        color: white !important; /* CORRECCIÓN: Texto blanco siempre */
+        color: white !important;
         border: none !important; 
         font-weight: 600; 
         border-radius: 6px;
@@ -88,49 +91,65 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.15);
     }
 
-    /* --- PESTAÑAS / TABS (Corrección de visibilidad) --- */
+    /* PESTAÑAS/TABS - CORREGIDO */
     .stTabs [data-baseweb="tab-list"] { 
-        background: transparent; 
-        border-bottom: 1px solid var(--border-color); 
+        background: transparent !important; 
+        border-bottom: 1px solid var(--border-color) !important; 
         gap: 4px; 
     }
     .stTabs [data-baseweb="tab-list"] button[role="tab"] { 
-        background: transparent; 
+        background: transparent !important; 
         color: var(--kaibot-text-muted) !important; 
         font-weight: 500; 
         border-radius: 6px 6px 0 0; 
         padding: 10px 20px; 
+        border: none !important;
     }
-    /* Estado ACTIVO de la pestaña */
+    .stTabs [data-baseweb="tab-list"] button[role="tab"]:hover {
+        color: var(--kaibot-text) !important;
+        background: #F3F4F6 !important;
+    }
+    /* PESTAÑA ACTIVA - FONDO OSCURO + TEXTO BLANCO */
     .stTabs [data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] { 
         background: var(--kaibot-primary) !important; 
-        color: white !important; /* CORRECCIÓN: Texto blanco sobre fondo oscuro */
+        color: white !important;
         font-weight: 600; 
-        border-bottom: 3px solid var(--kaibot-primary); 
+        border-bottom: 3px solid var(--kaibot-primary) !important;
     }
     .stTabs [data-baseweb="tab-panel"] { 
-        padding: 24px; 
-        background: white; 
+        padding: 24px !important; 
+        background: white !important; 
         border-radius: 0 0 8px 8px; 
         box-shadow: 0 1px 3px rgba(0,0,0,0.05); 
-        border: 1px solid var(--border-color);
-        border-top: none;
+        border: 1px solid var(--border-color) !important;
+        border-top: none !important;
+    }
+    .stTabs [data-baseweb="tab-panel"] * {
+        color: var(--kaibot-text) !important;
     }
 
-    /* --- TARJETAS KPI --- */
+    /* TARJETAS KPI */
     .kpi-card { 
-        background: white; 
+        background: white !important; 
         padding: 20px; 
         border-radius: 8px; 
         box-shadow: 0 1px 3px rgba(0,0,0,0.05); 
         text-align: center; 
-        border: 1px solid var(--border-color);
+        border: 1px solid var(--border-color) !important;
     }
-    .kpi-value { font-size: 2rem; font-weight: 800; color: var(--kaibot-primary); margin: 8px 0; }
-    .kpi-label { font-size: 0.8rem; color: var(--kaibot-text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+    .kpi-value { font-size: 2rem; font-weight: 800; color: var(--kaibot-primary) !important; margin: 8px 0; }
+    .kpi-label { font-size: 0.8rem; color: var(--kaibot-text-muted) !important; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
     
-    /* --- FOOTER --- */
-    .kaibot-footer { text-align: center; color: var(--kaibot-text-muted); font-size: 0.8rem; margin-top: 40px; padding: 20px 0; border-top: 1px solid var(--border-color); }
+    /* FOOTER */
+    .kaibot-footer { text-align: center; color: var(--kaibot-text-muted) !important; font-size: 0.8rem; margin-top: 40px; padding: 20px 0; border-top: 1px solid var(--border-color) !important; }
+    
+    /* ELEMENTOS GENERALES */
+    .stAlert, .stInfo, .stWarning, .stError, .stSuccess {
+        color: var(--kaibot-text) !important;
+    }
+    .stDataFrame {
+        color: var(--kaibot-text) !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 # =============================================================
