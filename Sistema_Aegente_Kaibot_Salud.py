@@ -917,7 +917,7 @@ tab1, tab2, tab3 = st.tabs(["🎯 Generar Contenido", "📁 Mis Archivos", "⚙�
 # =====================================================
 
 #tab1, tab2, tab3 = st.tabs(["📁 Gestión de Archivos", "🤖 Agentes IA", "🧪 Modo Demo"])
-<<<<<<
+
 # =====================================================
 # TAB 1 - GENERAR CONTENIDO (FLUJO SIMPLIFICADO)
 # =====================================================
