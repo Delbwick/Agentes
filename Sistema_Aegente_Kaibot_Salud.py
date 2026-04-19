@@ -1336,7 +1336,6 @@ Valida con fuentes actuales online y proporciona URLs verificables."""
                 mime="application/json",
                 use_container_width=True
             )
->>>>
 
 # =====================================================
 # TAB 1 - FILE MANAGEMENT CON METADATOS
