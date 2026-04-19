@@ -6,6 +6,101 @@ import io
 import json
 import openai
 import os
+from google.cloud import storage
+import xml.etree.ElementTree as ET
+from xml.dom import minidom
+import os
+import json
+
+# =============================================================
+# FUNCIONES GOOGLE CLOUD STORAGE
+# =============================================================
+def get_gcs_client(credentials_json=None):
+    """Inicializa cliente GCS"""
+    try:
+        if credentials_json:
+            from google.oauth2 import service_account
+            credentials = service_account.Credentials.from_service_account_info(
+                json.loads(credentials_json)
+            )
+            return storage.Client(credentials=credentials)
+        else:
+            return storage.Client()
+    except Exception as e:
+        st.error(f"❌ Error conectando a GCS: {e}")
+        return None
+
+def upload_to_gcs(df, bucket_name, blob_name, format_type="csv"):
+    """Sube DataFrame a GCS en formato CSV o XML"""
+    try:
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        
+        if format_type.lower() == "csv":
+            csv_data = df.to_csv(index=False)
+            blob.upload_from_string(csv_data, content_type='text/csv')
+        elif format_type.lower() == "xml":
+            xml_data = df_to_xml(df)
+            blob.upload_from_string(xml_data, content_type='application/xml')
+        elif format_type.lower() == "json":
+            json_data = df.to_json(orient='records', indent=2)
+            blob.upload_from_string(json_data, content_type='application/json')
+        
+        st.success(f"✅ Datos guardados en gs://{bucket_name}/{blob_name}")
+        return True
+    except Exception as e:
+        st.error(f"❌ Error subiendo a GCS: {e}")
+        return False
+
+def download_from_gcs(bucket_name, blob_name, format_type="csv"):
+    """Descarga datos desde GCS"""
+    try:
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        
+        if not blob.exists():
+            st.warning(f"⚠️ El archivo {blob_name} no existe en el bucket")
+            return None
+        
+        data = blob.download_as_text()
+        
+        if format_type.lower() == "csv":
+            return pd.read_csv(io.StringIO(data))
+        elif format_type.lower() == "xml":
+            return pd.read_xml(io.StringIO(data))
+        elif format_type.lower() == "json":
+            return pd.read_json(io.StringIO(data))
+    except Exception as e:
+        st.error(f"❌ Error descargando de GCS: {e}")
+        return None
+
+def df_to_xml(df):
+    """Convierte DataFrame a XML formateado"""
+    root = ET.Element("leads")
+    for _, row in df.iterrows():
+        lead_elem = ET.SubElement(root, "lead")
+        for col in df.columns:
+            field = ET.SubElement(lead_elem, str(col).strip())
+            field.text = str(row[col]) if pd.notna(row[col]) else ""
+    
+    xml_str = ET.tostring(root, encoding='unicode')
+    dom = minidom.parseString(xml_str)
+    return dom.toprettyxml(indent="  ")
+
+def list_gcs_files(bucket_name, prefix=""):
+    """Lista archivos en el bucket"""
+    try:
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blobs = bucket.list_blobs(prefix=prefix)
+        return [blob.name for blob in blobs]
+    except Exception as e:
+        st.error(f"❌ Error listando archivos: {e}")
+        return []
+
+
 
 # =============================================================
 # 1. CONFIGURACIÓN & UX KAIBOT
@@ -18,6 +113,7 @@ st.set_page_config(
 )
 
 st.markdown("""
+<style>
     :root {
         --kaibot-blue: #0066CC;
         --kaibot-blue-hover: #0052A3;
@@ -42,7 +138,7 @@ st.markdown("""
         padding: 10px 20px; transition: all 0.2s;
     }
     .stTabs [data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] { 
-        background: var(--kaibot-blue); color: white !important; font-weight: 600; border-bottom: 3px solid var(--kaibot-blue); 
+        background: var(--kaibot-blue); color: white; font-weight: 600; border-bottom: 3px solid var(--kaibot-blue); 
     }
     .stTabs [data-baseweb="tab-panel"] { padding: 24px; background: white; border-radius: 0 0 8px 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
     
@@ -58,6 +154,7 @@ st.markdown("""
     .kpi-label { font-size: 0.85rem; color: var(--kaibot-gray); text-transform: uppercase; letter-spacing: 0.5px; }
     .kaibot-footer { text-align: center; color: var(--kaibot-gray); font-size: 0.85rem; margin-top: 40px; padding: 20px 0; border-top: 1px solid #E2E8F0; }
     .status-badge { display: inline-block; padding: 4px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: 500; }
+</style>
 """, unsafe_allow_html=True)
 
 # =============================================================
@@ -223,7 +320,99 @@ if exito != "Todos": df_f = df_f[df_f["ORIGEN_FORM_HA_FINALIZADO"] == exito]
 df_f = df_f[(df_f["VALOR_LEAD"] >= min_val) & (df_f["VALOR_LEAD"] <= max_val)]
 df_f = df_f.sort_values("FECHA_ENVIO_FORM", ascending=False)
 st.session_state.df_filtrado = df_f
+from google.cloud import storage
+import xml.etree.ElementTree as ET
+from xml.dom import minidom
+import os
+import json
 
+# =============================================================
+# FUNCIONES GOOGLE CLOUD STORAGE
+# =============================================================
+def get_gcs_client(credentials_json=None):
+    """Inicializa cliente GCS"""
+    try:
+        if credentials_json:
+            from google.oauth2 import service_account
+            credentials = service_account.Credentials.from_service_account_info(
+                json.loads(credentials_json)
+            )
+            return storage.Client(credentials=credentials)
+        else:
+            return storage.Client()
+    except Exception as e:
+        st.error(f"❌ Error conectando a GCS: {e}")
+        return None
+
+def upload_to_gcs(df, bucket_name, blob_name, format_type="csv"):
+    """Sube DataFrame a GCS en formato CSV o XML"""
+    try:
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        
+        if format_type.lower() == "csv":
+            csv_data = df.to_csv(index=False)
+            blob.upload_from_string(csv_data, content_type='text/csv')
+        elif format_type.lower() == "xml":
+            xml_data = df_to_xml(df)
+            blob.upload_from_string(xml_data, content_type='application/xml')
+        elif format_type.lower() == "json":
+            json_data = df.to_json(orient='records', indent=2)
+            blob.upload_from_string(json_data, content_type='application/json')
+        
+        st.success(f"✅ Datos guardados en gs://{bucket_name}/{blob_name}")
+        return True
+    except Exception as e:
+        st.error(f"❌ Error subiendo a GCS: {e}")
+        return False
+
+def download_from_gcs(bucket_name, blob_name, format_type="csv"):
+    """Descarga datos desde GCS"""
+    try:
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        
+        if not blob.exists():
+            st.warning(f"⚠️ El archivo {blob_name} no existe en el bucket")
+            return None
+        
+        data = blob.download_as_text()
+        
+        if format_type.lower() == "csv":
+            return pd.read_csv(io.StringIO(data))
+        elif format_type.lower() == "xml":
+            return pd.read_xml(io.StringIO(data))
+        elif format_type.lower() == "json":
+            return pd.read_json(io.StringIO(data))
+    except Exception as e:
+        st.error(f"❌ Error descargando de GCS: {e}")
+        return None
+
+def df_to_xml(df):
+    """Convierte DataFrame a XML formateado"""
+    root = ET.Element("leads")
+    for _, row in df.iterrows():
+        lead_elem = ET.SubElement(root, "lead")
+        for col in df.columns:
+            field = ET.SubElement(lead_elem, str(col).strip())
+            field.text = str(row[col]) if pd.notna(row[col]) else ""
+    
+    xml_str = ET.tostring(root, encoding='unicode')
+    dom = minidom.parseString(xml_str)
+    return dom.toprettyxml(indent="  ")
+
+def list_gcs_files(bucket_name, prefix=""):
+    """Lista archivos en el bucket"""
+    try:
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blobs = bucket.list_blobs(prefix=prefix)
+        return [blob.name for blob in blobs]
+    except Exception as e:
+        st.error(f"❌ Error listando archivos: {e}")
+        return []
 # =============================================================
 # 5. MAIN UI
 # =============================================================
