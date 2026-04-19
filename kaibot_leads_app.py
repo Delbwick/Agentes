@@ -288,8 +288,71 @@ st.markdown('### 📊 Panel de Leads & Valoración')
 st.caption("Gestión, análisis y scoring inteligente de leads B2B.")
 st.markdown("---")
 
-tab1, tab2, tab3 = st.tabs(["📈 Dashboard KPIs", "📋 Lista Interactiva", "🔍 Detalle & IA"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard KPIs", "📋 Lista Interactiva", "🔍 Detalle & Análisis", "➕ Nuevo Lead"])
 
+# ================= LÓGICA TAB 4: NUEVO LEAD =================
+with tab4:
+    st.markdown("### ➕ Añadir Lead Manual")
+    st.caption("Introduce los datos del contacto para valorarlo automáticamente.")
+    
+    with st.form("form_nuevo_lead", clear_on_submit=True):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            in_empresa = st.text_input("NOMBRE_EMPRESA", placeholder="Ej: TechCorp")
+            in_email = st.text_input("MAIL", placeholder="contacto@empresa.com")
+            in_cargo = st.text_input("CARGO", placeholder="Ej: CTO")
+            in_vertical = st.selectbox("VERTICAL_EMPRESA", ["Industrial", "Tecnología", "Salud", "Logística", "Finanzas", "Otro"])
+        
+        with c2:
+            in_telefono = st.text_input("TELÉFONO", placeholder="+34 600...")
+            in_nombre_contacto = st.text_input("NOMBRE_ENVIO_MAIL", placeholder="Juan Pérez")
+            in_facturacion = st.selectbox("FACTURACION", ["<1M€", "1-5M€", "5-20M€", ">20M€"])
+            in_son_cliente = st.selectbox("SON_CLIENTE", ["No", "Sí"])
+            
+        with c3:
+            in_valor = st.number_input("VALOR_LEAD (€)", min_value=0.0, value=1000.0)
+            in_coste = st.number_input("COSTE_DEL_LEAD (€)", min_value=0.0, value=50.0)
+            in_mensaje = st.text_area("MENSAJE", height=120)
+            in_tipo_form = st.selectbox("TIPO_FORM", ["Manual", "Webinar", "Contacto Directo", "Web General"])
+
+        btn_guardar = st.form_submit_button("💾 Guardar y Valorar Lead", type="primary")
+
+        if btn_guardar:
+            if not in_empresa or not in_email:
+                st.error("⚠️ La Empresa y el Email son obligatorios.")
+            else:
+                # 1. Crear el nuevo registro
+                nuevo_registro = {
+                    "N_FORM": f"MANUAL-{datetime.now().strftime('%H%M%S')}",
+                    "FECHA_ENVIO_FORM": datetime.now(),
+                    "NOMBRE_EMPRESA": in_empresa,
+                    "NOMBRE_ENVIO_MAIL": in_nombre_contacto,
+                    "MAIL": in_email,
+                    "TELÉFONO": in_telefono,
+                    "MENSAJE": in_mensaje,
+                    "TIPO_FORM": in_tipo_form,
+                    "SON_CLIENTE": in_son_cliente,
+                    "ANOTACIONES": "Añadido manualmente",
+                    "VALOR_LEAD": in_valor,
+                    "COSTE_DEL_LEAD": in_coste,
+                    "ORIGEN_FORM_HA_FINALIZADO": "Sí",
+                    "FACTURACION": in_facturacion,
+                    "VERTICAL_EMPRESA": in_vertical,
+                    "LINKEDIN": "",
+                    "CARGO": in_cargo
+                }
+                
+                # 2. Añadir al DataFrame principal
+                new_df = pd.DataFrame([nuevo_registro])
+                st.session_state.leads_df = pd.concat([st.session_state.leads_df, new_df], ignore_index=True)
+                
+                # 3. Recalcular valoraciones (ROI, Puntuación)
+                st.session_state.leads_df = calcular_valoracion(st.session_state.leads_df)
+                
+                st.success(f"✅ Lead **{in_empresa}** añadido y valorado correctamente.")
+                st.rerun()
+
+# ================= LÓGICA TAB 1, 2, 3 (EXISTENTE) =================
 with tab1:
     c1,c2,c3,c4 = st.columns(4)
     val_t = df_f["VALOR_LEAD"].sum(); cost_t = df_f["COSTE_DEL_LEAD"].sum()
