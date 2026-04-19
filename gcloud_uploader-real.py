@@ -755,6 +755,9 @@ tab1, tab2, tab3 = st.tabs(["📁 Gestión de Archivos", "🤖 Agentes IA", "�
 # =====================================================
 # TAB 1 - FILE MANAGEMENT CON METADATOS
 # =====================================================
+# =====================================================
+# TAB 1 - FILE MANAGEMENT CON METADATOS
+# =====================================================
 
 with tab1:
     folders, files = list_folders_and_files(client, bucket_name)
