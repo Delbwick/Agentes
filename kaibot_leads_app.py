@@ -9,6 +9,16 @@ from google.oauth2.service_account import Credentials
 import gspread
 
 # =============================================================
+# 0. INICIALIZACIÓN SEGURA DE SESSION_STATE (Evita AttributeErrors)
+# =============================================================
+if "gcp_creds" not in st.session_state: st.session_state.gcp_creds = None
+if "gcs_bucket" not in st.session_state: st.session_state.gcs_bucket = ""
+if "gcs_path" not in st.session_state: st.session_state.gcs_path = ""
+if "sheet_url" not in st.session_state: st.session_state.sheet_url = ""
+if "openai_key" not in st.session_state: st.session_state.openai_key = ""
+if "enable_cloud" not in st.session_state: st.session_state.enable_cloud = False
+
+# =============================================================
 # 1. CONFIGURACIÓN & UX KAIBOT
 # =============================================================
 st.set_page_config(
@@ -22,6 +32,7 @@ st.markdown("""
     :root {
         --kaibot-blue: #0066CC; --kaibot-blue-hover: #0052A3; --kaibot-dark: #1E293B;
         --kaibot-gray: #64748B; --kaibot-light: #F8FAFC; --sidebar-bg: #0F172A;
+        --success: #10B981; --warning: #F59E0B; --danger: #EF4444;
     }
     .main { background-color: var(--kaibot-light); }
     h1, h2, h3, h4 { color: var(--kaibot-dark); font-weight: 600; }
@@ -44,43 +55,44 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =============================================================
-# 2. UTILIDADES CLOUD & IA
+# 2. UTILIDADES CLOUD & IA (Blindadas con .get())
 # =============================================================
 def init_gcs_client():
-    if "gcp_creds" not in st.session_state: return None
+    if not st.session_state.gcp_creds: return None
     return storage.Client(credentials=st.session_state.gcp_creds, project=st.session_state.gcp_creds.project_id)
 
 def init_sheets_client(sheet_url):
-    if "gcp_creds" not in st.session_state: return None
-    gc = gspread.authorize(st.session_state.gcp_creds)
-    return gc.open_by_url(sheet_url).sheet1
+    if not st.session_state.gcp_creds: return None
+    try:
+        gc = gspread.authorize(st.session_state.gcp_creds)
+        return gc.open_by_url(sheet_url).sheet1
+    except: return None
 
-def load_from_gcs(bucket, path):
+def load_from_gcs():
     try:
         client = init_gcs_client()
         if not client: return None
-        blob = client.bucket(bucket).blob(path)
+        blob = client.bucket(st.session_state.gcs_bucket).blob(st.session_state.gcs_path)
         if not blob.exists(): return None
         return pd.read_csv(io.StringIO(blob.download_as_text()))
     except Exception as e:
-        st.warning(f"⚠️ GCS: {e}")
+        st.warning(f"⚠️ GCS Load: {e}")
         return None
 
-def save_to_gcs(df, bucket, path):
+def save_to_gcs(df):
     try:
         client = init_gcs_client()
         if not client: return
-        blob = client.bucket(bucket).blob(path)
+        blob = client.bucket(st.session_state.gcs_bucket).blob(st.session_state.gcs_path)
         csv_buf = io.StringIO()
         df.to_csv(csv_buf, index=False)
         blob.upload_from_string(csv_buf.getvalue(), content_type="text/csv")
         st.success("✅ Guardado en GCS")
-    except Exception as e:
-        st.error(f"❌ GCS Error: {e}")
+    except Exception as e: st.error(f"❌ GCS Error: {e}")
 
-def pull_from_sheets(url, sheet_name="Leads"):
+def pull_from_sheets():
     try:
-        ws = init_sheets_client(url)
+        ws = init_sheets_client(st.session_state.sheet_url)
         if not ws: return None
         data = ws.get_all_records()
         return pd.DataFrame(data) if data else pd.DataFrame()
@@ -88,31 +100,26 @@ def pull_from_sheets(url, sheet_name="Leads"):
         st.warning(f"⚠️ Sheets: {e}")
         return None
 
-def push_to_sheets(df, url, mode="overwrite"):
+def push_to_sheets(df):
     try:
-        ws = init_sheets_client(url)
+        ws = init_sheets_client(st.session_state.sheet_url)
         if not ws: return
-        if mode == "overwrite":
-            ws.clear()
-            ws.update([df.columns.tolist()] + df.values.tolist())
-        else:
-            ws.append_rows(df.values.tolist(), value_input_option="USER_ENTERED")
+        ws.clear()
+        ws.update([df.columns.tolist()] + df.values.tolist())
         st.success("✅ Sincronizado con Sheets")
-    except Exception as e:
-        st.error(f"❌ Sheets Error: {e}")
+    except Exception as e: st.error(f"❌ Sheets Error: {e}")
 
 @st.cache_data(ttl=1800)
 def apply_ai_scoring(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
     if not api_key: return df
-    client = openai.OpenAI(api_key=api_key)
-    df = df.copy()
-    for col in ["AI_SCORE", "AI_REASONS"]: df[col] = None
-    
-    for idx, row in df.iterrows():
-        prompt = f"""Evalúa este lead B2B del 0 al 100. Devuelve SOLO JSON: {{"score": int, "reasons": ["string"]}}
-        Empresa: {row.get('NOMBRE_EMPRESA','')} | Vertical: {row.get('VERTICAL_EMPRESA','')} | 
-        Facturación: {row.get('FACTURACION','')} | Cargo: {row.get('CARGO','')} | Mensaje: {row.get('MENSAJE','')}"""
-        try:
+    try:
+        client = openai.OpenAI(api_key=api_key)
+        df = df.copy()
+        df["AI_SCORE"], df["AI_REASONS"] = None, None
+        for idx, row in df.iterrows():
+            prompt = f"""Evalúa este lead B2B del 0 al 100. Devuelve SOLO JSON: {{"score": int, "reasons": ["string"]}}
+            Empresa: {row.get('NOMBRE_EMPRESA','')} | Vertical: {row.get('VERTICAL_EMPRESA','')} | 
+            Facturación: {row.get('FACTURACION','')} | Cargo: {row.get('CARGO','')} | Mensaje: {row.get('MENSAJE','')}"""
             res = client.chat.completions.create(
                 model="gpt-4o-mini", messages=[{"role":"system","content":"Experto ventas B2B."},{"role":"user","content":prompt}],
                 temperature=0.2, response_format={"type":"json_object"}
@@ -120,13 +127,12 @@ def apply_ai_scoring(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
             ai = json.loads(res.choices[0].message.content)
             df.at[idx, "AI_SCORE"] = ai["score"]
             df.at[idx, "AI_REASONS"] = ", ".join(ai["reasons"])
-        except:
-            df.at[idx, "AI_SCORE"] = 50
-            df.at[idx, "AI_REASONS"] = "API fallback"
-            
-    if "PUNTUACION" in df.columns:
-        df["PUNTUACION_FINAL"] = (df["PUNTUACION"]*0.4 + df["AI_SCORE"]*0.6).clip(0,100).round(1)
-    return df
+        if "PUNTUACION" in df.columns:
+            df["PUNTUACION_FINAL"] = (df["PUNTUACION"]*0.4 + df["AI_SCORE"]*0.6).clip(0,100).round(1)
+        return df
+    except Exception as e:
+        st.error(f"❌ AI Scoring: {e}")
+        return df
 
 # =============================================================
 # 3. MOTOR DE DATOS & VALORACIÓN
@@ -138,7 +144,7 @@ def init_sample_data():
         "N_FORM": [f"FRM-{1000+i}" for i in range(n)],
         "FECHA_ENVIO_FORM": pd.date_range(start="2025-03-01", periods=n, freq="3D"),
         "NOMBRE_EMPRESA": np.random.choice(["TechCorp","IndusLab","MediGroup","DataFlow","GreenSolutions"], n),
-        "NOMBRE_ENVIO_MAIL": np.random.choice(["Carlos R.","Ana M.","Luis P.","Sofia T."], n),
+        "NOMBRE_ENVIO_MAIL": np.random.choice(["Carlos R.","Ana M.","Luis P.","Sofia T.","Miguel A."], n),
         "MAIL": [f"user{i}@empresa.com" for i in range(n)],
         "TELÉFONO": [f"+34 600 {np.random.randint(100000,999999)}" for i in range(n)],
         "MENSAJE": np.random.choice(["Interesados consultoría","Solicitan demo","Contacto partnership","Consulta precios"], n),
@@ -151,7 +157,7 @@ def init_sample_data():
         "FACTURACION": np.random.choice(["<1M€","1-5M€","5-20M€",">20M€"], n),
         "VERTICAL_EMPRESA": np.random.choice(["Industrial","Tecnología","Salud","Logística","Finanzas"], n),
         "LINKEDIN": [f"https://linkedin.com/in/user{i}" for i in range(n)],
-        "CARGO": np.random.choice(["CEO","CMO","Director Comercial","Head of Growth","Consultor"], n)
+        "CARGO": np.random.choice(["CEO","CMO","Director Comercial","Head of Growth","Consultor","CTO"], n)
     })
 
 def calcular_valoracion(df):
@@ -170,44 +176,42 @@ def calcular_valoracion(df):
     return df
 
 # =============================================================
-# 4. INICIALIZACIÓN & SIDEBAR
+# 4. SIDEBAR & CARGA INICIAL (Blindada)
 # =============================================================
 with st.sidebar:
     st.image("https://kaibot.es/wp-content/uploads/2020/07/image1.png", width=60)
     st.markdown("### KaiBot Leads")
     st.markdown("---")
     
-    # CHECKBOX CREDENCIALES GOOGLE
-    enable_cloud = st.checkbox("☁️ Activar Integración Cloud (GCS/Sheets)")
-    if enable_cloud:
+    st.session_state.enable_cloud = st.checkbox("☁️ Activar Integración Cloud", value=st.session_state.enable_cloud)
+    
+    if st.session_state.enable_cloud:
         st.markdown("🔑 **Credenciales GCP**")
-        uploaded_creds = st.file_uploader("Subir JSON de Service Account", type=["json"])
+        uploaded_creds = st.file_uploader("Subir JSON SA", type=["json"], key="creds_uploader")
         if uploaded_creds is not None:
             try:
                 st.session_state.gcp_creds = Credentials.from_service_account_info(json.load(uploaded_creds))
-                st.success("✅ Credenciales cargadas en memoria")
-            except Exception as e:
-                st.error(f"❌ JSON inválido: {e}")
-                
-        st.session_state.gcs_bucket = st.text_input("Bucket GCS", placeholder="kaibot-leads-prod")
-        st.session_state.gcs_path = st.text_input("Path GCS", placeholder="leads/active.csv")
-        st.session_state.sheet_url = st.text_input("URL Google Sheets", placeholder="https://docs.google.com/spreadsheets/d/...")
+                st.success("✅ Credenciales en memoria")
+            except Exception as e: st.error(f"❌ JSON inválido: {e}")
+            
+        st.session_state.gcs_bucket = st.text_input("Bucket GCS", value=st.session_state.gcs_bucket, placeholder="kaibot-leads")
+        st.session_state.gcs_path = st.text_input("Path GCS", value=st.session_state.gcs_path, placeholder="leads/active.csv")
+        st.session_state.sheet_url = st.text_input("URL Google Sheets", value=st.session_state.sheet_url, placeholder="https://docs.google.com/spreadsheets/d/...")
         
-    st.markdown("🤖 **OpenAI Scoring**")
-    st.session_state.openai_key = st.text_input("API Key OpenAI", type="password")
+    st.session_state.openai_key = st.text_input("🤖 API Key OpenAI", type="password", value=st.session_state.openai_key)
     
     st.markdown("---")
-    st.markdown("🔍 **Filtros Avanzados**")
-    search = st.text_input("Buscar empresa/email/cargo", placeholder="Ej: TechCorp, CMO...")
+    st.markdown("🔍 **Filtros**")
+    search = st.text_input("Buscar", placeholder="Empresa, email...")
     col1, col2 = st.columns(2)
-    with col1: vertical_sel = st.multiselect("Vertical", options=["Todas"], default=["Todas"])
-    with col2: tipo_sel = st.multiselect("Tipo Form", options=["Todos"], default=["Todos"])
-    cliente_sel = st.selectbox("¿Es Cliente?", ["Todos", "Sí", "No"])
-    exito_sel = st.selectbox("Formulario Finalizado?", ["Todos", "Sí", "No", "Parcial"])
+    with col1: vertical = st.multiselect("Vertical", options=["Todas"], default=["Todas"])
+    with col2: tipo_form = st.multiselect("Tipo Form", options=["Todos"], default=["Todos"])
+    cliente = st.selectbox("¿Es Cliente?", ["Todos", "Sí", "No"])
+    exito = st.selectbox("Finalizado?", ["Todos", "Sí", "No", "Parcial"])
     min_val, max_val = st.slider("Rango Valor (€)", 0, 20000, (0, 20000), 100)
     
     st.markdown("---")
-    st.markdown("📥 **Importar/Exportar**")
+    st.markdown("📥 **Importar**")
     uploaded = st.file_uploader("Cargar CSV", type=["csv"])
     if uploaded:
         try:
@@ -217,42 +221,41 @@ with st.sidebar:
             st.rerun()
         except Exception as e: st.error(f"❌ {e}")
         
-    if enable_cloud and st.session_state.get("sheet_url") and st.session_state.get("gcp_creds"):
-        if st.button("🔄 Sync Cloud", type="primary"):
-            push_to_sheets(st.session_state.leads_df, st.session_state.sheet_url)
-            save_to_gcs(st.session_state.leads_df, st.session_state.gcs_bucket, st.session_state.gcs_path)
-            
+    if st.session_state.enable_cloud and st.button("🔄 Sync Cloud", type="primary"):
+        push_to_sheets(st.session_state.leads_df)
+        save_to_gcs(st.session_state.leads_df)
+        
     if st.button("📤 Exportar CSV"):
         csv = st.session_state.df_filtrado.to_csv(index=False).encode("utf-8")
         st.download_button("Descargar", csv, f"leads_{datetime.now():%Y%m%d}.csv", "text/csv")
 
-# Carga inicial segura
+# Carga inicial segura (Evita AttributeError)
 if "leads_df" not in st.session_state:
     df_init = None
-    if enable_cloud and st.session_state.get("gcs_bucket") and st.session_state.get("gcp_creds"):
-        df_init = load_from_gcs(st.session_state.gcs_bucket, st.session_state.gcs_path)
-    if df_init is None or df_init.empty and enable_cloud and st.session_state.get("sheet_url"):
-        df_init = pull_from_sheets(st.session_state.sheet_url)
+    if st.session_state.enable_cloud and st.session_state.gcs_bucket and st.session_state.gcs_path:
+        df_init = load_from_gcs()
+    if (df_init is None or df_init.empty) and st.session_state.enable_cloud and st.session_state.sheet_url:
+        df_init = pull_from_sheets()
     if df_init is None or df_init.empty:
         df_init = init_sample_data()
     st.session_state.leads_df = calcular_valoracion(df_init)
 
 df_raw = st.session_state.leads_df
 
-# Preparar filtros dinámicos
+# Filtros dinámicos
 if "VERTICAL_EMPRESA" in df_raw.columns:
-    v_options = df_raw["VERTICAL_EMPRESA"].unique().tolist()
-    if "Todas" in vertical_sel and len(v_options)>0: vertical_sel = v_options
+    v_opts = df_raw["VERTICAL_EMPRESA"].unique().tolist()
+    if "Todas" in vertical and v_opts: vertical = v_opts
 if "TIPO_FORM" in df_raw.columns:
-    t_options = df_raw["TIPO_FORM"].unique().tolist()
-    if "Todos" in tipo_sel and len(t_options)>0: tipo_sel = t_options
+    t_opts = df_raw["TIPO_FORM"].unique().tolist()
+    if "Todos" in tipo_form and t_opts: tipo_form = t_opts
 
 df_f = df_raw.copy()
 if search: df_f = df_f[df_f.apply(lambda r: search.lower() in r.astype(str).str.lower().sum(), axis=1)]
-if "VERTICAL_EMPRESA" in df_f.columns and vertical_sel != ["Todas"]: df_f = df_f[df_f["VERTICAL_EMPRESA"].isin(vertical_sel)]
-if "TIPO_FORM" in df_f.columns and tipo_sel != ["Todos"]: df_f = df_f[df_f["TIPO_FORM"].isin(tipo_sel)]
-if cliente_sel!="Todos": df_f = df_f[df_f["SON_CLIENTE"]==cliente_sel]
-if exito_sel!="Todos": df_f = df_f[df_f["ORIGEN_FORM_HA_FINALIZADO"]==exito_sel]
+if "VERTICAL_EMPRESA" in df_f.columns and vertical != ["Todas"]: df_f = df_f[df_f["VERTICAL_EMPRESA"].isin(vertical)]
+if "TIPO_FORM" in df_f.columns and tipo_form != ["Todos"]: df_f = df_f[df_f["TIPO_FORM"].isin(tipo_form)]
+if cliente!="Todos": df_f = df_f[df_f["SON_CLIENTE"]==cliente]
+if exito!="Todos": df_f = df_f[df_f["ORIGEN_FORM_HA_FINALIZADO"]==exito]
 df_f = df_f[(df_f["VALOR_LEAD"]>=min_val) & (df_f["VALOR_LEAD"]<=max_val)].sort_values("FECHA_ENVIO_FORM", ascending=False)
 st.session_state.df_filtrado = df_f
 
@@ -260,7 +263,7 @@ st.session_state.df_filtrado = df_f
 # 5. MAIN UI
 # =============================================================
 st.markdown('### 📊 Panel de Leads & Valoración')
-st.caption("Gestión, análisis y scoring inteligente de leads captados por formularios.")
+st.caption("Gestión, análisis y scoring inteligente de leads B2B.")
 st.markdown("---")
 
 tab1, tab2, tab3 = st.tabs(["📈 Dashboard KPIs", "📋 Lista Interactiva", "🔍 Detalle & IA"])
@@ -270,14 +273,12 @@ with tab1:
     val_t = df_f["VALOR_LEAD"].sum(); cost_t = df_f["COSTE_DEL_LEAD"].sum()
     roi = ((val_t-cost_t)/cost_t) if cost_t>0 else 0
     cli = len(df_f[df_f["SON_CLIENTE"]=="Sí"])
-    st.markdown(f'<div class="kpi-card"><div class="kpi-label">Leads Activos</div><div class="kpi-value">{len(df_f)}</div></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="kpi-card"><div class="kpi-label">Valor Pipeline</div><div class="kpi-value">{val_t:,.0f}€</div></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="kpi-card"><div class="kpi-label">ROI Global</div><div class="kpi-value">{roi:.2f}x</div></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes</div><div class="kpi-value">{cli} ({cli/max(len(df_f),1)*100:.1f}%)</div></div>', unsafe_allow_html=True)
-    c1,c2 = st.columns(2)
+    st.markdown(f'<div class="kpi-card"><div class="kpi-label">Leads</div><div class="kpi-value">{len(df_f)}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="kpi-card"><div class="kpi-label">Pipeline</div><div class="kpi-value">{val_t:,.0f}€</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="kpi-card"><div class="kpi-label">ROI</div><div class="kpi-value">{roi:.2f}x</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes</div><div class="kpi-value">{cli}</div></div>', unsafe_allow_html=True)
     if len(df_f)>0:
-        c1.bar_chart(df_f.groupby("VERTICAL_EMPRESA")["VALOR_LEAD"].sum())
-        c2.bar_chart(df_f.groupby("TIPO_FORM")["VALOR_LEAD"].mean())
+        st.bar_chart(df_f.groupby("VERTICAL_EMPRESA")["VALOR_LEAD"].sum())
 
 with tab2:
     st.dataframe(df_f, use_container_width=True, hide_index=True)
@@ -302,17 +303,17 @@ with tab3:
             idx = st.session_state.leads_df[st.session_state.leads_df["N_FORM"]==sel].index[0]
             st.session_state.leads_df.at[idx, "ANOTACIONES"] = new_note
             st.session_state.leads_df = calcular_valoracion(st.session_state.leads_df)
+            if st.session_state.enable_cloud and st.session_state.sheet_url: push_to_sheets(st.session_state.leads_df)
             st.success("✅ Actualizado")
-            if enable_cloud and st.session_state.get("sheet_url"): push_to_sheets(st.session_state.leads_df, st.session_state.sheet_url)
             st.rerun()
             
         if st.button("🤖 Recalcular con IA"):
-            if not st.session_state.get("openai_key"): st.warning("Introduce API Key de OpenAI en el sidebar"); st.stop()
+            if not st.session_state.openai_key: st.warning("Introduce API Key OpenAI en el sidebar"); st.stop()
             with st.spinner("Analizando con GPT-4o-mini..."):
                 st.session_state.leads_df = apply_ai_scoring(st.session_state.leads_df, st.session_state.openai_key)
                 if "PUNTUACION_FINAL" in st.session_state.leads_df.columns:
                     st.session_state.leads_df["PUNTUACION"] = st.session_state.leads_df["PUNTUACION_FINAL"]
-                st.success("✅ Scoring IA aplicado (Pesa 60% IA / 40% Reglas)")
+                st.success("✅ Scoring IA aplicado (60% IA / 40% Reglas)")
                 st.rerun()
 
 st.markdown('<div class="kaibot-footer">© 2026 KaiBot. Optimizado para gestión comercial B2B.</div>', unsafe_allow_html=True)
