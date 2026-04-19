@@ -50,7 +50,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =============================================================
-# 2. MOTOR DE DATOS & VALORACIÓN
+# 2. CONFIGURACIÓN & CONSTANTES
 # =============================================================
 CAMPOS_REQ = [
     "N_FORM", "FECHA_ENVIO_FORM", "NOMBRE_EMPRESA", "NOMBRE_ENVIO_MAIL", "MAIL",
@@ -59,7 +59,11 @@ CAMPOS_REQ = [
     "VERTICAL_EMPRESA", "LINKEDIN", "CARGO"
 ]
 
+# =============================================================
+# 3. FUNCIONES DE DATOS & VALORACIÓN
+# =============================================================
 def init_sample_data():
+    """Genera datos de ejemplo para demostración"""
     np.random.seed(42)
     n = 25
     data = {
@@ -87,8 +91,10 @@ def init_sample_data():
     return df
 
 def calcular_valoracion(df):
+    """Calcula ROI, Puntuación y Estado del lead"""
     df = df.copy()
-    df.columns = df.columns.str.strip()
+    df.columns = df.columns.str.strip()  # Limpieza crítica de espacios
+    
     df["ROI_LEAD"] = np.where(df["COSTE_DEL_LEAD"] > 0, (df["VALOR_LEAD"] - df["COSTE_DEL_LEAD"]) / df["COSTE_DEL_LEAD"], 0).round(2)
     df["PUNTUACION"] = 0
     df.loc[df["SON_CLIENTE"] == "Sí", "PUNTUACION"] += 20
@@ -97,43 +103,100 @@ def calcular_valoracion(df):
     df.loc[df["CARGO"].isin(["CEO", "CMO", "Director Comercial"]), "PUNTUACION"] += 25
     df.loc[df["FACTURACION"].isin(["5-20M€", ">20M€"]), "PUNTUACION"] += 10
     df["PUNTUACION"] = df["PUNTUACION"].clip(0, 100)
+    
     conditions = [df["PUNTUACION"] >= 75, df["PUNTUACION"] >= 50, df["PUNTUACION"] >= 25]
     choices = ["🟢 Alto Potencial", "🟡 Medio", "🔴 Bajo"]
     df["ESTADO_VALOR"] = np.select(conditions, choices, default="🔴 Bajo")
     return df
 
-def consultar_openai(row, api_key):
+# =============================================================
+# 4. FUNCIONES OPENAI ENRIQUECIDAS
+# =============================================================
+def buscar_contexto_empresa(nombre_empresa, api_key):
+    """Obtiene contexto sobre la empresa usando OpenAI"""
+    if not api_key or not nombre_empresa:
+        return None
+    try:
+        client = openai.OpenAI(api_key=api_key)
+        prompt = f"""
+        Actúa como analista de inteligencia comercial. Investiga brevemente: {nombre_empresa}
+        Devuelve SOLO JSON: {{"sector_principal": "string", "tipo_negocio": "B2B"|"B2C"|"B2B2C"|"Desconocido", "tamano_estimado": "Micro (<10)"|"Pequeña (10-50)"|"Mediana (50-250)"|"Grande (250+)"|"Desconocido", "madurez_digital": "Alta"|"Media"|"Baja"|"Desconocido", "presencia_online": "string", "notas_clave": ["string"]}}
+        Si no tienes información, usa "Desconocido".
+        """
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": "Experto en inteligencia de mercado B2B."}, {"role": "user", "content": prompt}],
+            temperature=0.3, response_format={"type": "json_object"}
+        )
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        return None
+
+def consultar_openai_enriquecido(row, api_key, icp_config=None):
+    """Scoring predictivo con contexto de empresa + análisis de tipología + fit con ICP"""
     if not api_key:
         return None, None, "⚠️ Introduce tu API Key de OpenAI en el sidebar."
-    prompt = f"""Actúa como experto en ventas B2B. Evalúa este lead del 0 al 100.
-Devuelve SOLO JSON válido: {{"score": int, "reasons": ["string"], "recommendation": "string"}}
-Datos del lead:
-- Empresa: {row.get('NOMBRE_EMPRESA','N/A')}
-- Vertical: {row.get('VERTICAL_EMPRESA','N/A')}
-- Facturación: {row.get('FACTURACION','N/A')}
-- Cargo contacto: {row.get('CARGO','N/A')}
-- Mensaje recibido: {row.get('MENSAJE','N/A')}
-- ¿Es cliente actual?: {row.get('SON_CLIENTE','N/A')}
-"""
+    
+    # 1. Obtener contexto de la empresa
+    empresa_info = buscar_contexto_empresa(row.get('NOMBRE_EMPRESA', ''), api_key) if row.get('NOMBRE_EMPRESA') else None
+    
+    # 2. Preparar contexto para el prompt
+    contexto_empresa = f"""
+    - Sector: {empresa_info.get('sector_principal', 'Desconocido') if empresa_info else 'No disponible'}
+    - Tipo: {empresa_info.get('tipo_negocio', 'Desconocido') if empresa_info else 'No disponible'}
+    - Tamaño: {empresa_info.get('tamano_estimado', 'Desconocido') if empresa_info else 'No disponible'}
+    - Madurez digital: {empresa_info.get('madurez_digital', 'Desconocido') if empresa_info else 'No disponible'}
+    - Notas: {', '.join(empresa_info.get('notas_clave', [])) if empresa_info and empresa_info.get('notas_clave') else 'Sin datos'}
+    """ if empresa_info else "- Sin información disponible"
+    
+    # 3. Configuración ICP por defecto
+    icp_default = {"sectores_prioritarios": ["Tecnología", "Industrial", "Salud", "Finanzas"], "tamano_minimo": "Pequeña (10-50)", "cargos_decision": ["CEO", "CMO", "Director Comercial", "Head of Growth", "CTO"], "facturacion_min": "1-5M€"}
+    icp = icp_config if icp_config else icp_default
+    
+    # 4. Prompt principal de scoring
+    prompt = f"""
+    Actúa como experto en scoring predictivo B2B para KaiBot. Evalúa este lead del 0 al 100.
+    
+    🎯 ICP (Ideal Customer Profile):
+    - Sectores: {', '.join(icp['sectores_prioritarios'])} | Tamaño mín: {icp['tamano_minimo']} | Cargos: {', '.join(icp['cargos_decision'])} | Facturación mín: {icp['facturacion_min']}
+    
+    📋 DATOS DEL LEAD:
+    - Empresa: {row.get('NOMBRE_EMPRESA','N/A')} | Vertical: {row.get('VERTICAL_EMPRESA','N/A')} | Facturación: {row.get('FACTURACION','N/A')}
+    - Cargo: {row.get('CARGO','N/A')} | Mensaje: {row.get('MENSAJE','N/A')} | ¿Cliente?: {row.get('SON_CLIENTE','N/A')} | Anotaciones: {row.get('ANOTACIONES','N/A')}
+    
+    🔍 CONTEXTO EXTERNO:
+    {contexto_empresa}
+    
+    📊 CRITERIOS (pondera inteligentemente):
+    1. FIT CON ICP (40%): ¿Coincide sector, tamaño, cargo y facturación?
+    2. INTENCIÓN (30%): ¿El mensaje muestra urgencia, presupuesto o necesidad clara?
+    3. CALIDAD DATOS (15%): ¿Información completa vs. genérica?
+    4. POTENCIAL (15%): ¿Valor lead vs. coste + probabilidad de upsell?
+    
+    ⚠️ PENALIZACIONES: -10-20 pts si B2C (buscamos B2B) | -10 pts si cargo sin poder decisión | -5-15 pts si madurez digital baja en tech | -10 pts si mensaje genérico
+    ✅ BONIFICACIONES: +10-15 pts si cliente actual | +10 pts si sector prioritario + tamaño encaja | +5-10 pts si conoce nuestra propuesta
+    
+    Devuelve SOLO JSON: {{"score": int, "reasons": ["string"], "recommendation": "string (max 15 palabras)", "fit_icp": "Alto"|"Medio"|"Bajo", "risk_factors": ["string"], "next_step_suggested": "string"}}
+    """
+    
     try:
         client = openai.OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "Eres un analista comercial experto en scoring predictivo B2B."},
-                      {"role": "user", "content": prompt}],
-            temperature=0.2,
-            response_format={"type": "json_object"}
+            messages=[{"role": "system", "content": "Analista comercial experto en scoring predictivo B2B con enfoque en ROI."}, {"role": "user", "content": prompt}],
+            temperature=0.2, response_format={"type": "json_object"}, max_tokens=500
         )
         ai_data = json.loads(response.choices[0].message.content)
+        ai_data["contexto_empresa"] = empresa_info
+        ai_data["icp_used"] = icp
         return ai_data, prompt, None
     except Exception as e:
         return None, prompt, f"❌ Error OpenAI: {str(e)}"
 
 # =============================================================
-# 3. FUNCIONES GOOGLE CLOUD STORAGE
+# 5. FUNCIONES GOOGLE CLOUD STORAGE
 # =============================================================
 def upload_to_gcs(df, bucket_name, blob_name, credentials_info=None):
-    """Sube DataFrame a GCS como CSV"""
     try:
         if credentials_info:
             from google.oauth2 import service_account
@@ -150,7 +213,6 @@ def upload_to_gcs(df, bucket_name, blob_name, credentials_info=None):
         return False, str(e)
 
 def download_from_gcs(bucket_name, blob_name, credentials_info=None):
-    """Descarga CSV desde GCS"""
     try:
         if credentials_info:
             from google.oauth2 import service_account
@@ -169,7 +231,6 @@ def download_from_gcs(bucket_name, blob_name, credentials_info=None):
         return None, str(e)
 
 def list_gcs_files(bucket_name, prefix="", credentials_info=None):
-    """Lista archivos en el bucket"""
     try:
         if credentials_info:
             from google.oauth2 import service_account
@@ -184,7 +245,7 @@ def list_gcs_files(bucket_name, prefix="", credentials_info=None):
         return [], str(e)
 
 # =============================================================
-# 4. INICIALIZACIÓN & SESSION STATE
+# 6. INICIALIZACIÓN & SESSION STATE
 # =============================================================
 if "leads_df" not in st.session_state:
     st.session_state.leads_df = calcular_valoracion(init_sample_data())
@@ -202,11 +263,13 @@ if "gcs_creds" not in st.session_state:
     st.session_state.gcs_creds = None
 if "gcs_bucket" not in st.session_state:
     st.session_state.gcs_bucket = ""
+if "icp_config" not in st.session_state:
+    st.session_state.icp_config = {"sectores_prioritarios": ["Tecnología", "Industrial", "Salud", "Finanzas"], "tamano_minimo": "Pequeña (10-50)", "cargos_decision": ["CEO", "CMO", "Director Comercial", "Head of Growth", "CTO"], "facturacion_min": "1-5M€"}
 
 df_raw = st.session_state.leads_df
 
 # =============================================================
-# 5. SIDEBAR
+# 7. SIDEBAR
 # =============================================================
 with st.sidebar:
     st.markdown('<div style="text-align:center;"><img src="https://kaibot.es/wp-content/uploads/2020/07/image1.png" width="50"><h3 style="color:white;margin:10px 0;">KaiBot Leads</h3></div>', unsafe_allow_html=True)
@@ -215,6 +278,16 @@ with st.sidebar:
     # 🤖 OpenAI Config
     st.markdown("🤖 **Configuración IA**")
     st.session_state.openai_key = st.text_input("API Key OpenAI", type="password", value=st.session_state.openai_key, placeholder="sk-proj-...")
+    
+    # 🎯 ICP Configuration
+    st.markdown("🎯 **ICP - Perfil Cliente Ideal**")
+    with st.expander("⚙️ Ajustar criterios de scoring"):
+        icp_sectores = st.multiselect("Sectores prioritarios", ["Tecnología", "Industrial", "Salud", "Logística", "Finanzas", "Retail", "Energía", "Educación"], default=st.session_state.icp_config["sectores_prioritarios"])
+        icp_tamano = st.selectbox("Tamaño mínimo objetivo", ["Micro (<10)", "Pequeña (10-50)", "Mediana (50-250)", "Grande (250+)"], index=["Micro (<10)", "Pequeña (10-50)", "Mediana (50-250)", "Grande (250+)"].index(st.session_state.icp_config["tamano_minimo"]))
+        icp_cargos = st.multiselect("Cargos con poder de decisión", ["CEO", "CMO", "Director Comercial", "Head of Growth", "CTO", "Director Marketing", "Consultor"], default=st.session_state.icp_config["cargos_decision"])
+        icp_facturacion = st.selectbox("Facturación mínima", ["<1M€", "1-5M€", "5-20M€", ">20M€"], index=["<1M€", "1-5M€", "5-20M€", ">20M€"].index(st.session_state.icp_config["facturacion_min"]))
+        st.session_state.icp_config = {"sectores_prioritarios": icp_sectores, "tamano_minimo": icp_tamano, "cargos_decision": icp_cargos, "facturacion_min": icp_facturacion}
+        st.caption("Estos criterios ponderan el scoring IA")
     
     # ☁️ Google Cloud Storage
     st.markdown("---")
@@ -229,7 +302,6 @@ with st.sidebar:
         except Exception as e:
             st.error(f"❌ JSON inválido: {e}")
     
-    # Operaciones GCS
     col_gcs1, col_gcs2 = st.columns(2)
     with col_gcs1:
         if st.button("💾 Guardar en GCS", use_container_width=True):
@@ -238,10 +310,7 @@ with st.sidebar:
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     blob_name = f"leads/leads_{timestamp}.csv"
                     ok, err = upload_to_gcs(st.session_state.leads_df, st.session_state.gcs_bucket, blob_name, st.session_state.gcs_creds)
-                    if ok:
-                        st.success(f"✅ Guardado: {blob_name}")
-                    else:
-                        st.error(f"❌ Error: {err}")
+                    st.success(f"✅ Guardado: {blob_name}") if ok else st.error(f"❌ Error: {err}")
             else:
                 st.warning("⚠️ Configura Bucket y credenciales primero")
     
@@ -317,7 +386,7 @@ df_f = df_f.sort_values("FECHA_ENVIO_FORM", ascending=False)
 st.session_state.df_filtrado = df_f
 
 # =============================================================
-# 6. MAIN UI - 4 PESTAÑAS
+# 8. MAIN UI - 4 PESTAÑAS
 # =============================================================
 st.markdown('<div style="display:flex;align-items:center;gap:10px;"><img src="https://kaibot.es/wp-content/uploads/2020/07/image1.png" width="30"><h2 style="margin:0;">Panel de Leads & Valoración</h2></div>', unsafe_allow_html=True)
 st.caption("Gestión, análisis y scoring inteligente de leads B2B. Con integración Cloud e IA.")
@@ -401,16 +470,19 @@ with tab3:
                 st.success("✅ Actualizado")
                 st.rerun()
         with col_btn2:
-            if st.button("🤖 Consultar OpenAI"):
-                ai_res, ai_prompt, err = consultar_openai(row.to_dict(), st.session_state.openai_key)
+            if st.button("🤖 Consultar OpenAI (Enriquecido)"):
+                ai_res, ai_prompt, err = consultar_openai_enriquecido(row.to_dict(), st.session_state.openai_key, st.session_state.icp_config)
                 if err:
                     st.error(err)
                 else:
                     idx = st.session_state.leads_df.index[st.session_state.leads_df["N_FORM"]==sel_lead]
                     st.session_state.leads_df.loc[idx, "AI_SCORE"] = ai_res.get("score")
-                    st.session_state.leads_df.loc[idx, "AI_REASONING"] = ", ".join(ai_res.get("reasons", []))
+                    st.session_state.leads_df.loc[idx, "AI_REASONING"] = "; ".join(ai_res.get("reasons", []))
+                    st.session_state.leads_df.loc[idx, "AI_FIT_ICP"] = ai_res.get("fit_icp", "Desconocido")
+                    st.session_state.leads_df.loc[idx, "AI_RECOMMENDATION"] = ai_res.get("recommendation", "")
+                    st.session_state.leads_df.loc[idx, "AI_NEXT_STEP"] = ai_res.get("next_step_suggested", "")
                     st.session_state.ai_cache[sel_lead] = {"response": ai_res, "prompt": ai_prompt}
-                    st.success("✅ Análisis IA generado")
+                    st.success("✅ Análisis IA enriquecido generado")
                 st.rerun()
                 
         # Mostrar Prompt y Respuesta OpenAI
@@ -421,14 +493,45 @@ with tab3:
                 st.code(cache["prompt"], language="markdown")
             with st.expander("📥 Respuesta Recibida (JSON)", expanded=True):
                 st.json(cache["response"])
+            
+            # Visualización enriquecida
             if "score" in cache["response"]:
-                c_a, c_b = st.columns(2)
-                c_a.metric("Score IA", f"{cache['response']['score']}/100")
-                c_b.markdown(f"**Recomendación:** {cache['response'].get('recommendation', '')}")
+                ai_score = cache["response"]["score"]
+                fit_icp = cache["response"].get("fit_icp", "Desconocido")
+                rec = cache["response"].get("recommendation", "")
+                next_step = cache["response"].get("next_step_suggested", "")
+                risks = cache["response"].get("risk_factors", [])
+                
+                fit_colors = {"Alto": "🟢", "Medio": "🟡", "Bajo": "🔴"}
+                st.markdown(f"**Fit con ICP:** {fit_colors.get(fit_icp, '⚪')} {fit_icp}")
+                
+                c_a, c_b, c_c = st.columns(3)
+                c_a.metric("Score IA", f"{ai_score}/100", delta=f"{ai_score - row['PUNTUACION']} vs Reglas")
+                c_b.markdown(f"**Recomendación:** {rec}")
+                c_c.markdown(f"**Próximo paso:** {next_step}")
+                
                 if cache["response"].get("reasons"):
-                    st.markdown("**Razones clave:**")
+                    st.markdown("**🔑 Razones clave del scoring:**")
                     for r in cache["response"]["reasons"]:
                         st.write(f"• {r}")
+                if risks:
+                    st.markdown("**⚠️ Factores de riesgo detectados:**")
+                    for r in risks:
+                        st.warning(f"• {r}")
+                if cache["response"].get("contexto_empresa"):
+                    ctx = cache["response"]["contexto_empresa"]
+                    with st.expander("🏢 Contexto externo de la empresa"):
+                        st.markdown(f"""
+                        - **Sector:** {ctx.get('sector_principal', 'N/A')}
+                        - **Tipo:** {ctx.get('tipo_negocio', 'N/A')}
+                        - **Tamaño:** {ctx.get('tamano_estimado', 'N/A')}
+                        - **Madurez digital:** {ctx.get('madurez_digital', 'N/A')}
+                        - **Presencia online:** {ctx.get('presencia_online', 'N/A')}
+                        """)
+                        if ctx.get('notas_clave'):
+                            st.markdown("**Notas:**")
+                            for nota in ctx['notas_clave']:
+                                st.caption(f"• {nota}")
 
 # TAB 4: Nuevo Lead (con scoring IA automático)
 with tab4:
@@ -479,11 +582,14 @@ with tab4:
                 # 2. Scoring IA automático si hay API Key
                 if st.session_state.openai_key:
                     with st.spinner("🤖 Calculando scoring con IA..."):
-                        ai_res, _, err = consultar_openai(nuevo_registro, st.session_state.openai_key)
+                        ai_res, _, err = consultar_openai_enriquecido(nuevo_registro, st.session_state.openai_key, st.session_state.icp_config)
                         if not err and ai_res:
                             idx = st.session_state.leads_df.index[st.session_state.leads_df["N_FORM"]==new_id]
                             st.session_state.leads_df.loc[idx, "AI_SCORE"] = ai_res.get("score")
-                            st.session_state.leads_df.loc[idx, "AI_REASONING"] = ", ".join(ai_res.get("reasons", []))
+                            st.session_state.leads_df.loc[idx, "AI_REASONING"] = "; ".join(ai_res.get("reasons", []))
+                            st.session_state.leads_df.loc[idx, "AI_FIT_ICP"] = ai_res.get("fit_icp", "Desconocido")
+                            st.session_state.leads_df.loc[idx, "AI_RECOMMENDATION"] = ai_res.get("recommendation", "")
+                            st.session_state.leads_df.loc[idx, "AI_NEXT_STEP"] = ai_res.get("next_step_suggested", "")
                             st.session_state.ai_cache[new_id] = {"response": ai_res}
                 
                 # 3. Auto-seleccionar en Tab 3
