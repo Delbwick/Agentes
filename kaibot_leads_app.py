@@ -30,42 +30,106 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+    /* VARIABLES DE ESTILO MINIMALISTA (B&N/Grises) */
     :root {
-        --kaibot-blue: #0066CC;
-        --kaibot-blue-hover: #0052A3;
-        --kaibot-dark: #1E293B;
-        --kaibot-gray: #64748B;
-        --kaibot-light: #F8FAFC;
-        --sidebar-bg: #0F172A;
+        --kaibot-primary: #111827; /* Negro casi puro */
+        --kaibot-primary-hover: #374151; /* Gris oscuro */
+        --kaibot-bg: #F9FAFB; /* Fondo app gris muy claro */
+        --kaibot-sidebar-bg: #FFFFFF; /* Sidebar blanco */
+        --kaibot-text: #111827;
+        --kaibot-text-muted: #6B7280;
+        --border-color: #E5E7EB;
         --success: #10B981;
         --warning: #F59E0B;
         --danger: #EF4444;
     }
-    .main { background-color: var(--kaibot-light); }
-    h1, h2, h3, h4 { color: var(--kaibot-dark); font-weight: 600; }
-    .stButton > button[kind="primary"] { background-color: var(--kaibot-blue); color: white; border: none; font-weight: 500; }
-    .stButton > button[kind="primary"]:hover { background-color: var(--kaibot-blue-hover); }
-    .stButton > button { width: 100%; }
-    .stTabs [data-baseweb="tab-list"] { background: white; border-bottom: 2px solid #E2E8F0; gap: 4px; }
+
+    /* Fondo general */
+    .main { background-color: var(--kaibot-bg); }
+    h1, h2, h3, h4 { color: var(--kaibot-text); font-weight: 700; letter-spacing: -0.5px; }
+    p, span, div { color: var(--kaibot-text); }
+
+    /* SIDEBAR LIMPIO */
+    [data-testid="stSidebar"] { 
+        background-color: var(--kaibot-sidebar-bg); 
+        border-right: 1px solid var(--border-color);
+    }
+    [data-testid="stSidebar"] * { 
+        color: var(--kaibot-text) !important; 
+    }
+    /* Inputs y selects del sidebar */
+    [data-testid="stSidebar"] input, [data-testid="stSidebar"] textarea, [data-testid="stSidebar"] select {
+        background: #F3F4F6 !important; 
+        border: 1px solid var(--border-color) !important; 
+        color: black !important;
+        border-radius: 6px;
+    }
+    [data-testid="stSidebar"] .stButton > button {
+        background-color: var(--kaibot-primary) !important; 
+        color: white !important;
+        border: none !important;
+        border-radius: 6px;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background-color: var(--kaibot-primary-hover) !important;
+    }
+
+    /* BOTONES PRINCIPALES */
+    .stButton > button[kind="primary"], .stButton > button { 
+        background-color: var(--kaibot-primary); 
+        color: white; 
+        border: none; 
+        font-weight: 600; 
+        border-radius: 6px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+    .stButton > button[kind="primary"]:hover, .stButton > button:hover { 
+        background-color: var(--kaibot-primary-hover); 
+        box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+    }
+
+    /* TABS MINIMALISTAS */
+    .stTabs [data-baseweb="tab-list"] { 
+        background: transparent; 
+        border-bottom: 1px solid var(--border-color); 
+        gap: 4px; 
+    }
     .stTabs [data-baseweb="tab-list"] button[role="tab"] { 
-        background: transparent; color: var(--kaibot-gray); font-weight: 500; border-radius: 6px 6px 0 0; 
-        padding: 10px 20px; transition: all 0.2s;
+        background: transparent; 
+        color: var(--kaibot-text-muted); 
+        font-weight: 500; 
+        border-radius: 6px 6px 0 0; 
+        padding: 10px 20px; 
     }
     .stTabs [data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] { 
-        background: var(--kaibot-blue); color: white; font-weight: 600; border-bottom: 3px solid var(--kaibot-blue); 
+        background: var(--kaibot-primary); 
+        color: white; 
+        font-weight: 600; 
+        border-bottom: 3px solid var(--kaibot-primary); 
     }
-    .stTabs [data-baseweb="tab-panel"] { padding: 24px; background: white; border-radius: 0 0 8px 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
-    [data-testid="stSidebar"] { background-color: var(--sidebar-bg); }
-    [data-testid="stSidebar"] * { color: white !important; }
-    [data-testid="stSidebar"] input, [data-testid="stSidebar"] textarea, [data-testid="stSidebar"] select {
-        background: rgba(255,255,255,0.08) !important; border: 1px solid rgba(255,255,255,0.2) !important; color: white !important;
+    .stTabs [data-baseweb="tab-panel"] { 
+        padding: 24px; 
+        background: white; 
+        border-radius: 0 0 8px 8px; 
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05); 
+        border: 1px solid var(--border-color);
+        border-top: none;
     }
-    [data-testid="stSidebar"] .stButton > button[kind="primary"] { background-color: var(--kaibot-blue); border: none; }
-    .kpi-card { background: white; padding: 16px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); text-align: center; }
-    .kpi-value { font-size: 1.8rem; font-weight: 700; color: var(--kaibot-dark); margin: 4px 0; }
-    .kpi-label { font-size: 0.85rem; color: var(--kaibot-gray); text-transform: uppercase; letter-spacing: 0.5px; }
-    .kaibot-footer { text-align: center; color: var(--kaibot-gray); font-size: 0.85rem; margin-top: 40px; padding: 20px 0; border-top: 1px solid #E2E8F0; }
-    .status-badge { display: inline-block; padding: 4px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: 500; }
+
+    /* KPI CARDS */
+    .kpi-card { 
+        background: white; 
+        padding: 20px; 
+        border-radius: 8px; 
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05); 
+        text-align: center; 
+        border: 1px solid var(--border-color);
+    }
+    .kpi-value { font-size: 2rem; font-weight: 800; color: var(--kaibot-primary); margin: 8px 0; }
+    .kpi-label { font-size: 0.8rem; color: var(--kaibot-text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+    
+    /* FOOTER */
+    .kaibot-footer { text-align: center; color: var(--kaibot-text-muted); font-size: 0.8rem; margin-top: 40px; padding: 20px 0; border-top: 1px solid var(--border-color); }
 </style>
 """, unsafe_allow_html=True)
 # =============================================================
