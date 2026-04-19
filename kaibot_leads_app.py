@@ -29,18 +29,31 @@ st.set_page_config(
 )
 
 st.markdown("""
+<style>
     :root {
-        --kaibot-blue: #0066CC; --kaibot-blue-hover: #0052A3; --kaibot-dark: #1E293B;
-        --kaibot-gray: #64748B; --kaibot-light: #F8FAFC; --sidebar-bg: #0F172A;
-        --success: #10B981; --warning: #F59E0B; --danger: #EF4444;
+        --kaibot-blue: #0066CC;
+        --kaibot-blue-hover: #0052A3;
+        --kaibot-dark: #1E293B;
+        --kaibot-gray: #64748B;
+        --kaibot-light: #F8FAFC;
+        --sidebar-bg: #0F172A;
+        --success: #10B981;
+        --warning: #F59E0B;
+        --danger: #EF4444;
     }
     .main { background-color: var(--kaibot-light); }
     h1, h2, h3, h4 { color: var(--kaibot-dark); font-weight: 600; }
     .stButton > button[kind="primary"] { background-color: var(--kaibot-blue); color: white; border: none; font-weight: 500; }
     .stButton > button[kind="primary"]:hover { background-color: var(--kaibot-blue-hover); }
+    .stButton > button { width: 100%; }
     .stTabs [data-baseweb="tab-list"] { background: white; border-bottom: 2px solid #E2E8F0; gap: 4px; }
-    .stTabs [data-baseweb="tab-list"] button[role="tab"] { background: transparent; color: var(--kaibot-gray); font-weight: 500; border-radius: 6px 6px 0 0; padding: 10px 20px; transition: all 0.2s; }
-    .stTabs [data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] { background: var(--kaibot-blue); color: white; font-weight: 600; border-bottom: 3px solid var(--kaibot-blue); }
+    .stTabs [data-baseweb="tab-list"] button[role="tab"] { 
+        background: transparent; color: var(--kaibot-gray); font-weight: 500; border-radius: 6px 6px 0 0; 
+        padding: 10px 20px; transition: all 0.2s;
+    }
+    .stTabs [data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] { 
+        background: var(--kaibot-blue); color: white; font-weight: 600; border-bottom: 3px solid var(--kaibot-blue); 
+    }
     .stTabs [data-baseweb="tab-panel"] { padding: 24px; background: white; border-radius: 0 0 8px 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
     [data-testid="stSidebar"] { background-color: var(--sidebar-bg); }
     [data-testid="stSidebar"] * { color: white !important; }
@@ -52,8 +65,9 @@ st.markdown("""
     .kpi-value { font-size: 1.8rem; font-weight: 700; color: var(--kaibot-dark); margin: 4px 0; }
     .kpi-label { font-size: 0.85rem; color: var(--kaibot-gray); text-transform: uppercase; letter-spacing: 0.5px; }
     .kaibot-footer { text-align: center; color: var(--kaibot-gray); font-size: 0.85rem; margin-top: 40px; padding: 20px 0; border-top: 1px solid #E2E8F0; }
+    .status-badge { display: inline-block; padding: 4px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: 500; }
+</style>
 """, unsafe_allow_html=True)
-
 # =============================================================
 # 2. UTILIDADES CLOUD & IA (Blindadas con .get())
 # =============================================================
