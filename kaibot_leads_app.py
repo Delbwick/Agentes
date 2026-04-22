@@ -7,7 +7,7 @@ import json
 import openai
 
 # =============================================================
-# 1. CONFIGURACIÓN & UX KAIBOT
+## 1. CONFIGURACIÓN & UX KAIBOT
 # =============================================================
 st.set_page_config(
     page_title="KaiBot Lead Manager Pro",
