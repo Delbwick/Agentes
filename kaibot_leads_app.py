@@ -200,108 +200,171 @@ with st.sidebar:
     with c4: exito = st.selectbox("Finalizado?", ["Todos", "Sí", "No", "Parcial"])
     min_val, max_val = st.slider("Valor (€)", 0, int(df_raw["VALOR_LEAD"].max()), (0, int(df_raw["VALOR_LEAD"].max())), 100)
     
-    # =============================================================
-# 📥 IMPORTACIÓN INTELIGENTE (Flexibilidad mejorada)
+# =============================================================
+# 📥 IMPORTACIÓN MEJORADA - UI DE DOS COLUMNAS
 # =============================================================
 st.markdown("---")
 st.markdown("📥 **Importar CSV**")
 
-uploaded = st.file_uploader("Cargar archivo CSV", type=["csv"], key="csv_uploader_new")
-
-# Definimos qué campos son OBLIGATORIOS para que un lead exista
-CAMPOS_CRITICOS = ["NOMBRE_EMPRESA", "MAIL", "FECHA_ENVIO_FORM"]
+uploaded = st.file_uploader("Cargar archivo CSV", type=["csv"], key="csv_importer_v2")
 
 if uploaded is not None:
     try:
         df_up = pd.read_csv(uploaded, encoding='utf-8-sig')
+        # LIMPIAR espacios en nombres de columnas del CSV subido
         df_up.columns = df_up.columns.str.strip()
-        detected_cols = df_up.columns.tolist()
+        detected_cols = sorted(df_up.columns.tolist())
         
-        st.success(f"✅ {len(df_up)} filas detectadas.")
+        st.success(f"✅ {len(df_up)} filas, {len(detected_cols)} columnas detectadas")
         
-        # Inicializar estado de mapeo
-        if "map_state" not in st.session_state:
-            st.session_state.map_state = {}
-            # Intentar auto-mapeo inicial
-            for req in CAMPOS_REQ:
-                req_clean = req.lower().replace(" ", "_")
+        # Columnas requeridas LIMPIAS (sin espacios)
+        CAMPOS_REQ_LIMPIOS = [
+            "N_FORM", "FECHA_ENVIO_FORM", "NOMBRE_EMPRESA", "NOMBRE_ENVIO_MAIL", "MAIL",
+            "TELÉFONO", "MENSAJE", "TIPO_FORM", "SON_CLIENTE", "ANOTACIONES",
+            "VALOR_LEAD", "COSTE_DEL_LEAD", "ORIGEN_FORM_HA_FINALIZADO", "FACTURACION",
+            "VERTICAL_EMPRESA", "LINKEDIN", "CARGO"
+        ]
+        
+        CAMPOS_CRITICOS = ["NOMBRE_EMPRESA", "MAIL"]
+        
+        # Inicializar mapeo en session_state
+        if "column_mapping" not in st.session_state:
+            st.session_state.column_mapping = {}
+            # Auto-mapeo inteligente
+            for req in CAMPOS_REQ_LIMPIOS:
+                req_lower = req.lower()
                 match = None
-                # Lógica simple de búsqueda de coincidencias
                 for det in detected_cols:
-                    det_clean = det.lower().replace(" ", "_")
-                    # Coincidencia exacta o parcial fuerte
-                    if req_clean in det_clean or det_clean in req_clean or "empresa" in det_clean and "empresa" in req_clean:
+                    det_lower = det.lower()
+                    # Coincidencias inteligentes
+                    if req_lower == det_lower:
                         match = det
                         break
-                st.session_state.map_state[req] = match
-
-        with st.expander("⚙️ Configurar mapeo (Opcional)", expanded=True):
-            st.caption("🟢 Campos críticos marcados con *")
-            st.caption("🟡 Campos sin asignar se importarán vacíos.")
+                    elif req_lower in det_lower or det_lower in req_lower:
+                        match = det
+                        break
+                    # Casos especiales
+                    elif "empresa" in req_lower and "empresa" in det_lower:
+                        match = det
+                        break
+                    elif "mail" in req_lower and ("email" in det_lower or "correo" in det_lower):
+                        match = det
+                        break
+                    elif "telefono" in req_lower and "tel" in det_lower:
+                        match = det
+                        break
+                st.session_state.column_mapping[req] = match
+        
+        # Interfaz de mapeo en DOS COLUMNAS
+        with st.expander("⚙️ Mapear Columnas (Revisa el mapeo automático)", expanded=True):
+            st.markdown("**Asocia cada campo de KaiBot con una columna de tu CSV:**")
+            st.caption("💡 Los campos críticos están marcados con 🟢")
             
-            # Interfaz de mapeo
-            for req_col in CAMPOS_REQ:
+            # Mostrar en grid de 2 columnas
+            col_izq, col_der = st.columns(2)
+            
+            with col_izq:
+                st.markdown("**📋 Campo KaiBot**")
+            
+            with col_der:
+                st.markdown("**📁 Columna CSV**")
+            
+            st.markdown("---")
+            
+            for req_col in CAMPOS_REQ_LIMPIOS:
                 is_critical = req_col in CAMPOS_CRITICOS
                 icon = "🟢" if is_critical else "⚪"
                 
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    # Opciones: Nada, Columnas CSV, Opción "Ignorar/Vacío"
-                    # Añadimos una opción explícita para dejar vacío si el usuario quiere
-                    options = ["(Dejar vacío)"] + detected_cols
-                    current_val = st.session_state.map_state.get(req_col)
+                c1, c2 = st.columns([1.5, 2.5])
+                
+                with c1:
+                    st.markdown(f"{icon} **{req_col}**")
+                
+                with c2:
+                    options = ["(No asignar)"] + detected_cols
+                    current = st.session_state.column_mapping.get(req_col)
+                    idx = options.index(current) if current in options else 0
                     
                     selected = st.selectbox(
-                        f"{icon} {req_col}", 
+                        f"Mapeo para {req_col}",
                         options=options,
-                        index=options.index(current_val) if current_val in options else 0,
-                        key=f"sel_{req_col}",
+                        index=idx,
+                        key=f"map_{req_col}",
                         label_visibility="collapsed"
                     )
-                    st.session_state.map_state[req_col] = selected
-                
-                with col2:
-                    status = "✅" if selected != "(Dejar vacío)" else "⚪ Vacío"
-                    st.markdown(f"<div style='text-align:center; margin-top:8px'>{status}</div>", unsafe_allow_html=True)
-
+                    st.session_state.column_mapping[req_col] = selected
+            
             st.markdown("---")
-            col_btn1, col_btn2 = st.columns(2)
+            
+            # Validación y botones
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
+            
+            # Verificar campos críticos
+            critical_ok = all([
+                st.session_state.column_mapping.get(c) and st.session_state.column_mapping.get(c) != "(No asignar)"
+                for c in CAMPOS_CRITICOS
+            ])
+            
             with col_btn1:
-                # Validación: Solo comprobamos los críticos
-                critical_mapped = all([st.session_state.map_state[c] != "(Dejar vacío)" for c in CAMPOS_CRITICOS if c in st.session_state.map_state])
-                
-                if st.button("🚀 IMPORTAR", type="primary", disabled=not critical_mapped, use_container_width=True):
-                    # Crear DataFrame vacío con la estructura final
-                    final_data = {col: [] for col in CAMPOS_REQ}
-                    
-                    # Rellenar datos
-                    for req_col in CAMPOS_REQ:
-                        selected_col = st.session_state.map_state.get(req_col)
-                        
-                        if selected_col and selected_col != "(Dejar vacío)" and selected_col in df_up.columns:
-                            final_data[req_col] = df_up[selected_col].tolist()
-                        else:
-                            # Valores por defecto si no se mapea
-                            if req_col in ["VALOR_LEAD", "COSTE_DEL_LEAD"]: final_data[req_col] = [0.0] * len(df_up)
-                            elif req_col == "PUNTUACION": final_data[req_col] = [0] * len(df_up)
-                            elif req_col == "SON_CLIENTE": final_data[req_col] = ["No"] * len(df_up)
-                            elif req_col == "FECHA_ENVIO_FORM": final_data[req_col] = [datetime.now()] * len(df_up)
-                            elif req_col == "ORIGEN_FORM_HA_FINALIZADO": final_data[req_col] = ["Sí"] * len(df_up)
-                            else: final_data[req_col] = [""] * len(df_up)
-                    
-                    df_final = pd.DataFrame(final_data)
-                    st.session_state.leads_df = calcular_valoracion(df_final)
-                    st.success("✅ Importación exitosa")
-                    st.rerun()
-
+                import_btn = st.button("🚀 IMPORTAR", type="primary", disabled=not critical_ok, use_container_width=True)
+            
             with col_btn2:
-                if st.button("🔄 Reset", use_container_width=True):
-                    st.session_state.map_state = {}
+                if st.button("💾 Guardar Mapeo", use_container_width=True):
+                    st.success("✅ Mapeo guardado para esta sesión")
+            
+            with col_btn3:
+                if st.button("🔄 Resetear", use_container_width=True):
+                    st.session_state.column_mapping = {}
                     st.rerun()
-
+            
+            # Mostrar resumen
+            mapped_count = sum(1 for v in st.session_state.column_mapping.values() if v and v != "(No asignar)")
+            st.caption(f"📊 {mapped_count}/{len(CAMPOS_REQ_LIMPIOS)} campos mapeados")
+            
+            # Ejecutar importación
+            if import_btn:
+                try:
+                    # Crear DataFrame con estructura final
+                    df_final = pd.DataFrame()
+                    
+                    for req_col in CAMPOS_REQ_LIMPIOS:
+                        mapped_col = st.session_state.column_mapping.get(req_col)
+                        
+                        if mapped_col and mapped_col != "(No asignar)" and mapped_col in df_up.columns:
+                            df_final[req_col] = df_up[mapped_col]
+                        else:
+                            # Valores por defecto
+                            if req_col in ["VALOR_LEAD", "COSTE_DEL_LEAD"]:
+                                df_final[req_col] = 0.0
+                            elif req_col in ["PUNTUACION", "ROI_LEAD"]:
+                                df_final[req_col] = 0
+                            elif req_col == "FECHA_ENVIO_FORM":
+                                df_final[req_col] = datetime.now()
+                            elif req_col == "SON_CLIENTE":
+                                df_final[req_col] = "No"
+                            elif req_col == "ORIGEN_FORM_HA_FINALIZADO":
+                                df_final[req_col] = "Sí"
+                            elif req_col == "N_FORM":
+                                df_final[req_col] = f"IMP-{datetime.now().strftime('%Y%m%d')}"
+                            else:
+                                df_final[req_col] = ""
+                    
+                    # Calcular valoraciones
+                    st.session_state.leads_df = calcular_valoracion(df_final)
+                    st.session_state.df_filtrado = st.session_state.leads_df.copy()
+                    
+                    st.balloons()
+                    st.success(f"✅ ¡Importación completada! {len(df_final)} leads añadidos.")
+                    st.info("💡 Ve a la pestaña **📋 Lista** para ver los datos importados")
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error al importar: {str(e)}")
+                    st.exception(e)
+    
     except Exception as e:
-        st.error(f"Error: {e}")
-
+        st.error(f"❌ Error al leer CSV: {str(e)}")
+        st.info("💡 Asegúrate de que el archivo tenga encabezados en la primera fila")
 # Aplicar filtros
 df_f = df_raw.copy()
 if search: df_f = df_f[df_f.apply(lambda r: search.lower() in r.astype(str).str.lower().sum(), axis=1)]
