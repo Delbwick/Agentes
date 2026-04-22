@@ -170,209 +170,144 @@ if "openai_key" not in st.session_state: st.session_state.openai_key = ""
 if "ai_cache" not in st.session_state: st.session_state.ai_cache = {}
 if "icp_config" not in st.session_state: st.session_state.icp_config = DEFAULT_ICP.copy()
 
+# =============================================================
+# LIMPIEZA DE DATOS (CRÍTICO PARA EVITAR ERRORES)
+# =============================================================
 df_raw = st.session_state.leads_df
+# Elimina espacios en blanco al inicio/final de los nombres de columnas
+df_raw.columns = df_raw.columns.str.strip()
 
 with st.sidebar:
-    st.markdown('<div style="text-align:center;"><img src="https://kaibot.es/wp-content/uploads/2020/07/image1.png" width="50"><h3 style="color:white;margin:10px 0;">KaiBot Leads</h3></div>', unsafe_allow_html=True)
+    st.markdown('![](https://kaibot.es/wp-content/uploads/2020/07/image1.png) **KaiBot Leads**', unsafe_allow_html=True)
     st.markdown("---")
     
-    st.markdown("🤖 **Configuración IA**")
-    st.session_state.openai_key = st.text_input("API Key OpenAI", type="password", value=st.session_state.openai_key, placeholder="sk-proj-...")
+    st.markdown("🔍 **Filtros Avanzados**")
+    search = st.text_input("Buscar empresa/email/cargo", placeholder="Ej: TechCorp, CMO...")
+    col1, col2 = st.columns(2)
     
-    st.markdown("🎯 **ICP - Perfil Cliente Ideal**")
-    with st.expander("⚙️ Ajustar criterios"):
-        icp_sectores = st.multiselect("Sectores", ["Tecnología", "Industrial", "Salud", "Logística", "Finanzas", "Retail"], default=st.session_state.icp_config["sectores_prioritarios"])
-        icp_tamano = st.selectbox("Tamaño mín", ["Micro (<10)", "Pequeña (10-50)", "Mediana (50-250)", "Grande (250+)"], index=["Micro (<10)", "Pequeña (10-50)", "Mediana (50-250)", "Grande (250+)"].index(st.session_state.icp_config["tamano_minimo"]))
-        icp_cargos = st.multiselect("Cargos decisión", ["CEO", "CMO", "Director Comercial", "Head of Growth", "CTO"], default=st.session_state.icp_config["cargos_decision"])
-        icp_fact = st.selectbox("Facturación mín", ["<1M€", "1-5M€", "5-20M€", ">20M€"], index=["<1M€", "1-5M€", "5-20M€", ">20M€"].index(st.session_state.icp_config["facturacion_min"]))
-        if st.button("Guardar ICP"):
-            st.session_state.icp_config = {"sectores_prioritarios": icp_sectores, "tamano_minimo": icp_tamano, "cargos_decision": icp_cargos, "facturacion_min": icp_fact}
-            st.success("✅ ICP actualizado")
+    # Usamos nombres de columnas LIMPIOS (sin espacios)
+    with col1:
+        vertical = st.multiselect("Vertical", options=df_raw["VERTICAL_EMPRESA"].unique().tolist(), default=df_raw["VERTICAL_EMPRESA"].unique().tolist())
+    with col2:
+        tipo_form = st.multiselect("Tipo Formulario", options=df_raw["TIPO_FORM"].unique().tolist(), default=df_raw["TIPO_FORM"].unique().tolist())
+        
+    col3, col4 = st.columns(2)
+    with col3:
+        cliente = st.selectbox("¿Es Cliente?", ["Todos", "Sí", "No"])
+    with col4:
+        exito = st.selectbox("Formulario Finalizado?", ["Todos", "Sí", "No", "Parcial"])
+        
+    # SLIDER SEGURO: Maneja dataframes vacíos o valores no numéricos
+    max_val_possible = 20000  # Valor por defecto
+    if "VALOR_LEAD" in df_raw.columns:
+        try:
+            numeric_vals = pd.to_numeric(df_raw["VALOR_LEAD"], errors='coerce')
+            if not numeric_vals.empty and not numeric_vals.isna().all():
+                max_val_possible = int(numeric_vals.max())
+        except:
+            pass
+            
+    min_val, max_val = st.slider("Rango Valor Lead (€)", 0, max_val_possible, (0, max_val_possible), 100)
 
+    # =============================================================
+    # 📥 IMPORTADOR INTELIGENTE CON MAPEO
+    # =============================================================
     st.markdown("---")
-    st.markdown("🔍 **Filtros**")
-    search = st.text_input("Buscar", placeholder="Empresa, email...")
-    c1, c2 = st.columns(2)
-    with c1: vertical = st.multiselect("Vertical", options=df_raw["VERTICAL_EMPRESA"].unique().tolist(), default=df_raw["VERTICAL_EMPRESA"].unique().tolist())
-    with c2: tipo_form = st.multiselect("Tipo", options=df_raw["TIPO_FORM"].unique().tolist(), default=df_raw["TIPO_FORM"].unique().tolist())
-    c3, c4 = st.columns(2)
-    with c3: cliente = st.selectbox("¿Cliente?", ["Todos", "Sí", "No"])
-    with c4: exito = st.selectbox("Finalizado?", ["Todos", "Sí", "No", "Parcial"])
-    min_val, max_val = st.slider("Valor (€)", 0, int(df_raw["VALOR_LEAD"].max()), (0, int(df_raw["VALOR_LEAD"].max())), 100)
+    st.markdown("📥 **Importar CSV**")
     
-# =============================================================
-# 📥 IMPORTACIÓN MEJORADA - UI DE DOS COLUMNAS
-# =============================================================
-st.markdown("---")
-st.markdown("📥 **Importar CSV**")
+    uploaded = st.file_uploader("Cargar archivo CSV", type=["csv"], key="csv_uploader_v2")
+    
+    if uploaded is not None:
+        try:
+            df_up = pd.read_csv(uploaded, encoding='utf-8-sig')
+            df_up.columns = df_up.columns.str.strip() # Limpiar columnas del CSV
+            detected_cols = df_up.columns.tolist()
+            
+            st.success(f"✅ {len(df_up)} filas detectadas.")
+            
+            # Columnas que necesitamos (LIMPIAS)
+            TARGET_COLS = [
+                "N_FORM", "FECHA_ENVIO_FORM", "NOMBRE_EMPRESA", "NOMBRE_ENVIO_MAIL", "MAIL",
+                "TELÉFONO", "MENSAJE", "TIPO_FORM", "SON_CLIENTE", "ANOTACIONES",
+                "VALOR_LEAD", "COSTE_DEL_LEAD", "ORIGEN_FORM_HA_FINALIZADO", "FACTURACION",
+                "VERTICAL_EMPRESA", "LINKEDIN", "CARGO"
+            ]
+            
+            # Inicializar mapeo en sesión
+            if "import_map" not in st.session_state:
+                st.session_state.import_map = {}
+                # Auto-mapeo básico
+                for target in TARGET_COLS:
+                    match = next((c for c in detected_cols if target.lower() in c.lower()), None)
+                    st.session_state.import_map[target] = match
 
-uploaded = st.file_uploader("Cargar archivo CSV", type=["csv"], key="csv_importer_v2")
-
-if uploaded is not None:
-    try:
-        df_up = pd.read_csv(uploaded, encoding='utf-8-sig')
-        # LIMPIAR espacios en nombres de columnas del CSV subido
-        df_up.columns = df_up.columns.str.strip()
-        detected_cols = sorted(df_up.columns.tolist())
-        
-        st.success(f"✅ {len(df_up)} filas, {len(detected_cols)} columnas detectadas")
-        
-        # Columnas requeridas LIMPIAS (sin espacios)
-        CAMPOS_REQ_LIMPIOS = [
-            "N_FORM", "FECHA_ENVIO_FORM", "NOMBRE_EMPRESA", "NOMBRE_ENVIO_MAIL", "MAIL",
-            "TELÉFONO", "MENSAJE", "TIPO_FORM", "SON_CLIENTE", "ANOTACIONES",
-            "VALOR_LEAD", "COSTE_DEL_LEAD", "ORIGEN_FORM_HA_FINALIZADO", "FACTURACION",
-            "VERTICAL_EMPRESA", "LINKEDIN", "CARGO"
-        ]
-        
-        CAMPOS_CRITICOS = ["NOMBRE_EMPRESA", "MAIL"]
-        
-        # Inicializar mapeo en session_state
-        if "column_mapping" not in st.session_state:
-            st.session_state.column_mapping = {}
-            # Auto-mapeo inteligente
-            for req in CAMPOS_REQ_LIMPIOS:
-                req_lower = req.lower()
-                match = None
-                for det in detected_cols:
-                    det_lower = det.lower()
-                    # Coincidencias inteligentes
-                    if req_lower == det_lower:
-                        match = det
-                        break
-                    elif req_lower in det_lower or det_lower in req_lower:
-                        match = det
-                        break
-                    # Casos especiales
-                    elif "empresa" in req_lower and "empresa" in det_lower:
-                        match = det
-                        break
-                    elif "mail" in req_lower and ("email" in det_lower or "correo" in det_lower):
-                        match = det
-                        break
-                    elif "telefono" in req_lower and "tel" in det_lower:
-                        match = det
-                        break
-                st.session_state.column_mapping[req] = match
-        
-        # Interfaz de mapeo en DOS COLUMNAS
-        with st.expander("⚙️ Mapear Columnas (Revisa el mapeo automático)", expanded=True):
-            st.markdown("**Asocia cada campo de KaiBot con una columna de tu CSV:**")
-            st.caption("💡 Los campos críticos están marcados con 🟢")
-            
-            # Mostrar en grid de 2 columnas
-            col_izq, col_der = st.columns(2)
-            
-            with col_izq:
-                st.markdown("**📋 Campo KaiBot**")
-            
-            with col_der:
-                st.markdown("**📁 Columna CSV**")
-            
-            st.markdown("---")
-            
-            for req_col in CAMPOS_REQ_LIMPIOS:
-                is_critical = req_col in CAMPOS_CRITICOS
-                icon = "🟢" if is_critical else "⚪"
+            with st.expander("⚙️ Configurar Mapeo (Revisar automático)", expanded=True):
+                st.caption("🟢 Campos críticos (Empresa, Email)")
                 
-                c1, c2 = st.columns([1.5, 2.5])
-                
-                with c1:
-                    st.markdown(f"{icon} **{req_col}**")
-                
-                with c2:
-                    options = ["(No asignar)"] + detected_cols
-                    current = st.session_state.column_mapping.get(req_col)
-                    idx = options.index(current) if current in options else 0
+                for target_col in TARGET_COLS:
+                    is_critical = target_col in ["NOMBRE_EMPRESA", "MAIL"]
+                    icon = "🟢" if is_critical else "⚪"
                     
-                    selected = st.selectbox(
-                        f"Mapeo para {req_col}",
-                        options=options,
-                        index=idx,
-                        key=f"map_{req_col}",
-                        label_visibility="collapsed"
-                    )
-                    st.session_state.column_mapping[req_col] = selected
-            
-            st.markdown("---")
-            
-            # Validación y botones
-            col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
-            
-            # Verificar campos críticos
-            critical_ok = all([
-                st.session_state.column_mapping.get(c) and st.session_state.column_mapping.get(c) != "(No asignar)"
-                for c in CAMPOS_CRITICOS
-            ])
-            
-            with col_btn1:
-                import_btn = st.button("🚀 IMPORTAR", type="primary", disabled=not critical_ok, use_container_width=True)
-            
-            with col_btn2:
-                if st.button("💾 Guardar Mapeo", use_container_width=True):
-                    st.success("✅ Mapeo guardado para esta sesión")
-            
-            with col_btn3:
-                if st.button("🔄 Resetear", use_container_width=True):
-                    st.session_state.column_mapping = {}
-                    st.rerun()
-            
-            # Mostrar resumen
-            mapped_count = sum(1 for v in st.session_state.column_mapping.values() if v and v != "(No asignar)")
-            st.caption(f"📊 {mapped_count}/{len(CAMPOS_REQ_LIMPIOS)} campos mapeados")
-            
-            # Ejecutar importación
-            if import_btn:
-                try:
-                    # Crear DataFrame con estructura final
-                    df_final = pd.DataFrame()
-                    
-                    for req_col in CAMPOS_REQ_LIMPIOS:
-                        mapped_col = st.session_state.column_mapping.get(req_col)
+                    c1, c2 = st.columns([2, 1])
+                    with c1:
+                        st.markdown(f"{icon} **{target_col}**")
+                    with c2:
+                        options = ["(Dejar vacío)"] + detected_cols
+                        current = st.session_state.import_map.get(target_col)
+                        idx = options.index(current) if current in options else 0
                         
-                        if mapped_col and mapped_col != "(No asignar)" and mapped_col in df_up.columns:
-                            df_final[req_col] = df_up[mapped_col]
-                        else:
-                            # Valores por defecto
-                            if req_col in ["VALOR_LEAD", "COSTE_DEL_LEAD"]:
-                                df_final[req_col] = 0.0
-                            elif req_col in ["PUNTUACION", "ROI_LEAD"]:
-                                df_final[req_col] = 0
-                            elif req_col == "FECHA_ENVIO_FORM":
-                                df_final[req_col] = datetime.now()
-                            elif req_col == "SON_CLIENTE":
-                                df_final[req_col] = "No"
-                            elif req_col == "ORIGEN_FORM_HA_FINALIZADO":
-                                df_final[req_col] = "Sí"
-                            elif req_col == "N_FORM":
-                                df_final[req_col] = f"IMP-{datetime.now().strftime('%Y%m%d')}"
+                        selected = st.selectbox(
+                            f"Map {target_col}", 
+                            options=options, index=idx, 
+                            key=f"map_{target_col}", label_visibility="collapsed"
+                        )
+                        st.session_state.import_map[target_col] = selected
+                
+                st.markdown("---")
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    # Validar que los campos críticos están mapeados
+                    critical_ok = all([st.session_state.import_map.get(c) != "(Dejar vacío)" for c in ["NOMBRE_EMPRESA", "MAIL"]])
+                    
+                    if st.button("🚀 IMPORTAR", type="primary", disabled=not critical_ok, use_container_width=True):
+                        # Construir dataframe final
+                        data_dict = {}
+                        for target_col in TARGET_COLS:
+                            src_col = st.session_state.import_map.get(target_col)
+                            if src_col and src_col != "(Dejar vacío)" and src_col in df_up.columns:
+                                data_dict[target_col] = df_up[src_col]
                             else:
-                                df_final[req_col] = ""
-                    
-                    # Calcular valoraciones
-                    st.session_state.leads_df = calcular_valoracion(df_final)
-                    st.session_state.df_filtrado = st.session_state.leads_df.copy()
-                    
-                    st.balloons()
-                    st.success(f"✅ ¡Importación completada! {len(df_final)} leads añadidos.")
-                    st.info("💡 Ve a la pestaña **📋 Lista** para ver los datos importados")
-                    st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"❌ Error al importar: {str(e)}")
-                    st.exception(e)
-    
-    except Exception as e:
-        st.error(f"❌ Error al leer CSV: {str(e)}")
-        st.info("💡 Asegúrate de que el archivo tenga encabezados en la primera fila")
-# Aplicar filtros
+                                # Valores por defecto
+                                if target_col in ["VALOR_LEAD", "COSTE_DEL_LEAD"]: data_dict[target_col] = 0.0
+                                elif target_col == "FECHA_ENVIO_FORM": data_dict[target_col] = datetime.now()
+                                elif target_col == "SON_CLIENTE": data_dict[target_col] = "No"
+                                elif target_col == "ORIGEN_FORM_HA_FINALIZADO": data_dict[target_col] = "Sí"
+                                else: data_dict[target_col] = ""
+                        
+                        df_new = pd.DataFrame(data_dict)
+                        st.session_state.leads_df = calcular_valoracion(df_new)
+                        st.success("✅ Importación exitosa")
+                        st.rerun()
+                        
+                with col_btn2:
+                    if st.button("🔄 Reset", use_container_width=True):
+                        st.session_state.import_map = {}
+                        st.rerun()
+
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+# =============================================================
+# APLICAR FILTROS (Con nombres de columnas LIMPIOS)
+# =============================================================
 df_f = df_raw.copy()
 if search: df_f = df_f[df_f.apply(lambda r: search.lower() in r.astype(str).str.lower().sum(), axis=1)]
 if vertical != df_raw["VERTICAL_EMPRESA"].unique().tolist(): df_f = df_f[df_f["VERTICAL_EMPRESA"].isin(vertical)]
 if tipo_form != df_raw["TIPO_FORM"].unique().tolist(): df_f = df_f[df_f["TIPO_FORM"].isin(tipo_form)]
 if cliente != "Todos": df_f = df_f[df_f["SON_CLIENTE"] == cliente]
 if exito != "Todos": df_f = df_f[df_f["ORIGEN_FORM_HA_FINALIZADO"] == exito]
-df_f = df_f[(df_f["VALOR_LEAD"] >= min_val) & (df_f["VALOR_LEAD"] <= max_val)].sort_values("FECHA_ENVIO_FORM", ascending=False)
+df_f = df_f[(df_f["VALOR_LEAD"] >= min_val) & (df_f["VALOR_LEAD"] <= max_val)]
+df_f = df_f.sort_values("FECHA_ENVIO_FORM", ascending=False)
 st.session_state.df_filtrado = df_f
 
 # =============================================================
