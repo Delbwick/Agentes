@@ -312,7 +312,7 @@ with tab2:
             st.rerun()
 
 # TAB 3: Detalle
-# TAB 3: Detalle & Análisis (CORREGIDO - Selección por Empresa)
+# TAB 3: Detalle & Análisis (CORREGIDO - Selección por Empresa + OpenAI real)
 with tab3:
     st.markdown("### 🔍 Detalle & Análisis por Empresa")
     
@@ -337,6 +337,9 @@ with tab3:
             row = leads_empresa[leads_empresa["N_FORM"] == form_sel].iloc[0]
         else:
             row = leads_empresa.iloc[0]
+        
+        # Guardar referencia para cache de IA
+        st.session_state.selected_lead = row["N_FORM"]
         
         # Mostrar detalles del lead seleccionado
         c1, c2 = st.columns([2, 1])
@@ -363,11 +366,61 @@ with tab3:
             st.success("✅ Anotación actualizada y scoring recalculado")
             st.rerun()
         
-        # Botón para consultar OpenAI (si está configurado)
-        if st.session_state.openai_key and st.button("🤖 Consultar OpenAI"):
-            with st.spinner("Analizando con IA..."):
-                # Aquí iría la llamada a tu función de OpenAI
-                st.info("🔧 Función de OpenAI pendiente de integrar")
+        # Botón para consultar OpenAI (función real restaurada)
+        if st.button("🤖 Consultar OpenAI"):
+            if not st.session_state.openai_key:
+                st.warning("⚠️ Introduce tu API Key de OpenAI en el sidebar")
+            else:
+                with st.spinner("🔄 Analizando con IA..."):
+                    ai_res, ai_prompt, err = consultar_openai_enriquecido(
+                        row.to_dict(), 
+                        st.session_state.openai_key, 
+                        st.session_state.icp_config
+                    )
+                    if err:
+                        st.error(err)
+                    else:
+                        # Guardar en cache para mostrar prompt/respuesta
+                        st.session_state.ai_cache[row["N_FORM"]] = {
+                            "response": ai_res, 
+                            "prompt": ai_prompt
+                        }
+                        # Actualizar dataframe principal con resultados de IA
+                        idx = st.session_state.leads_df.index[
+                            st.session_state.leads_df["N_FORM"]==row["N_FORM"]
+                        ][0]
+                        st.session_state.leads_df.loc[idx, "AI_SCORE"] = ai_res.get("score")
+                        st.session_state.leads_df.loc[idx, "AI_REASONING"] = "; ".join(ai_res.get("reasons", []))
+                        st.session_state.leads_df.loc[idx, "AI_FIT_ICP"] = ai_res.get("fit_icp", "")
+                        st.session_state.leads_df.loc[idx, "AI_RECOMMENDATION"] = ai_res.get("recommendation", "")
+                        st.session_state.leads_df.loc[idx, "AI_NEXT_STEP"] = ai_res.get("next_step_suggested", "")
+                        st.success("✅ Análisis IA generado y guardado")
+                        st.rerun()
+        
+        # Mostrar resultados de OpenAI si existen en cache
+        if row["N_FORM"] in st.session_state.ai_cache:
+            cache = st.session_state.ai_cache[row["N_FORM"]]
+            st.markdown("### 🧠 Resultado IA")
+            with st.expander("📤 Prompt Enviado a OpenAI", expanded=False):
+                st.code(cache["prompt"], language="markdown")
+            with st.expander("📥 Respuesta Recibida (JSON)", expanded=True):
+                st.json(cache["response"])
+            
+            if "score" in cache["response"]:
+                ai_score = cache["response"]["score"]
+                fit = cache["response"].get("fit_icp", "Desconocido")
+                rec = cache["response"].get("recommendation", "")
+                
+                st.markdown(f"**Fit con ICP:** {'🟢' if fit=='Alto' else '🟡' if fit=='Medio' else '🔴'} {fit}")
+                
+                c_a, c_b = st.columns(2)
+                c_a.metric("Score IA", f"{ai_score}/100", delta=f"{ai_score - row['PUNTUACION']} vs Reglas")
+                c_b.markdown(f"**Recomendación:** {rec}")
+                
+                if cache["response"].get("reasons"):
+                    st.markdown("**🔑 Razones clave del scoring:**")
+                    for r in cache["response"]["reasons"]:
+                        st.write(f"• {r}")
 
 # TAB 4: Nuevo Lead
 with tab4:
