@@ -272,7 +272,7 @@ with tab2:
     }
     
     # Seleccionar columnas para mostrar en el editor
-    display_cols = ["N_FORM", "FECHA_ENVIO_FORM", "NOMBRE_EMPRESA", "MAIL", "CARGO", "VERTICAL_EMPRESA", "FACTURACION", "SON_CLIENTE", "ORIGEN_FORM_HA_FINALIZADO", "VALOR_LEAD", "COSTE_DEL_LEAD", "ANOTACIONES", "PUNTUACION", "ESTADO_VALOR", "ROI_LEAD"]
+    display_cols = ["N_FORM", "FECHA_ENVIO_FORM", "NOMBRE_EMPRESA", "MAIL", "MENSAJE", "CARGO", "VERTICAL_EMPRESA", "FACTURACION", "SON_CLIENTE", "ORIGEN_FORM_HA_FINALIZADO", "VALOR_LEAD", "COSTE_DEL_LEAD", "ANOTACIONES", "PUNTUACION", "ESTADO_VALOR", "ROI_LEAD"]
     # Añadir columnas de IA si existen
     for col in AI_COLUMNS:
         if col in df_f.columns:
