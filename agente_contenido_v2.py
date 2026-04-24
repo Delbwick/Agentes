@@ -712,7 +712,7 @@ with tab1:
     
     st.markdown("---")
     
-    # Consulta
+        # Consulta
     st.markdown("**Tu consulta:**")
     
     query_mode = st.radio(
@@ -741,18 +741,34 @@ with tab1:
             "Análisis DAFO Digital": "Realiza un análisis DAFO (Debilidades, Amenazas, Fortalezas, Oportunidades) enfocado en estrategia digital B2B. Valida cada punto con tendencias actuales."
         }
         
+        # 🔧 FIX: Inicializar estado para tracking de plantilla
+        if "tab1_last_template" not in st.session_state:
+            st.session_state.tab1_last_template = None
+        if "tab1_template_query" not in st.session_state:
+            st.session_state.tab1_template_query = list(templates.values())[0]
+        
         selected_template = st.selectbox(
             "Elige una plantilla",
             list(templates.keys()),
             key="tab1_template_select"
         )
         
+        # 🔧 FIX: Detectar cambio de plantilla y actualizar query SOLO si no fue editado manualmente
+        if st.session_state.tab1_last_template != selected_template:
+            st.session_state.tab1_template_query = templates[selected_template]
+            st.session_state.tab1_last_template = selected_template
+        
         user_query = st.text_area(
             "Consulta (editable)",
-            value=templates[selected_template],
+            value=st.session_state.tab1_template_query,
             height=150,
-            key="tab1_template_query"
+            key="tab1_template_query",
+            on_change=lambda: setattr(st.session_state, 'tab1_template_query', st.session_state.tab1_template_query)
         )
+        
+        # 🔧 FIX: Guardar cambios manuales del usuario para no sobrescribirlos
+        if user_query != templates.get(selected_template):
+            st.session_state.tab1_last_template = None  # Desvincular para no sobrescribir edición manual
     
     # Modelos
     st.markdown("---")
