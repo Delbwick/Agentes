@@ -1389,8 +1389,14 @@ with tab3:
                 if load_prompt != "-- Selecciona un prompt --":
                     try:
                         loaded = load_prompt_from_bucket(client, bucket_name, load_prompt)
-                        st.session_state.loaded_openai_prompt = loaded["prompts"]["openai_prompt"]
-                        st.session_state.loaded_perplexity_prompt = loaded["prompts"]["perplexity_prompt"]
+                        
+                        # 🔧 FIX: Actualizar DIRECTAMENTE las claves de los widgets
+                        st.session_state.tab3_openai_prompt = loaded["prompts"]["openai_prompt"]
+                        st.session_state.tab3_pplx_prompt = loaded["prompts"]["perplexity_prompt"]
+                        
+                        # Opcional: guardar metadata para referencia
+                        st.session_state.loaded_prompt_metadata = loaded.get('metadata', {})
+                        
                         st.success(f"✅ Cargado: {loaded.get('metadata', {}).get('nombre', 'Sin nombre')}")
                         st.rerun()
                     except Exception as e:
@@ -1398,7 +1404,7 @@ with tab3:
     
     st.markdown("---")
     
-    # Prompts
+    # Prompts - OpenAI
     default_openai = """Eres un analista estratégico experto en generación de contenidos corporativos B2B con más de 15 años de experiencia.
 
 **TU MISIÓN:**
@@ -1412,15 +1418,17 @@ Analizar información y generar insights accionables de alto valor para directiv
   "topics_to_validate": ["Dato a verificar online", "Tendencia a validar"]
 }"""
 
+    # 🔧 FIX: Usar session_state del widget directamente como fallback
     openai_prompt = st.text_area(
         "System Prompt - OpenAI",
-        value=st.session_state.get("loaded_openai_prompt", default_openai),
+        value=st.session_state.get("tab3_openai_prompt", default_openai),
         height=300,
         key="tab3_openai_prompt"
     )
     
     st.markdown("---")
     
+    # Prompts - Perplexity
     default_perplexity = """Eres un validador experto en fact-checking y enriquecimiento de contenido estratégico B2B.
 
 **FUENTES PRIORITARIAS:** Gartner, McKinsey, Forrester, medios B2B especializados.
@@ -1437,7 +1445,7 @@ Analizar información y generar insights accionables de alto valor para directiv
 
     perplexity_prompt = st.text_area(
         "System Prompt - Perplexity",
-        value=st.session_state.get("loaded_perplexity_prompt", default_perplexity),
+        value=st.session_state.get("tab3_pplx_prompt", default_perplexity),
         height=300,
         key="tab3_pplx_prompt"
     )
@@ -1477,10 +1485,14 @@ Analizar información y generar insights accionables de alto valor para directiv
                 filename = save_prompt_to_bucket(client, bucket_name, prompt_data, metadata)
                 st.success(f"✅ Guardado: {filename}")
                 
-                if "loaded_openai_prompt" in st.session_state:
-                    del st.session_state.loaded_openai_prompt
-                if "loaded_perplexity_prompt" in st.session_state:
-                    del st.session_state.loaded_perplexity_prompt
+                # 🔧 FIX: Limpiar session_state de widgets para evitar conflictos en próxima carga
+                # (Opcional: si quieres mantener la edición actual, comenta estas líneas)
+                if "tab3_openai_prompt" in st.session_state:
+                    del st.session_state.tab3_openai_prompt
+                if "tab3_pplx_prompt" in st.session_state:
+                    del st.session_state.tab3_pplx_prompt
+                if "loaded_prompt_metadata" in st.session_state:
+                    del st.session_state.loaded_prompt_metadata
                 
                 st.rerun()
             except Exception as e:
