@@ -715,18 +715,21 @@ with tab1:
     # Consulta
     st.markdown("**Tu consulta:**")
     
-    query_tabs = st.tabs(["📝 Personalizada", "📋 Plantillas"])
+    query_mode = st.radio(
+        "Tipo de consulta",
+        ["📝 Personalizada", "📋 Plantilla"],
+        horizontal=True,
+        key="tab1_query_mode"
+    )
     
-    with query_tabs[0]:
-        user_query_custom = st.text_area(
+    if query_mode == "📝 Personalizada":
+        user_query = st.text_area(
             "Escribe tu consulta",
-            placeholder="Ejemplo: Analiza las tendencias de marketing B2B industrial para 2026",
+            placeholder="Ejemplo: Analiza las tendencias de marketing B2B industrial para 2026 y genera 3 recomendaciones estratégicas priorizadas",
             height=150,
             key="tab1_custom_query"
         )
-        user_query = user_query_custom
-    
-    with query_tabs[1]:
+    else:
         templates = {
             "Análisis Estratégico B2B": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos en marketing B2B industrial. Proporciona recomendaciones accionables con ROI estimado y plazos de implementación.",
             "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los 3 puntos más relevantes para la toma de decisiones en generación de leads B2B. Incluye datos cuantificables y fuentes verificables.",
@@ -744,13 +747,12 @@ with tab1:
             key="tab1_template_select"
         )
         
-        user_query_template = st.text_area(
+        user_query = st.text_area(
             "Consulta (editable)",
             value=templates[selected_template],
             height=150,
             key="tab1_template_query"
         )
-        user_query = user_query_template
     
     # Modelos
     st.markdown("---")
@@ -1073,7 +1075,6 @@ Valida con fuentes actuales online y proporciona URLs verificables."""
                 use_container_width=True,
                 key="tab1_download_btn"
             )
-
 # =====================================================
 # TAB 2 - MIS ARCHIVOS
 # =====================================================
