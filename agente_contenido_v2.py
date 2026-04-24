@@ -769,6 +769,13 @@ with tab1:
         # 🔧 FIX: Guardar cambios manuales del usuario para no sobrescribirlos
         if user_query != templates.get(selected_template):
             st.session_state.tab1_last_template = None  # Desvincular para no sobrescribir edición manual
+
+    #Pro tip para actualizar la palntilla original
+        #    if user_query != templates.get(selected_template):
+          #  if st.button("🔄 Restaurar plantilla", key="tab1_restore_template"):
+         #       st.session_state.tab1_template_query = templates[selected_template]
+         #       st.session_state.tab1_last_template = selected_template
+          #      st.rerun()
     
     # Modelos
     st.markdown("---")
