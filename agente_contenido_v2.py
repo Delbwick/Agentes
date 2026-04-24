@@ -712,24 +712,21 @@ with tab1:
     
     st.markdown("---")
     
-    # Consulta
-    st.markdown("**Tu consulta:**")
-    
-    query_tabs = st.tabs(["📝 Personalizada", "📋 Plantillas"])
-    
-    with query_tabs[0]:
-        user_query_custom = st.text_area(
-            "Escribe tu consulta",
-            placeholder="Ejemplo: Analiza las tendencias de marketing B2B industrial para 2026",
-            height=150,
-            key="tab1_custom_query"
-        )
-        user_query = user_query_custom
-    
-#nuevo sistema de querys
+   # Consulta
+st.markdown("**Tu consulta:**")
 
-    with query_tabs[1]:
-        templates = {
+query_tabs = st.tabs(["📝 Personalizada", "📋 Plantillas"])
+
+with query_tabs[0]:
+    user_query_custom = st.text_area(
+        "Escribe tu consulta",
+        placeholder="Ejemplo: Analiza las tendencias de marketing B2B industrial para 2026",
+        height=150,
+        key="tab1_custom_query"
+    )
+
+with query_tabs[1]:
+    templates = {
         "Análisis Estratégico B2B": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos en marketing B2B industrial. Proporciona recomendaciones accionables con ROI estimado y plazos de implementación.",
         "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los 3 puntos más relevantes para la toma de decisiones en generación de leads B2B. Incluye datos cuantificables y fuentes verificables.",
         "Plan de Acción con KPIs": "Identifica los 5 puntos más importantes para mejorar la generación de leads B2B y crea un plan de acción detallado con KPIs, plazos y recursos necesarios.",
@@ -738,85 +735,80 @@ with tab1:
         "Estrategia Ferias Industriales": "Analiza las mejores prácticas para participación en ferias B2B combinando estrategia digital pre-evento, durante y post-evento para maximizar ROI.",
         "Tendencias LifeSciences 2026": "Analiza las últimas tendencias en marketing digital para empresas de LifeSciences y MedTech. Identifica oportunidades de posicionamiento y generación de leads.",
         "Análisis DAFO Digital": "Realiza un análisis DAFO (Debilidades, Amenazas, Fortalezas, Oportunidades) enfocado en estrategia digital B2B. Valida cada punto con tendencias actuales."
-        }
+    }
     
-        # Inicializar en session_state si no existe
-        if "selected_template_tab1" not in st.session_state:
-            st.session_state.selected_template_tab1 = list(templates.keys())[0]
+    selected_template = st.selectbox(
+        "Elige una plantilla",
+        list(templates.keys()),
+        key="tab1_template_select"
+    )
     
-        selected_template = st.selectbox(
-            "Elige una plantilla",
-            list(templates.keys()),
-            key="tab1_template_select",
-            index=list(templates.keys()).index(st.session_state.selected_template_tab1)
-        )
-    
-        # Actualizar session_state cuando cambia
-        if selected_template != st.session_state.selected_template_tab1:
-            st.session_state.selected_template_tab1 = selected_template
-    
-        # Mostrar el texto de la plantilla seleccionada
-        user_query_template = st.text_area(
-            "Consulta (editable)",
-            value=templates[selected_template],
-            height=150,
-            key="tab1_template_query"
-        )
-    
-        # Actualizar user_query con el valor del template
-        user_query = user_query_template
-    
-        # Modelos
-        st.markdown("---")
-        st.markdown("**⚙️ Configuración de modelos:**")
-    
-        col_openai, col_perplexity = st.columns(2)
-    
-    with col_openai:
-        openai_models = {
-            "GPT-4o Mini (Recomendado)": "gpt-4o-mini",
-            "GPT-4o": "gpt-4o",
-            "GPT-4 Turbo": "gpt-4-turbo-preview"
-        }
-        selected_openai = st.selectbox("🤖 Modelo OpenAI", list(openai_models.keys()), index=0, key="tab1_openai_model")
-        openai_model = openai_models[selected_openai]
-    
-    with col_perplexity:
-        perplexity_models = {
-            "Sonar (Recomendado)": "sonar",
-            "Sonar Pro": "sonar-pro",
-            "Llama 3.1 70B": "llama-3.1-70b-instruct"
-        }
-        selected_perplexity = st.selectbox("🔍 Modelo Perplexity", list(perplexity_models.keys()), index=0, key="tab1_pplx_model")
-        perplexity_model = perplexity_models[selected_perplexity]
-    
-    st.markdown("---")
-    
-    # PASO 2: EJECUTAR
-    st.markdown("### 🚀 Paso 2: Generar contenido")
-    
-    col_gen, col_clear = st.columns([4, 1])
-    
-    with col_gen:
-        generate_content = st.button(
-            "▶️ Generar Contenido con IA",
-            type="primary",
-            use_container_width=True,
-            disabled=not user_query.strip(),
-            key="tab1_generate_btn"
-        )
-    
-    with col_clear:
-        if st.button("🗑️ Limpiar", use_container_width=True, key="tab1_clear_btn"):
-            for key in ["openai_response", "perplexity_response", "edited_response"]:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.rerun()
-    
-    if generate_content:
-        context = ""
-        if selected_files:
-            context = load_selected_context(client, bucket_name, selected_files, max_chars)
+    user_query_template = st.text_area(
+        "Consulta (editable)",
+        value=templates[selected_template],
+        height=150,
+        key="tab1_template_query"
+    )
+
+# IMPORTANTE: Determinar qué consulta usar DESPUÉS de ambos tabs
+# Si el usuario escribió algo en personalizada, usar esa
+# Si no, usar la plantilla
+if user_query_custom.strip():
+    user_query = user_query_custom
+else:
+    user_query = user_query_template
+
+# Modelos
+st.markdown("---")
+st.markdown("**⚙️ Configuración de modelos:**")
+
+col_openai, col_perplexity = st.columns(2)
+
+with col_openai:
+    openai_models = {
+        "GPT-4o Mini (Recomendado)": "gpt-4o-mini",
+        "GPT-4o": "gpt-4o",
+        "GPT-4 Turbo": "gpt-4-turbo-preview"
+    }
+    selected_openai = st.selectbox("🤖 Modelo OpenAI", list(openai_models.keys()), index=0, key="tab1_openai_model")
+    openai_model = openai_models[selected_openai]
+
+with col_perplexity:
+    perplexity_models = {
+        "Sonar (Recomendado)": "sonar",
+        "Sonar Pro": "sonar-pro",
+        "Llama 3.1 70B": "llama-3.1-70b-instruct"
+    }
+    selected_perplexity = st.selectbox("🔍 Modelo Perplexity", list(perplexity_models.keys()), index=0, key="tab1_pplx_model")
+    perplexity_model = perplexity_models[selected_perplexity]
+
+st.markdown("---")
+
+# PASO 2: EJECUTAR
+st.markdown("### 🚀 Paso 2: Generar contenido")
+
+col_gen, col_clear = st.columns([4, 1])
+
+with col_gen:
+    generate_content = st.button(
+        "▶️ Generar Contenido con IA",
+        type="primary",
+        use_container_width=True,
+        disabled=not user_query.strip(),
+        key="tab1_generate_btn"
+    )
+
+with col_clear:
+    if st.button("🗑️ Limpiar", use_container_width=True, key="tab1_clear_btn"):
+        for key in ["openai_response", "perplexity_response", "edited_response"]:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
+
+if generate_content:
+    context = ""
+    if selected_files:
+        context = load_selected_context(client, bucket_name, selected_files, max_chars)
         
         # OpenAI
         with st.spinner(f"🤖 {selected_openai} analizando..."):
