@@ -1390,17 +1390,42 @@ with tab3:
                     try:
                         loaded = load_prompt_from_bucket(client, bucket_name, load_prompt)
                         
-                        # 🔧 FIX: Actualizar DIRECTAMENTE las claves de los widgets
-                        st.session_state.tab3_openai_prompt = loaded["prompts"]["openai_prompt"]
-                        st.session_state.tab3_pplx_prompt = loaded["prompts"]["perplexity_prompt"]
+                        # 🔧 FIX: Manejo defensivo de estructuras variables
+                        # Caso 1: Estructura anidada {"prompts": {"openai_prompt": ..., "perplexity_prompt": ...}}
+                        # Caso 2: Estructura plana {"openai_prompt": ..., "perplexity_prompt": ...}
                         
-                        # Opcional: guardar metadata para referencia
+                        if "prompts" in loaded and isinstance(loaded["prompts"], dict):
+                            prompts_data = loaded["prompts"]
+                        else:
+                            prompts_data = loaded
+                        
+                        openai_content = prompts_data.get("openai_prompt")
+                        perplexity_content = prompts_data.get("perplexity_prompt")
+                        
+                        if not openai_content or not perplexity_content:
+                            raise ValueError(
+                                f"❌ Estructura inválida en {load_prompt}. "
+                                f"Claves encontradas: {list(loaded.keys()) if isinstance(loaded, dict) else 'No es un dict'}"
+                            )
+                        
+                        # 🔧 FIX: Actualizar DIRECTAMENTE las claves de los widgets
+                        st.session_state.tab3_openai_prompt = openai_content
+                        st.session_state.tab3_pplx_prompt = perplexity_content
+                        
+                        # Guardar metadata para referencia visual
                         st.session_state.loaded_prompt_metadata = loaded.get('metadata', {})
                         
-                        st.success(f"✅ Cargado: {loaded.get('metadata', {}).get('nombre', 'Sin nombre')}")
+                        st.success(f"✅ Cargado: {loaded.get('metadata', {}).get('nombre', load_prompt)}")
                         st.rerun()
+                        
+                    except KeyError as e:
+                        st.error(f"❌ Error de estructura: {str(e)}")
+                        st.json(loaded if 'loaded' in locals() else "No se pudo cargar el archivo")
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
+                        if 'loaded' in locals():
+                            with st.expander("🔍 Ver contenido cargado (debug)"):
+                                st.json(loaded)
     
     st.markdown("---")
     
@@ -1418,7 +1443,6 @@ Analizar información y generar insights accionables de alto valor para directiv
   "topics_to_validate": ["Dato a verificar online", "Tendencia a validar"]
 }"""
 
-    # 🔧 FIX: Usar session_state del widget directamente como fallback
     openai_prompt = st.text_area(
         "System Prompt - OpenAI",
         value=st.session_state.get("tab3_openai_prompt", default_openai),
@@ -1482,17 +1506,20 @@ Analizar información y generar insights accionables de alto valor para directiv
                     "uso": prompt_uso
                 }
                 
-                filename = save_prompt_to_bucket(client, bucket_name, prompt_data, metadata)
+                # 🔧 FIX: Guardar con estructura consistente y explícita
+                filename = save_prompt_to_bucket(
+                    client, 
+                    bucket_name, 
+                    {"prompts": prompt_data, "metadata": metadata},  # Estructura anidada consistente
+                    metadata
+                )
+                
                 st.success(f"✅ Guardado: {filename}")
                 
-                # 🔧 FIX: Limpiar session_state de widgets para evitar conflictos en próxima carga
-                # (Opcional: si quieres mantener la edición actual, comenta estas líneas)
-                if "tab3_openai_prompt" in st.session_state:
-                    del st.session_state.tab3_openai_prompt
-                if "tab3_pplx_prompt" in st.session_state:
-                    del st.session_state.tab3_pplx_prompt
-                if "loaded_prompt_metadata" in st.session_state:
-                    del st.session_state.loaded_prompt_metadata
+                # Limpiar session_state de widgets para evitar conflictos
+                for key in ["tab3_openai_prompt", "tab3_pplx_prompt", "loaded_prompt_metadata"]:
+                    if key in st.session_state:
+                        del st.session_state[key]
                 
                 st.rerun()
             except Exception as e:
