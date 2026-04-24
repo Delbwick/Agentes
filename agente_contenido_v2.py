@@ -1359,144 +1359,15 @@ with tab2:
     else:
         st.info("ℹ️ No hay archivos en el bucket")
 
-# =====================================================
-# TAB 3 - CONFIGURACIÓN AVANZADA
-# =====================================================
-
-with tab3:
-    st.markdown("## ⚙️ Configuración Avanzada")
-    
-    # Gestión de prompts
-    st.markdown("### 📝 Gestión de Prompts")
-    
-    folders, files = list_folders_and_files(client, bucket_name)
-    prompt_files = [f["name"] for f in files if f["name"].startswith(BUCKET_FOLDERS["prompts"])]
-    
-    if prompt_files:
-        col_load, col_btn = st.columns([3, 1])
-        
-        with col_load:
-            load_prompt = st.selectbox(
-                "📂 Prompts guardados",
-                ["-- Selecciona un prompt --"] + prompt_files,
-                key="tab3_prompt_select"
-            )
-        
-        with col_btn:
-            st.markdown("")
-            st.markdown("")
-            if st.button("🔄 Cargar", use_container_width=True, key="tab3_load_prompt_btn"):
-                if load_prompt != "-- Selecciona un prompt --":
-                    try:
-                        loaded = load_prompt_from_bucket(client, bucket_name, load_prompt)
-                        
-                        # 🔧 FIX: Actualizar DIRECTAMENTE las claves de los widgets
-                        st.session_state.tab3_openai_prompt = loaded["prompts"]["openai_prompt"]
-                        st.session_state.tab3_pplx_prompt = loaded["prompts"]["perplexity_prompt"]
-                        
-                        # Opcional: guardar metadata para referencia
-                        st.session_state.loaded_prompt_metadata = loaded.get('metadata', {})
-                        
-                        st.success(f"✅ Cargado: {loaded.get('metadata', {}).get('nombre', 'Sin nombre')}")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Error: {str(e)}")
-    
-    st.markdown("---")
-    
-    # Prompts - OpenAI
-    default_openai = """Eres un analista estratégico experto en generación de contenidos corporativos B2B con más de 15 años de experiencia.
-
-**TU MISIÓN:**
-Analizar información y generar insights accionables de alto valor para directivos y responsables de marketing industrial.
-
-**ESTRUCTURA DE RESPUESTA (JSON OBLIGATORIO):**
-{
-  "summary": "Resumen ejecutivo de 2-3 líneas enfocado en el valor estratégico",
-  "key_points": ["Punto 1: Insight con dato", "Punto 2: Oportunidad identificada", "Punto 3: Riesgo estratégico"],
-  "recommended_actions": ["Acción 1: Específica con plazo", "Acción 2: Con ROI estimado"],
-  "topics_to_validate": ["Dato a verificar online", "Tendencia a validar"]
-}"""
-
-    # 🔧 FIX: Usar session_state del widget directamente como fallback
-    openai_prompt = st.text_area(
-        "System Prompt - OpenAI",
-        value=st.session_state.get("tab3_openai_prompt", default_openai),
-        height=300,
-        key="tab3_openai_prompt"
-    )
-    
-    st.markdown("---")
-    
-    # Prompts - Perplexity
-    default_perplexity = """Eres un validador experto en fact-checking y enriquecimiento de contenido estratégico B2B.
-
-**FUENTES PRIORITARIAS:** Gartner, McKinsey, Forrester, medios B2B especializados.
-
-**ESTRUCTURA DE RESPUESTA (JSON OBLIGATORIO):**
-{
-  "summary": "Resumen validado con datos actuales",
-  "key_points": ["Punto 1 validado con fuente actual", "Punto 2 enriquecido", "Punto 3 con contexto"],
-  "recommended_actions": ["Acción 1 con best practice", "Acción 2 con ROI"],
-  "validation_notes": "Resumen de validación",
-  "sources": ["URL (Título - Fecha)", "URL (Título - Fecha)"],
-  "confidence_level": "alto"
-}"""
-
-    perplexity_prompt = st.text_area(
-        "System Prompt - Perplexity",
-        value=st.session_state.get("tab3_pplx_prompt", default_perplexity),
-        height=300,
-        key="tab3_pplx_prompt"
-    )
-    
-    st.markdown("---")
-    st.markdown("### 💾 Guardar configuración")
-    
-    col_s1, col_s2 = st.columns(2)
-    
-    with col_s1:
-        prompt_nombre = st.text_input("Nombre", key="tab3_prompt_name")
-        prompt_uso = st.selectbox(
-            "Uso",
-            ["General", "Marketing B2B", "LifeSciences", "Tecnología Industrial"],
-            key="tab3_prompt_uso"
-        )
-    
-    with col_s2:
-        prompt_desc = st.text_area("Descripción", height=100, key="tab3_prompt_desc")
-    
-    if st.button("💾 Guardar Prompts", type="primary", use_container_width=True, key="tab3_save_prompt_btn"):
-        if not prompt_nombre:
-            st.error("❌ Introduce un nombre")
-        else:
-            try:
-                prompt_data = {
-                    "openai_prompt": openai_prompt,
-                    "perplexity_prompt": perplexity_prompt
-                }
-                
-                metadata = {
-                    "nombre": prompt_nombre,
-                    "descripcion": prompt_desc,
-                    "uso": prompt_uso
-                }
-                
-                filename = save_prompt_to_bucket(client, bucket_name, prompt_data, metadata)
-                st.success(f"✅ Guardado: {filename}")
-                
-                # 🔧 FIX: Limpiar session_state de widgets para evitar conflictos en próxima carga
-                # (Opcional: si quieres mantener la edición actual, comenta estas líneas)
-                if "tab3_openai_prompt" in st.session_state:
-                    del st.session_state.tab3_openai_prompt
-                if "tab3_pplx_prompt" in st.session_state:
-                    del st.session_state.tab3_pplx_prompt
-                if "loaded_prompt_metadata" in st.session_state:
-                    del st.session_state.loaded_prompt_metadata
-                
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
+# 🔍 DEBUG: Descomenta para inspeccionar un archivo específico
+# if st.checkbox("🔍 Modo debug", key="debug_mode"):
+#     test_file = st.selectbox("Archivo a inspeccionar", prompt_files)
+#     if st.button("Ver estructura"):
+#         data = load_prompt_from_bucket(client, bucket_name, test_file)
+#         st.json(data)
+#         st.write("🔑 Claves principales:", list(data.keys()))
+#         if "prompts" in data:
+#             st.write("🔑 Claves en 'prompts':", list(data["prompts"].keys()))
 
 # =====================================================
 # FOOTER KAIBOT
