@@ -727,30 +727,42 @@ with tab1:
         user_query = user_query_custom
     
     with query_tabs[1]:
-        templates = {
-            "Análisis Estratégico B2B": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos en marketing B2B industrial. Proporciona recomendaciones accionables con ROI estimado y plazos de implementación.",
-            "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los 3 puntos más relevantes para la toma de decisiones en generación de leads B2B. Incluye datos cuantificables y fuentes verificables.",
-            "Plan de Acción con KPIs": "Identifica los 5 puntos más importantes para mejorar la generación de leads B2B y crea un plan de acción detallado con KPIs, plazos y recursos necesarios.",
-            "Benchmark Competitivo": "Realiza un análisis competitivo del sector comparando estrategias de marketing digital B2B. Incluye datos de inversión publicitaria, canales utilizados y resultados obtenidos.",
-            "Contenido LinkedIn B2B": "Genera 5 ideas de contenido para LinkedIn enfocadas en thought leadership B2B industrial. Incluye temas, formatos y calendario para los próximos 3 meses.",
-            "Estrategia Ferias Industriales": "Analiza las mejores prácticas para participación en ferias B2B combinando estrategia digital pre-evento, durante y post-evento para maximizar ROI.",
-            "Tendencias LifeSciences 2026": "Analiza las últimas tendencias en marketing digital para empresas de LifeSciences y MedTech. Identifica oportunidades de posicionamiento y generación de leads.",
-            "Análisis DAFO Digital": "Realiza un análisis DAFO (Debilidades, Amenazas, Fortalezas, Oportunidades) enfocado en estrategia digital B2B. Valida cada punto con tendencias actuales."
-        }
-        
-        selected_template = st.selectbox(
-            "Elige una plantilla",
-            list(templates.keys()),
-            key="tab1_template_select"
-        )
-        
-        user_query_template = st.text_area(
-            "Consulta (editable)",
-            value=templates[selected_template],
-            height=150,
-            key="tab1_template_query"
-        )
-        user_query = user_query_template
+    templates = {
+        "Análisis Estratégico B2B": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos en marketing B2B industrial. Proporciona recomendaciones accionables con ROI estimado y plazos de implementación.",
+        "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los 3 puntos más relevantes para la toma de decisiones en generación de leads B2B. Incluye datos cuantificables y fuentes verificables.",
+        "Plan de Acción con KPIs": "Identifica los 5 puntos más importantes para mejorar la generación de leads B2B y crea un plan de acción detallado con KPIs, plazos y recursos necesarios.",
+        "Benchmark Competitivo": "Realiza un análisis competitivo del sector comparando estrategias de marketing digital B2B. Incluye datos de inversión publicitaria, canales utilizados y resultados obtenidos.",
+        "Contenido LinkedIn B2B": "Genera 5 ideas de contenido para LinkedIn enfocadas en thought leadership B2B industrial. Incluye temas, formatos y calendario para los próximos 3 meses.",
+        "Estrategia Ferias Industriales": "Analiza las mejores prácticas para participación en ferias B2B combinando estrategia digital pre-evento, durante y post-evento para maximizar ROI.",
+        "Tendencias LifeSciences 2026": "Analiza las últimas tendencias en marketing digital para empresas de LifeSciences y MedTech. Identifica oportunidades de posicionamiento y generación de leads.",
+        "Análisis DAFO Digital": "Realiza un análisis DAFO (Debilidades, Amenazas, Fortalezas, Oportunidades) enfocado en estrategia digital B2B. Valida cada punto con tendencias actuales."
+    }
+    
+    # Inicializar en session_state si no existe
+    if "selected_template_tab1" not in st.session_state:
+        st.session_state.selected_template_tab1 = list(templates.keys())[0]
+    
+    selected_template = st.selectbox(
+        "Elige una plantilla",
+        list(templates.keys()),
+        key="tab1_template_select",
+        index=list(templates.keys()).index(st.session_state.selected_template_tab1)
+    )
+    
+    # Actualizar session_state cuando cambia
+    if selected_template != st.session_state.selected_template_tab1:
+        st.session_state.selected_template_tab1 = selected_template
+    
+    # Mostrar el texto de la plantilla seleccionada
+    user_query_template = st.text_area(
+        "Consulta (editable)",
+        value=templates[selected_template],
+        height=150,
+        key="tab1_template_query"
+    )
+    
+    # Actualizar user_query con el valor del template
+    user_query = user_query_template
     
     # Modelos
     st.markdown("---")
