@@ -23,7 +23,7 @@ st.set_page_config(
     menu_items={
         'Get Help': 'https://kaibot.es/contacto-kaibot-b2b-marketing/',
         'Report a bug': "mailto:hello@kaibot.es",
-        'About': "# KaiBot - Generador de Contenidos IA\n**Especialistas en Marketing Digital B2B**"
+        'About': "# KaiBot (K-AI)- Generador de Contenidos IA\n**Especialistas en Marketing Digital B2B**"
     }
 )
 
