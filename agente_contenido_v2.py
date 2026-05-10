@@ -1390,22 +1390,28 @@ with tab3:
                     try:
                         loaded = load_prompt_from_bucket(client, bucket_name, load_prompt)
                         
-                        # 🔧 FIX: Manejo defensivo de estructuras variables
-                        # Caso 1: Estructura anidada {"prompts": {"openai_prompt": ..., "perplexity_prompt": ...}}
-                        # Caso 2: Estructura plana {"openai_prompt": ..., "perplexity_prompt": ...}
-                        
+                        # 🔧 FIX: Manejo defensivo con múltiples intentos de claves
                         if "prompts" in loaded and isinstance(loaded["prompts"], dict):
                             prompts_data = loaded["prompts"]
                         else:
                             prompts_data = loaded
                         
-                        openai_content = prompts_data.get("openai_prompt")
-                        perplexity_content = prompts_data.get("perplexity_prompt")
+                        # 🔧 FIX: Buscar claves con fallbacks (soporta estructuras antiguas y nuevas)
+                        openai_content = (
+                            prompts_data.get("openai") or 
+                            prompts_data.get("openai_prompt") or
+                            prompts_data.get("system_prompt_openai")
+                        )
+                        perplexity_content = (
+                            prompts_data.get("perplexity") or 
+                            prompts_data.get("perplexity_prompt") or
+                            prompts_data.get("system_prompt_perplexity")
+                        )
                         
                         if not openai_content or not perplexity_content:
                             raise ValueError(
-                                f"❌ Estructura inválida en {load_prompt}. "
-                                f"Claves encontradas: {list(loaded.keys()) if isinstance(loaded, dict) else 'No es un dict'}"
+                                f"❌ Claves de prompt no encontradas. "
+                                f"Claves disponibles en 'prompts': {list(prompts_data.keys()) if isinstance(prompts_data, dict) else 'N/A'}"
                             )
                         
                         # 🔧 FIX: Actualizar DIRECTAMENTE las claves de los widgets
@@ -1420,7 +1426,8 @@ with tab3:
                         
                     except KeyError as e:
                         st.error(f"❌ Error de estructura: {str(e)}")
-                        st.json(loaded if 'loaded' in locals() else "No se pudo cargar el archivo")
+                        if 'loaded' in locals():
+                            st.json(loaded)
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
                         if 'loaded' in locals():
@@ -1495,22 +1502,24 @@ Analizar información y generar insights accionables de alto valor para directiv
             st.error("❌ Introduce un nombre")
         else:
             try:
+                # 🔧 FIX: Guardar con las claves correctas que luego podremos cargar
                 prompt_data = {
-                    "openai_prompt": openai_prompt,
-                    "perplexity_prompt": perplexity_prompt
+                    "openai": openai_prompt,        # ← Clave: "openai" (no "openai_prompt")
+                    "perplexity": perplexity_prompt  # ← Clave: "perplexity" (no "perplexity_prompt")
                 }
                 
                 metadata = {
                     "nombre": prompt_nombre,
                     "descripcion": prompt_desc,
-                    "uso": prompt_uso
+                    "uso": prompt_uso,
+                    "created_at": datetime.utcnow().isoformat()
                 }
                 
-                # 🔧 FIX: Guardar con estructura consistente y explícita
+                # Estructura final consistente: {"prompts": {...}, "metadata": {...}}
                 filename = save_prompt_to_bucket(
                     client, 
                     bucket_name, 
-                    {"prompts": prompt_data, "metadata": metadata},  # Estructura anidada consistente
+                    {"prompts": prompt_data, "metadata": metadata},
                     metadata
                 )
                 
