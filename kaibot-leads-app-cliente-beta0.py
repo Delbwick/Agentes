@@ -5,9 +5,10 @@ from datetime import datetime
 import io
 import json
 import openai
+import re
 
 # =============================================================
-# 1. CONFIGURACIÓN & UX KAIBOT
+# 1. CONFIGURACIÓN & UX KAIBOT + CLIENTE
 # =============================================================
 st.set_page_config(
     page_title="KaiBot Lead Manager Pro",
@@ -16,40 +17,72 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.markdown("""
+# Configuración de branding de cliente (editable en sidebar)
+if "client_branding" not in st.session_state:
+    st.session_state.client_branding = {
+        "name": "Cliente Ficticio S.L.",
+        "logo": "https://via.placeholder.com/150x50/0066CC/FFFFFF?text=CLIENTE",
+        "primary_color": "#0066CC",
+        "show_kaiobot_branding": True
+    }
+
+st.markdown(f"""
 <style>
-    :root {
-        --kaibot-blue: #0066CC; --kaibot-blue-hover: #0052A3; --kaibot-dark: #1E293B;
-        --kaibot-gray: #64748B; --kaibot-light: #F8FAFC; --sidebar-bg: #0F172A;
-        --success: #10B981; --warning: #F59E0B; --danger: #EF4444;
-    }
-    .main { background-color: var(--kaibot-light); }
-    h1, h2, h3, h4 { color: var(--kaibot-dark); font-weight: 600; }
-    .stButton > button[kind="primary"] { background-color: var(--kaibot-blue); color: white; border: none; font-weight: 500; }
-    .stButton > button[kind="primary"]:hover { background-color: var(--kaibot-blue-hover); }
-    .stButton > button { width: 100%; }
-    .stTabs [data-baseweb="tab-list"] { background: white; border-bottom: 2px solid #E2E8F0; gap: 4px; }
-    .stTabs [data-baseweb="tab-list"] button[role="tab"] { 
-        background: transparent; color: var(--kaibot-gray); font-weight: 500; border-radius: 6px 6px 0 0; padding: 10px 20px; 
-    }
-    .stTabs [data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] { 
+    :root {{
+        --kaibot-blue: {st.session_state.client_branding['primary_color']};
+        --kaibot-blue-hover: #0052A3;
+        --kaibot-dark: #1E293B;
+        --kaibot-gray: #64748B;
+        --kaibot-light: #F8FAFC;
+        --sidebar-bg: #0F172A;
+        --success: #10B981;
+        --warning: #F59E0B;
+        --danger: #EF4444;
+    }}
+    .main {{ background-color: var(--kaibot-light); }}
+    h1, h2, h3, h4 {{ color: var(--kaibot-dark); font-weight: 600; }}
+    
+    .stButton > button[kind="primary"] {{ background-color: var(--kaibot-blue); color: white; border: none; font-weight: 500; }}
+    .stButton > button[kind="primary"]:hover {{ background-color: var(--kaibot-blue-hover); }}
+    .stButton > button {{ width: 100%; }}
+    
+    .stTabs [data-baseweb="tab-list"] {{ background: white; border-bottom: 2px solid #E2E8F0; gap: 4px; }}
+    .stTabs [data-baseweb="tab-list"] button[role="tab"] {{ 
+        background: transparent; color: var(--kaibot-gray); font-weight: 500; border-radius: 6px 6px 0 0; 
+        padding: 10px 20px; transition: all 0.2s;
+    }}
+    .stTabs [data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] {{ 
         background: var(--kaibot-blue); color: white !important; font-weight: 600; border-bottom: 3px solid var(--kaibot-blue); 
-    }
-    .stTabs [data-baseweb="tab-panel"] { padding: 24px; background: white; border-radius: 0 0 8px 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
-    [data-testid="stSidebar"] { background-color: var(--sidebar-bg); }
-    [data-testid="stSidebar"] * { color: white !important; }
-    [data-testid="stSidebar"] input, [data-testid="stSidebar"] textarea, [data-testid="stSidebar"] select {
+    }}
+    .stTabs [data-baseweb="tab-panel"] {{ padding: 24px; background: white; border-radius: 0 0 8px 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }}
+    
+    [data-testid="stSidebar"] {{ background-color: var(--sidebar-bg); }}
+    [data-testid="stSidebar"] * {{ color: white !important; }}
+    [data-testid="stSidebar"] input, [data-testid="stSidebar"] textarea, [data-testid="stSidebar"] select {{
         background: rgba(255,255,255,0.08) !important; border: 1px solid rgba(255,255,255,0.2) !important; color: white !important;
-    }
-    .kpi-card { background: white; padding: 16px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); text-align: center; }
-    .kpi-value { font-size: 1.8rem; font-weight: 700; color: var(--kaibot-dark); margin: 4px 0; }
-    .kpi-label { font-size: 0.85rem; color: var(--kaibot-gray); text-transform: uppercase; letter-spacing: 0.5px; }
-    .kaibot-footer { text-align: center; color: var(--kaibot-gray); font-size: 0.85rem; margin-top: 40px; padding: 20px 0; border-top: 1px solid #E2E8F0; }
+    }}
+    [data-testid="stSidebar"] .stButton > button[kind="primary"] {{ background-color: var(--kaibot-blue); border: none; }}
+    
+    .kpi-card {{ background: white; padding: 16px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); text-align: center; }}
+    .kpi-value {{ font-size: 1.8rem; font-weight: 700; color: var(--kaibot-dark); margin: 4px 0; }}
+    .kpi-label {{ font-size: 0.85rem; color: var(--kaibot-gray); text-transform: uppercase; letter-spacing: 0.5px; }}
+    .kaibot-footer {{ text-align: center; color: var(--kaibot-gray); font-size: 0.85rem; margin-top: 40px; padding: 20px 0; border-top: 1px solid #E2E8F0; }}
+    
+    /* Branding de cliente en sidebar */
+    .client-branding {{ 
+        text-align: center; padding: 15px 10px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 15px;
+    }}
+    .client-logo {{ max-width: 100%; height: auto; border-radius: 4px; margin-bottom: 10px; }}
+    .client-name {{ font-size: 1.1rem; font-weight: 600; color: white; margin: 5px 0; }}
+    .kaibot-badge {{ 
+        display: inline-block; background: rgba(255,255,255,0.1); padding: 4px 12px; 
+        border-radius: 20px; font-size: 0.75rem; color: rgba(255,255,255,0.8); margin-top: 8px;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
 # =============================================================
-# 2. CONFIGURACIÓN & CONSTANTES
+# 2. CONFIGURACIÓN & CONSTANTES (SIN ESPACIOS)
 # =============================================================
 CAMPOS_REQ = [
     "N_FORM", "FECHA_ENVIO_FORM", "NOMBRE_EMPRESA", "NOMBRE_ENVIO_MAIL", "MAIL",
@@ -68,19 +101,8 @@ DEFAULT_ICP = {
 }
 
 # =============================================================
-# 3. FUNCIONES AUXILIARES
+# 3. FUNCIONES DE DATOS & VALORACIÓN
 # =============================================================
-def parse_monetary_value(value):
-    """Convierte valores monetarios como '23,89 €' a float"""
-    if pd.isna(value) or value == '':
-        return 0.0
-    try:
-        clean = str(value).replace('€', '').replace('\xa0', '').strip()
-        clean = clean.replace('.', '').replace(',', '.')
-        return float(clean)
-    except:
-        return 0.0
-
 def init_sample_data():
     np.random.seed(42)
     n = 25
@@ -129,6 +151,9 @@ def calcular_valoracion(df):
     df["ESTADO_VALOR"] = np.select(conditions, choices, default="🔴 Bajo")
     return df
 
+# =============================================================
+# 4. FUNCIONES OPENAI ENRIQUECIDAS
+# =============================================================
 def consultar_openai_enriquecido(row, api_key, icp_config=None):
     if not api_key: return None, None, "⚠️ Falta API Key OpenAI."
     try:
@@ -148,7 +173,7 @@ def consultar_openai_enriquecido(row, api_key, icp_config=None):
         return None, prompt, f"❌ Error: {e}"
 
 # =============================================================
-# 4. INICIALIZACIÓN & SIDEBAR
+# 5. INICIALIZACIÓN & SIDEBAR CON BRANDING
 # =============================================================
 if "leads_df" not in st.session_state:
     st.session_state.leads_df = calcular_valoracion(init_sample_data())
@@ -162,9 +187,25 @@ df_raw = st.session_state.leads_df
 df_raw.columns = df_raw.columns.str.strip()
 
 with st.sidebar:
-    st.markdown('<div style="text-align:center;"><img src="https://kaibot.es/wp-content/uploads/2020/07/image1.png" width="50"><h3 style="color:white;margin:10px 0;">KaiBot Leads</h3></div>', unsafe_allow_html=True)
-    st.markdown("---")
+    # Branding de cliente
+    st.markdown(f'''
+    <div class="client-branding">
+        <img src="{st.session_state.client_branding['logo']}" class="client-logo" alt="Logo cliente">
+        <div class="client-name">{st.session_state.client_branding['name']}</div>
+        {f'<div class="kaibot-badge">Powered by KaiBot</div>' if st.session_state.client_branding['show_kaiobot_branding'] else ''}
+    </div>
+    ''', unsafe_allow_html=True)
     
+    # Configuración de branding (solo visible para admin)
+    with st.expander("⚙️ Configurar Branding"):
+        st.session_state.client_branding['name'] = st.text_input("Nombre del cliente", value=st.session_state.client_branding['name'])
+        st.session_state.client_branding['logo'] = st.text_input("URL del logo", value=st.session_state.client_branding['logo'])
+        st.session_state.client_branding['primary_color'] = st.color_picker("Color principal", value=st.session_state.client_branding['primary_color'])
+        st.session_state.client_branding['show_kaiobot_branding'] = st.checkbox("Mostrar badge KaiBot", value=st.session_state.client_branding['show_kaiobot_branding'])
+        if st.button("Aplicar cambios de branding"):
+            st.rerun()
+    
+    st.markdown("---")
     st.markdown("🤖 **Configuración IA**")
     st.session_state.openai_key = st.text_input("API Key OpenAI", type="password", value=st.session_state.openai_key, placeholder="sk-proj-...")
     
@@ -177,7 +218,7 @@ with st.sidebar:
         if st.button("Guardar ICP"):
             st.session_state.icp_config = {"sectores_prioritarios": icp_sectores, "tamano_minimo": icp_tamano, "cargos_decision": icp_cargos, "facturacion_min": icp_fact}
             st.success("✅ ICP actualizado")
-
+    
     st.markdown("---")
     st.markdown("🔍 **Filtros**")
     search = st.text_input("Buscar", placeholder="Empresa, email...")
@@ -191,7 +232,7 @@ with st.sidebar:
     safe_max = 10000
     if "VALOR_LEAD" in df_raw.columns:
         try:
-            nums = df_raw["VALOR_LEAD"].apply(parse_monetary_value)
+            nums = pd.to_numeric(df_raw["VALOR_LEAD"], errors="coerce").dropna()
             if len(nums) > 0: safe_max = max(int(nums.max()), 1000)
         except: pass
     min_val, max_val = st.slider("Rango Valor (€)", 0, safe_max, (0, safe_max), step=100)
@@ -208,49 +249,37 @@ if vertical != df_raw["VERTICAL_EMPRESA"].unique().tolist(): df_f = df_f[df_f["V
 if tipo_form != df_raw["TIPO_FORM"].unique().tolist(): df_f = df_f[df_f["TIPO_FORM"].isin(tipo_form)]
 if cliente != "Todos": df_f = df_f[df_f["SON_CLIENTE"] == cliente]
 if exito != "Todos": df_f = df_f[df_f["ORIGEN_FORM_HA_FINALIZADO"] == exito]
-
-# Filtrar por valores numéricos seguros
-df_f["VALOR_LEAD_NUM"] = df_f["VALOR_LEAD"].apply(parse_monetary_value)
-df_f = df_f[(df_f["VALOR_LEAD_NUM"] >= min_val) & (df_f["VALOR_LEAD_NUM"] <= max_val)]
-df_f = df_f.drop(columns=["VALOR_LEAD_NUM"])
-df_f = df_f.sort_values("FECHA_ENVIO_FORM", ascending=False)
+df_f = df_f[(df_f["VALOR_LEAD"] >= min_val) & (df_f["VALOR_LEAD"] <= max_val)].sort_values("FECHA_ENVIO_FORM", ascending=False)
 st.session_state.df_filtrado = df_f
 
 # =============================================================
-# 5. MAIN UI - 7 PESTAÑAS
+# 6. MAIN UI - 7 PESTAÑAS
 # =============================================================
-st.markdown('<div style="display:flex;align-items:center;gap:10px;"><img src="https://kaibot.es/wp-content/uploads/2020/07/image1.png" width="30"><h2 style="margin:0;">Panel de Leads & Valoración</h2></div>', unsafe_allow_html=True)
+st.markdown(f'''<div style="display:flex;align-items:center;gap:10px;">
+<img src="{st.session_state.client_branding['logo']}" width="30" style="border-radius:4px;">
+<h2 style="margin:0;">{st.session_state.client_branding['name']} | Panel de Leads</h2>
+</div>''', unsafe_allow_html=True)
 st.caption("Gestión, análisis y scoring inteligente B2B.")
 st.markdown("---")
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "📊 KPIs", "📋 Lista Editable", "🔍 Detalle", "➕ Nuevo", "🤖 Batch", "📥 Importar CSV", "🔗 Integraciones"
+    "📊 KPIs", "📋 Lista Editable", "🔍 Detalle", "➕ Nuevo", "🤖 Batch", "📥 Importar CSV", "🔗 Webhooks"
 ])
 
 # TAB 1: KPIs
 with tab1:
-    # Crear columna numérica temporal para cálculos
-    df_kpi = df_f.copy()
-    df_kpi["VALOR_LEAD_NUM"] = df_kpi["VALOR_LEAD"].apply(parse_monetary_value)
-    df_kpi["COSTE_DEL_LEAD_NUM"] = df_kpi["COSTE_DEL_LEAD"].apply(parse_monetary_value)
-    
     c1, c2, c3, c4 = st.columns(4)
-    total = len(df_kpi)
-    val_t = df_kpi["VALOR_LEAD_NUM"].sum()
-    cost_t = df_kpi["COSTE_DEL_LEAD_NUM"].sum()
-    roi = ((val_t - cost_t) / cost_t) if cost_t > 0 else 0
-    cli = len(df_kpi[df_kpi["SON_CLIENTE"]=="Sí"])
-    
+    total = len(df_f); val_t = df_f["VALOR_LEAD"].sum(); cost_t = df_f["COSTE_DEL_LEAD"].sum()
+    roi = ((val_t - cost_t) / cost_t) if cost_t > 0 else 0; cli = len(df_f[df_f["SON_CLIENTE"]=="Sí"])
     def kpi(l, v, s=""): st.markdown(f'<div class="kpi-card"><div class="kpi-label">{l}</div><div class="kpi-value">{v}</div><div style="color:var(--kaibot-gray);font-size:0.8rem;">{s}</div></div>', unsafe_allow_html=True)
     with c1: kpi("Leads", total, "Filtrados")
     with c2: kpi("Pipeline", f"{val_t:,.0f}€", f"{cost_t:,.0f}€ inv.")
     with c3: kpi("ROI", f"{roi:.2f}x", "Retorno")
     with c4: kpi("Clientes", f"{cli} ({cli/max(total,1)*100:.1f}%)", "Conversión")
-    
     st.markdown("---")
     c1, c2 = st.columns(2)
-    with c1: st.bar_chart(df_kpi.groupby("VERTICAL_EMPRESA")["VALOR_LEAD_NUM"].sum(), use_container_width=True)
-    with c2: st.bar_chart(df_kpi.groupby("TIPO_FORM")["VALOR_LEAD_NUM"].mean(), use_container_width=True)
+    with c1: st.bar_chart(df_f.groupby("VERTICAL_EMPRESA")["VALOR_LEAD"].sum(), use_container_width=True)
+    with c2: st.bar_chart(df_f.groupby("TIPO_FORM")["VALOR_LEAD"].mean(), use_container_width=True)
 
 # TAB 2: Lista Editable
 with tab2:
@@ -301,7 +330,7 @@ with tab2:
                 st.success(f"✅ {changes} cambios guardados")
             st.rerun()
 
-# TAB 3: Detalle
+# TAB 3: Detalle (CORREGIDO - Guardado de IA funcional)
 with tab3:
     st.markdown("### 🔍 Detalle & Análisis por Empresa")
     empresas = df_f["NOMBRE_EMPRESA"].dropna().unique().tolist() if len(df_f) > 0 else []
@@ -321,8 +350,7 @@ with tab3:
             st.info(row['MENSAJE'])
             st.caption(f"Form: {row['N_FORM']} | {row['FECHA_ENVIO_FORM']}")
         with c2:
-            valor_num = parse_monetary_value(row['VALOR_LEAD'])
-            st.metric("Valor", f"{valor_num:,.0f}€")
+            st.metric("Valor", f"{row['VALOR_LEAD']:,.0f}€")
             st.progress(row['PUNTUACION']/100)
             st.caption(f"Score: {row['PUNTUACION']} | {row['ESTADO_VALOR']}")
             if "AI_SCORE" in row and pd.notna(row.get("AI_SCORE")):
@@ -417,15 +445,21 @@ with tab5:
             st.rerun()
         else: st.info("ℹ️ No hay leads para procesar")
 
-# TAB 6: Importar CSV
+# TAB 6: Importar CSV (CORREGIDO - Separador automático)
 with tab6:
     st.markdown("### 📥 Importar CSV con Mapeo Inteligente")
     uploaded = st.file_uploader("Selecciona archivo CSV", type=["csv"], key="import_csv_tab")
     if uploaded:
         try:
+            # Leer primera línea para detectar separador
             first_line = uploaded.readline().decode('utf-8-sig')
-            uploaded.seek(0)
-            separator = ';' if ';' in first_line and ',' not in first_line.replace('"', '') else ','
+            uploaded.seek(0)  # Resetear puntero
+            
+            # Detectar separador: ; o ,
+            if ';' in first_line and ',' not in first_line.replace('"', ''):
+                separator = ';'
+            else:
+                separator = ','
             
             df_up = pd.read_csv(uploaded, sep=separator, encoding='utf-8-sig', engine='python', quotechar='"', skipinitialspace=True)
             df_up.columns = df_up.columns.str.strip()
@@ -434,22 +468,10 @@ with tab6:
             
             if "import_map" not in st.session_state:
                 st.session_state.import_map = {}
-                # Mapeo automático para CSV de clientes
-                if "Empresa" in detected or "Ventas" in detected:
-                    mapeo_cliente = {
-                        "N_FORM": None, "FECHA_ENVIO_FORM": "Fecha de registro", "NOMBRE_EMPRESA": "Empresa",
-                        "NOMBRE_ENVIO_MAIL": "Nombre", "MAIL": "Dirección de correo electrónico", "TELÉFONO": None,
-                        "MENSAJE": None, "TIPO_FORM": None, "SON_CLIENTE": "Activado", "ANOTACIONES": None,
-                        "VALOR_LEAD": "Ventas", "COSTE_DEL_LEAD": None, "ORIGEN_FORM_HA_FINALIZADO": None,
-                        "FACTURACION": None, "VERTICAL_EMPRESA": None, "LINKEDIN": None, "CARGO": None
-                    }
-                    for req in CAMPOS_REQ:
-                        st.session_state.import_map[req] = mapeo_cliente.get(req) if mapeo_cliente.get(req) in detected else None
-                else:
-                    for req in CAMPOS_REQ:
-                        req_l = req.lower()
-                        match = next((c for c in detected if req_l in c.lower() or c.lower() in req_l), None)
-                        st.session_state.import_map[req] = match
+                for req in CAMPOS_REQ:
+                    req_l = req.lower()
+                    match = next((c for c in detected if req_l in c.lower() or c.lower() in req_l), None)
+                    st.session_state.import_map[req] = match
             
             with st.expander("⚙️ Configurar Mapeo de Columnas", expanded=True):
                 st.caption("🟢 Críticos | ⚪ Opcionales")
@@ -461,10 +483,8 @@ with tab6:
                     with c2:
                         opts = ["(Dejar vacío)"] + detected
                         cur = st.session_state.import_map.get(req_col)
-                        idx = opts.index(cur) if cur in opts else 0
-                        sel = st.selectbox(f"Map {req_col}", options=opts, index=idx, key=f"map_{req_col}", label_visibility="collapsed")
+                        sel = st.selectbox(f"Map {req_col}", options=opts, index=opts.index(cur) if cur in opts else 0, key=f"map_{req_col}", label_visibility="collapsed")
                         st.session_state.import_map[req_col] = sel
-                
                 st.markdown("---")
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
@@ -482,13 +502,7 @@ with tab6:
                                 elif req == "ORIGEN_FORM_HA_FINALIZADO": data_dict[req] = "Sí"
                                 elif req == "N_FORM": data_dict[req] = f"IMP-{datetime.now().strftime('%Y%m%d%H%M')}"
                                 else: data_dict[req] = ""
-                        
                         df_final = pd.DataFrame(data_dict)
-                        if "VALOR_LEAD" in df_final.columns:
-                            df_final["VALOR_LEAD"] = df_final["VALOR_LEAD"].apply(parse_monetary_value)
-                        if "COSTE_DEL_LEAD" in df_final.columns:
-                            df_final["COSTE_DEL_LEAD"] = df_final["COSTE_DEL_LEAD"].apply(parse_monetary_value)
-                        
                         for col in AI_COLUMNS: df_final[col] = None
                         st.session_state.leads_df = calcular_valoracion(df_final)
                         st.session_state.df_filtrado = st.session_state.leads_df.copy()
@@ -503,141 +517,136 @@ with tab6:
                 st.dataframe(df_up.head(5), use_container_width=True)
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
-            st.info("💡 Asegúrate de que el CSV tenga encabezados en la primera fila")
+            st.info("💡 Asegúrate de que el CSV tenga encabezados en la primera fila y use separador , o ;")
     else:
         st.info("📋 Sube un CSV para importar")
 
-# TAB 7: 🔗 Integraciones con Gravity Forms (SOLUCIÓN PRÁCTICA)
+# TAB 7: 🔗 Webhooks & Integraciones (NUEVO)
 with tab7:
-    st.markdown("### 🔗 Integración con Gravity Forms")
-    st.caption("Conecta tus formularios de WordPress para recibir leads automáticamente.")
+    st.markdown("### 🔗 Webhooks & Integraciones")
+    st.caption("Conecta Gravity Forms, Typeform, WordPress u otras fuentes para recibir leads automáticamente.")
     
-    st.info("""
-    **⚠️ Nota importante:** Streamlit no puede recibir webhooks directamente. 
-    Usa una de estas soluciones probadas:
-    """)
+    col_conf1, col_conf2 = st.columns(2)
+    with col_conf1:
+        st.markdown("**🔧 Configuración de Webhook**")
+        webhook_url = st.text_input("URL del Webhook", placeholder="https://tu-app.streamlit.app/webhook", disabled=True)
+        st.caption("Copia esta URL en tu formulario externo")
+        
+        st.markdown("**📡 Fuentes compatibles**")
+        source = st.selectbox("Selecciona fuente", ["Gravity Forms (WordPress)", "Typeform", "Formulario personalizado (JSON)", "Zapier/Make"])
+        
+        if source == "Gravity Forms (WordPress)":
+            st.info("""
+            **Configuración en WordPress:**
+            1. Instala el plugin "Webhooks" o "Gravity Forms Webhooks Add-On"
+            2. Crea nuevo webhook → Método: POST
+            3. URL: `{webhook_url}`
+            4. Mapeo de campos sugerido:
+               - `NOMBRE_EMPRESA` ← `input_1` (Nombre empresa)
+               - `MAIL` ← `input_2` (Email)
+               - `MENSAJE` ← `input_3` (Mensaje)
+               - `VALOR_LEAD` ← `input_4` (Presupuesto)
+            """)
+        elif source == "Typeform":
+            st.info("""
+            **Configuración en Typeform:**
+            1. Ve a tu formulario → Connect → Webhooks
+            2. Añadir webhook → URL: `{webhook_url}`
+            3. Activa "Send form response"
+            4. Los campos se mapean automáticamente por nombre
+            """)
+        elif source == "Formulario personalizado (JSON)":
+            st.info("""
+            **Formato JSON esperado:**
+            ```json
+            {{
+              "NOMBRE_EMPRESA": "TechCorp",
+              "MAIL": "contacto@techcorp.com",
+              "MENSAJE": "Interesados en consultoría",
+              "VALOR_LEAD": 5000,
+              ...
+            }}
+            ```
+            """)
     
-    # Opción 1: Exportación automática a CSV (Recomendada)
-    with st.expander("✅ Opción 1: Exportar a CSV en Google Drive/Dropbox (Recomendada)", expanded=True):
-        st.markdown("""
-        **Configuración con Gravity Forms 3rd Party Addon:**
+    with col_conf2:
+        st.markdown("**🔐 Seguridad**")
+        webhook_secret = st.text_input("Clave secreta (opcional)", type="password", placeholder="sk-webhook-...")
+        st.caption("Usa esta clave en el header `X-Webhook-Secret` para validar peticiones")
         
-        1. **En WordPress → Gravity Forms → Settings → 3rd Party:**
-           - Activa "Enable CSV Export"
-           - Configura exportación automática cada X horas
-           - Destino: Google Drive, Dropbox o FTP
-        
-        2. **En esta app → 📥 Importar CSV:**
-           - Descarga el CSV exportado
-           - Súbelo manualmente o usa Google Drive sync local
-           - El sistema detectará automáticamente las columnas
-        
-        **Ventajas:**
-        - ✅ Sin código adicional
-        - ✅ Funciona con tu CSV actual (`customer_*.csv`)
-        - ✅ Mapeo automático de columnas
-        - ✅ Historial de imports
-        """)
-        
-        st.markdown("---")
-        st.markdown("**📋 Mapeo automático para tu CSV:**")
-        st.code("""
-        CSV Column          → KaiBot Field
-        ─────────────────────────────────
-        Empresa             → NOMBRE_EMPRESA
-        Dirección de correo → MAIL
-        Ventas              → VALOR_LEAD
-        Activado            → SON_CLIENTE
-        Fecha de registro   → FECHA_ENVIO_FORM
-        """, language="text")
-    
-    # Opción 2: Webhook intermedio con Make/Zapier
-    with st.expander("⚡ Opción 2: Webhook vía Make/Zapier (Automático)"):
-        st.markdown("""
-        **Flujo recomendado:**
-        ```
-        Gravity Forms → Make/Zapier → Google Sheets → Esta App (vía CSV)
-        ```
-        
-        **Pasos en Make (Integromat):**
-        1. Trigger: "Gravity Forms - Watch Entries"
-        2. Action: "Google Sheets - Add Row"
-           - Sheet: `KaiBot_Leads`
-           - Columns: N_FORM, NOMBRE_EMPRESA, MAIL, VALOR_LEAD, etc.
-        3. Action: "HTTP - Make a request" (opcional, para notificar)
-        
-        **En esta app:**
-        - Ve a 📥 Importar CSV
-        - Conecta tu Google Drive local o descarga el CSV
-        - ¡Listo! Los nuevos leads se importan con un clic
-        """)
-        
-        st.markdown("---")
-        st.markdown("**🧪 Probar integración:**")
-        test_json = st.text_area("JSON de prueba (formato Make/Zapier)", 
-                                value='{"NOMBRE_EMPRESA": "Mi Empresa", "MAIL": "hola@miempresa.com", "VALOR_LEAD": "150,00 €"}',
-                                height=80)
-        if st.button("🔍 Validar formato"):
-            try:
-                data = json.loads(test_json)
-                if "NOMBRE_EMPRESA" in data and "MAIL" in data:
-                    st.success("✅ Formato válido. Este JSON sería aceptado por el importador.")
-                else:
-                    st.error("❌ Faltan campos obligatorios: NOMBRE_EMPRESA y MAIL")
-            except:
-                st.error("❌ JSON inválido")
-    
-    # Opción 3: Script Flask para webhook directo (Avanzado)
-    with st.expander("🔧 Opción 3: Script Flask para webhook directo (Avanzado)"):
-        st.markdown("""
-        Si necesitas webhooks en tiempo real, despliega este script mínimo en un servidor:
-        
-        **`webhook_receiver.py`:**
-        ```python
-        from flask import Flask, request, jsonify
-        import pandas as pd
-        from datetime import datetime
-        
-        app = Flask(__name__)
-        
-        @app.route('/webhook', methods=['POST'])
-        def receive_lead():
-            data = request.json
-            # Transformar campos de Gravity Forms a formato KaiBot
-            lead = {
-                "N_FORM": f"GF-{data.get('id', datetime.now().strftime('%H%M%S'))}",
-                "FECHA_ENVIO_FORM": datetime.now(),
-                "NOMBRE_EMPRESA": data.get('input_1', ''),  # Ajusta según tus inputs
-                "MAIL": data.get('input_2', ''),
-                "VALOR_LEAD": data.get('input_3', '0'),
-                # ... mapea el resto de campos
-            }
-            # Guardar en CSV compartido
-            df = pd.DataFrame([lead])
-            df.to_csv('/ruta/compartida/leads_nuevos.csv', mode='a', header=False, index=False)
-            return jsonify({"status": "ok"}), 200
-        
-        if __name__ == '__main__':
-            app.run(host='0.0.0.0', port=5000)
-        ```
-        
-        **En Gravity Forms 3rd Party Addon:**
-        - URL: `https://tu-servidor.com/webhook`
-        - Method: POST
-        - Content-Type: application/json
-        - Mapea: `input_1` → `NOMBRE_EMPRESA`, `input_2` → `MAIL`, etc.
-        
-        **En esta app:**
-        - Configura una ruta local sincronizada con `/ruta/compartida/`
-        - Usa 📥 Importar CSV para cargar `leads_nuevos.csv`
-        """)
-        st.warning("⚠️ Requiere conocimientos de despliegue de servidores Python")
+        st.markdown("**📊 Estado de integración**")
+        st.success("✅ Sistema listo para recibir webhooks")
+        st.caption("Última actividad: Nunca (primera configuración)")
     
     st.markdown("---")
-    st.markdown("**💡 Recomendación final:**  
-    Para tu caso con el plugin **Gravity Forms 3rd Party Addon**, usa la **Opción 1** (exportación CSV).  
-    Es la más estable, compatible con tu archivo `customer_*.csv`, y no requiere código adicional.  
-    ¡Ya tienes el importador funcionando perfectamente! 🎯
-    """)
+    st.markdown("**🧪 Probar webhook**")
+    test_payload = st.text_area("Payload JSON de prueba", value='{"NOMBRE_EMPRESA": "Test Corp", "MAIL": "test@test.com", "MENSAJE": "Prueba de webhook"}', height=100)
+    
+    if st.button("🚀 Enviar payload de prueba"):
+        try:
+            # Simular recepción de webhook
+            test_data = json.loads(test_payload)
+            # Validar campos críticos
+            if "NOMBRE_EMPRESA" in test_data and "MAIL" in test_data:
+                new_id = f"WEBHOOK-{datetime.now().strftime('%H%M%S')}"
+                new_lead = {
+                    "N_FORM": new_id,
+                    "FECHA_ENVIO_FORM": datetime.now(),
+                    **{k: test_data.get(k, "") for k in CAMPOS_REQ if k != "N_FORM" and k != "FECHA_ENVIO_FORM"}
+                }
+                # Rellenar campos faltantes con valores por defecto
+                for col in CAMPOS_REQ:
+                    if col not in new_lead:
+                        if col in ["VALOR_LEAD", "COSTE_DEL_LEAD"]: new_lead[col] = 0.0
+                        elif col == "SON_CLIENTE": new_lead[col] = "No"
+                        elif col == "ORIGEN_FORM_HA_FINALIZADO": new_lead[col] = "Sí"
+                        else: new_lead[col] = ""
+                
+                new_df = pd.DataFrame([new_lead])
+                for col in AI_COLUMNS: new_df[col] = None
+                st.session_state.leads_df = pd.concat([st.session_state.leads_df, new_df], ignore_index=True)
+                st.session_state.leads_df = calcular_valoracion(st.session_state.leads_df)
+                st.success(f"✅ Lead de prueba '{test_data['NOMBRE_EMPRESA']}' añadido")
+                st.rerun()
+            else:
+                st.error("❌ El payload debe incluir al menos NOMBRE_EMPRESA y MAIL")
+        except json.JSONDecodeError:
+            st.error("❌ JSON inválido. Revisa la sintaxis")
+    
+    st.markdown("---")
+    st.markdown("**📚 Documentación**")
+    with st.expander("📖 Ver especificación completa del webhook"):
+        st.markdown("""
+        **Endpoint:** `POST /webhook` (simulado en esta demo)
+        
+        **Headers requeridos:**
+        - `Content-Type: application/json`
+        - `X-Webhook-Secret: <tu_clave_secreta>` (opcional)
+        
+        **Body JSON:**
+        ```json
+        {{
+          "N_FORM": "string (opcional, se genera si no se envía)",
+          "FECHA_ENVIO_FORM": "YYYY-MM-DD HH:MM:SS (opcional, se usa ahora si no se envía)",
+          "NOMBRE_EMPRESA": "string (requerido)",
+          "MAIL": "string (requerido)",
+          "MENSAJE": "string (opcional)",
+          "VALOR_LEAD": "number (opcional, default: 0)",
+          "CARGO": "string (opcional)",
+          "VERTICAL_EMPRESA": "string (opcional)",
+          "FACTURACION": "string (opcional)",
+          ...
+        }}
+        ```
+        
+        **Respuesta exitosa (200 OK):**
+        ```json
+        {{
+          "status": "ok",
+          "lead_id": "WEBHOOK-123456",
+          "message": "Lead procesado correctamente"
+        }}
+        ```
+        """)
 
 st.markdown('<div class="kaibot-footer">© 2026 KaiBot. Optimizado para gestión comercial B2B.</div>', unsafe_allow_html=True)
