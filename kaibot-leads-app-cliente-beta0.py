@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Configuración de branding de cliente (editable en sidebar)
+# Configuración de branding de cliente
 if "client_branding" not in st.session_state:
     st.session_state.client_branding = {
         "name": "Cliente Ficticio S.L.",
@@ -68,7 +68,6 @@ st.markdown(f"""
     .kpi-label {{ font-size: 0.85rem; color: var(--kaibot-gray); text-transform: uppercase; letter-spacing: 0.5px; }}
     .kaibot-footer {{ text-align: center; color: var(--kaibot-gray); font-size: 0.85rem; margin-top: 40px; padding: 20px 0; border-top: 1px solid #E2E8F0; }}
     
-    /* Branding de cliente en sidebar */
     .client-branding {{ 
         text-align: center; padding: 15px 10px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 15px;
     }}
@@ -82,7 +81,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # =============================================================
-# 2. CONFIGURACIÓN & CONSTANTES (SIN ESPACIOS)
+# 2. CONFIGURACIÓN & CONSTANTES
 # =============================================================
 CAMPOS_REQ = [
     "N_FORM", "FECHA_ENVIO_FORM", "NOMBRE_EMPRESA", "NOMBRE_ENVIO_MAIL", "MAIL",
@@ -101,8 +100,21 @@ DEFAULT_ICP = {
 }
 
 # =============================================================
-# 3. FUNCIONES DE DATOS & VALORACIÓN
+# 3. FUNCIONES AUXILIARES
 # =============================================================
+def parse_monetary_value(value):
+    """Convierte valores monetarios como '23,89 €' o '1,234.56' a float"""
+    if pd.isna(value) or value == '':
+        return 0.0
+    try:
+        # Limpiar símbolo de euro y espacios
+        clean = str(value).replace('€', '').replace('\xa0', '').strip()
+        # Reemplazar coma decimal por punto (formato europeo)
+        clean = clean.replace('.', '').replace(',', '.')  # Primero miles, luego decimal
+        return float(clean)
+    except:
+        return 0.0
+
 def init_sample_data():
     np.random.seed(42)
     n = 25
@@ -151,9 +163,6 @@ def calcular_valoracion(df):
     df["ESTADO_VALOR"] = np.select(conditions, choices, default="🔴 Bajo")
     return df
 
-# =============================================================
-# 4. FUNCIONES OPENAI ENRIQUECIDAS
-# =============================================================
 def consultar_openai_enriquecido(row, api_key, icp_config=None):
     if not api_key: return None, None, "⚠️ Falta API Key OpenAI."
     try:
@@ -173,7 +182,7 @@ def consultar_openai_enriquecido(row, api_key, icp_config=None):
         return None, prompt, f"❌ Error: {e}"
 
 # =============================================================
-# 5. INICIALIZACIÓN & SIDEBAR CON BRANDING
+# 4. INICIALIZACIÓN & SIDEBAR
 # =============================================================
 if "leads_df" not in st.session_state:
     st.session_state.leads_df = calcular_valoracion(init_sample_data())
@@ -196,7 +205,7 @@ with st.sidebar:
     </div>
     ''', unsafe_allow_html=True)
     
-    # Configuración de branding (solo visible para admin)
+    # Configuración de branding
     with st.expander("⚙️ Configurar Branding"):
         st.session_state.client_branding['name'] = st.text_input("Nombre del cliente", value=st.session_state.client_branding['name'])
         st.session_state.client_branding['logo'] = st.text_input("URL del logo", value=st.session_state.client_branding['logo'])
@@ -229,12 +238,16 @@ with st.sidebar:
     with c3: cliente = st.selectbox("¿Cliente?", ["Todos", "Sí", "No"])
     with c4: exito = st.selectbox("Finalizado?", ["Todos", "Sí", "No", "Parcial"])
     
+    # ✅ CORRECCIÓN: Manejo seguro de valores numéricos
     safe_max = 10000
     if "VALOR_LEAD" in df_raw.columns:
         try:
-            nums = pd.to_numeric(df_raw["VALOR_LEAD"], errors="coerce").dropna()
-            if len(nums) > 0: safe_max = max(int(nums.max()), 1000)
-        except: pass
+            # Convertir a numérico, manejando strings con formato monetario
+            nums = df_raw["VALOR_LEAD"].apply(parse_monetary_value)
+            if len(nums) > 0:
+                safe_max = max(int(nums.max()), 1000)
+        except:
+            pass
     min_val, max_val = st.slider("Rango Valor (€)", 0, safe_max, (0, safe_max), step=100)
     
     st.markdown("---")
@@ -249,11 +262,16 @@ if vertical != df_raw["VERTICAL_EMPRESA"].unique().tolist(): df_f = df_f[df_f["V
 if tipo_form != df_raw["TIPO_FORM"].unique().tolist(): df_f = df_f[df_f["TIPO_FORM"].isin(tipo_form)]
 if cliente != "Todos": df_f = df_f[df_f["SON_CLIENTE"] == cliente]
 if exito != "Todos": df_f = df_f[df_f["ORIGEN_FORM_HA_FINALIZADO"] == exito]
-df_f = df_f[(df_f["VALOR_LEAD"] >= min_val) & (df_f["VALOR_LEAD"] <= max_val)].sort_values("FECHA_ENVIO_FORM", ascending=False)
+
+# ✅ CORRECCIÓN: Filtrar por valores numéricos correctamente
+df_f["VALOR_LEAD_NUM"] = df_f["VALOR_LEAD"].apply(parse_monetary_value)
+df_f = df_f[(df_f["VALOR_LEAD_NUM"] >= min_val) & (df_f["VALOR_LEAD_NUM"] <= max_val)]
+df_f = df_f.drop(columns=["VALOR_LEAD_NUM"])
+df_f = df_f.sort_values("FECHA_ENVIO_FORM", ascending=False)
 st.session_state.df_filtrado = df_f
 
 # =============================================================
-# 6. MAIN UI - 7 PESTAÑAS
+# 5. MAIN UI - 7 PESTAÑAS
 # =============================================================
 st.markdown(f'''<div style="display:flex;align-items:center;gap:10px;">
 <img src="{st.session_state.client_branding['logo']}" width="30" style="border-radius:4px;">
@@ -269,8 +287,11 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 # TAB 1: KPIs
 with tab1:
     c1, c2, c3, c4 = st.columns(4)
-    total = len(df_f); val_t = df_f["VALOR_LEAD"].sum(); cost_t = df_f["COSTE_DEL_LEAD"].sum()
-    roi = ((val_t - cost_t) / cost_t) if cost_t > 0 else 0; cli = len(df_f[df_f["SON_CLIENTE"]=="Sí"])
+    total = len(df_f)
+    val_t = df_f["VALOR_LEAD"].apply(parse_monetary_value).sum()
+    cost_t = df_f["COSTE_DEL_LEAD"].apply(parse_monetary_value).sum()
+    roi = ((val_t - cost_t) / cost_t) if cost_t > 0 else 0
+    cli = len(df_f[df_f["SON_CLIENTE"]=="Sí"])
     def kpi(l, v, s=""): st.markdown(f'<div class="kpi-card"><div class="kpi-label">{l}</div><div class="kpi-value">{v}</div><div style="color:var(--kaibot-gray);font-size:0.8rem;">{s}</div></div>', unsafe_allow_html=True)
     with c1: kpi("Leads", total, "Filtrados")
     with c2: kpi("Pipeline", f"{val_t:,.0f}€", f"{cost_t:,.0f}€ inv.")
@@ -278,8 +299,8 @@ with tab1:
     with c4: kpi("Clientes", f"{cli} ({cli/max(total,1)*100:.1f}%)", "Conversión")
     st.markdown("---")
     c1, c2 = st.columns(2)
-    with c1: st.bar_chart(df_f.groupby("VERTICAL_EMPRESA")["VALOR_LEAD"].sum(), use_container_width=True)
-    with c2: st.bar_chart(df_f.groupby("TIPO_FORM")["VALOR_LEAD"].mean(), use_container_width=True)
+    with c1: st.bar_chart(df_f.groupby("VERTICAL_EMPRESA")["VALOR_LEAD"].apply(parse_monetary_value).sum(), use_container_width=True)
+    with c2: st.bar_chart(df_f.groupby("TIPO_FORM")["VALOR_LEAD"].apply(parse_monetary_value).mean(), use_container_width=True)
 
 # TAB 2: Lista Editable
 with tab2:
@@ -330,7 +351,7 @@ with tab2:
                 st.success(f"✅ {changes} cambios guardados")
             st.rerun()
 
-# TAB 3: Detalle (CORREGIDO - Guardado de IA funcional)
+# TAB 3: Detalle
 with tab3:
     st.markdown("### 🔍 Detalle & Análisis por Empresa")
     empresas = df_f["NOMBRE_EMPRESA"].dropna().unique().tolist() if len(df_f) > 0 else []
@@ -350,7 +371,8 @@ with tab3:
             st.info(row['MENSAJE'])
             st.caption(f"Form: {row['N_FORM']} | {row['FECHA_ENVIO_FORM']}")
         with c2:
-            st.metric("Valor", f"{row['VALOR_LEAD']:,.0f}€")
+            valor_num = parse_monetary_value(row['VALOR_LEAD'])
+            st.metric("Valor", f"{valor_num:,.0f}€")
             st.progress(row['PUNTUACION']/100)
             st.caption(f"Score: {row['PUNTUACION']} | {row['ESTADO_VALOR']}")
             if "AI_SCORE" in row and pd.notna(row.get("AI_SCORE")):
@@ -445,7 +467,7 @@ with tab5:
             st.rerun()
         else: st.info("ℹ️ No hay leads para procesar")
 
-# TAB 6: Importar CSV (CORREGIDO - Separador automático)
+# TAB 6: Importar CSV (CORREGIDO - Manejo de valores monetarios y mapeo)
 with tab6:
     st.markdown("### 📥 Importar CSV con Mapeo Inteligente")
     uploaded = st.file_uploader("Selecciona archivo CSV", type=["csv"], key="import_csv_tab")
@@ -453,9 +475,9 @@ with tab6:
         try:
             # Leer primera línea para detectar separador
             first_line = uploaded.readline().decode('utf-8-sig')
-            uploaded.seek(0)  # Resetear puntero
+            uploaded.seek(0)
             
-            # Detectar separador: ; o ,
+            # Detectar separador
             if ';' in first_line and ',' not in first_line.replace('"', ''):
                 separator = ';'
             else:
@@ -466,12 +488,46 @@ with tab6:
             detected = df_up.columns.tolist()
             st.success(f"✅ {len(df_up)} filas, {len(detected)} columnas detectadas (separador: '{separator}')")
             
-            if "import_map" not in st.session_state:
+            # Mapeo automático inteligente para CSV de clientes
+            if "import_map" not in st.session_state or "csv_structure_detected" not in st.session_state:
                 st.session_state.import_map = {}
-                for req in CAMPOS_REQ:
-                    req_l = req.lower()
-                    match = next((c for c in detected if req_l in c.lower() or c.lower() in req_l), None)
-                    st.session_state.import_map[req] = match
+                st.session_state.csv_structure_detected = False
+                
+                # Detectar si es CSV de clientes (con columnas como "Empresa", "Ventas", etc.)
+                if "Empresa" in detected or "Ventas" in detected:
+                    st.session_state.csv_structure_detected = True
+                    # Mapeo automático para CSV de clientes
+                    mapeo_cliente = {
+                        "N_FORM": None,
+                        "FECHA_ENVIO_FORM": "Fecha de registro",
+                        "NOMBRE_EMPRESA": "Empresa",
+                        "NOMBRE_ENVIO_MAIL": "Nombre",
+                        "MAIL": "Dirección de correo electrónico",
+                        "TELÉFONO": None,
+                        "MENSAJE": None,
+                        "TIPO_FORM": None,
+                        "SON_CLIENTE": "Activado",
+                        "ANOTACIONES": None,
+                        "VALOR_LEAD": "Ventas",
+                        "COSTE_DEL_LEAD": None,
+                        "ORIGEN_FORM_HA_FINALIZADO": None,
+                        "FACTURACION": None,
+                        "VERTICAL_EMPRESA": None,
+                        "LINKEDIN": None,
+                        "CARGO": None
+                    }
+                    for req in CAMPOS_REQ:
+                        if req in mapeo_cliente and mapeo_cliente[req] in detected:
+                            st.session_state.import_map[req] = mapeo_cliente[req]
+                        else:
+                            st.session_state.import_map[req] = None
+                    st.info(" Detectado CSV de clientes. Mapeo automático aplicado.")
+                else:
+                    # Mapeo estándar
+                    for req in CAMPOS_REQ:
+                        req_l = req.lower()
+                        match = next((c for c in detected if req_l in c.lower() or c.lower() in req_l), None)
+                        st.session_state.import_map[req] = match
             
             with st.expander("⚙️ Configurar Mapeo de Columnas", expanded=True):
                 st.caption("🟢 Críticos | ⚪ Opcionales")
@@ -483,8 +539,10 @@ with tab6:
                     with c2:
                         opts = ["(Dejar vacío)"] + detected
                         cur = st.session_state.import_map.get(req_col)
-                        sel = st.selectbox(f"Map {req_col}", options=opts, index=opts.index(cur) if cur in opts else 0, key=f"map_{req_col}", label_visibility="collapsed")
+                        idx = opts.index(cur) if cur in opts else 0
+                        sel = st.selectbox(f"Map {req_col}", options=opts, index=idx, key=f"map_{req_col}", label_visibility="collapsed")
                         st.session_state.import_map[req_col] = sel
+                
                 st.markdown("---")
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
@@ -496,14 +554,29 @@ with tab6:
                             if src and src != "(Dejar vacío)" and src in df_up.columns:
                                 data_dict[req] = df_up[src]
                             else:
-                                if req in ["VALOR_LEAD", "COSTE_DEL_LEAD"]: data_dict[req] = 0.0
-                                elif req == "FECHA_ENVIO_FORM": data_dict[req] = datetime.now()
-                                elif req == "SON_CLIENTE": data_dict[req] = "No"
-                                elif req == "ORIGEN_FORM_HA_FINALIZADO": data_dict[req] = "Sí"
-                                elif req == "N_FORM": data_dict[req] = f"IMP-{datetime.now().strftime('%Y%m%d%H%M')}"
-                                else: data_dict[req] = ""
+                                if req in ["VALOR_LEAD", "COSTE_DEL_LEAD"]: 
+                                    data_dict[req] = 0.0
+                                elif req == "FECHA_ENVIO_FORM": 
+                                    data_dict[req] = datetime.now()
+                                elif req == "SON_CLIENTE": 
+                                    data_dict[req] = "No"
+                                elif req == "ORIGEN_FORM_HA_FINALIZADO": 
+                                    data_dict[req] = "Sí"
+                                elif req == "N_FORM": 
+                                    data_dict[req] = f"IMP-{datetime.now().strftime('%Y%m%d%H%M')}"
+                                else: 
+                                    data_dict[req] = ""
+                        
                         df_final = pd.DataFrame(data_dict)
-                        for col in AI_COLUMNS: df_final[col] = None
+                        
+                        # ✅ CORRECCIÓN: Convertir valores monetarios
+                        if "VALOR_LEAD" in df_final.columns:
+                            df_final["VALOR_LEAD"] = df_final["VALOR_LEAD"].apply(parse_monetary_value)
+                        if "COSTE_DEL_LEAD" in df_final.columns:
+                            df_final["COSTE_DEL_LEAD"] = df_final["COSTE_DEL_LEAD"].apply(parse_monetary_value)
+                        
+                        for col in AI_COLUMNS: 
+                            df_final[col] = None
                         st.session_state.leads_df = calcular_valoracion(df_final)
                         st.session_state.df_filtrado = st.session_state.leads_df.copy()
                         st.balloons()
@@ -512,19 +585,20 @@ with tab6:
                 with col_btn2:
                     if st.button("🔄 Reset", use_container_width=True):
                         st.session_state.import_map = {}
+                        st.session_state.csv_structure_detected = False
                         st.rerun()
             with st.expander("👁️ Preview CSV"):
                 st.dataframe(df_up.head(5), use_container_width=True)
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
-            st.info("💡 Asegúrate de que el CSV tenga encabezados en la primera fila y use separador , o ;")
+            st.info("💡 Asegúrate de que el CSV tenga encabezados en la primera fila")
     else:
         st.info("📋 Sube un CSV para importar")
 
-# TAB 7: 🔗 Webhooks & Integraciones (NUEVO)
+# TAB 7: Webhooks
 with tab7:
     st.markdown("### 🔗 Webhooks & Integraciones")
-    st.caption("Conecta Gravity Forms, Typeform, WordPress u otras fuentes para recibir leads automáticamente.")
+    st.caption("Conecta Gravity Forms, Typeform, WordPress u otras fuentes.")
     
     col_conf1, col_conf2 = st.columns(2)
     with col_conf1:
@@ -584,9 +658,7 @@ with tab7:
     
     if st.button("🚀 Enviar payload de prueba"):
         try:
-            # Simular recepción de webhook
             test_data = json.loads(test_payload)
-            # Validar campos críticos
             if "NOMBRE_EMPRESA" in test_data and "MAIL" in test_data:
                 new_id = f"WEBHOOK-{datetime.now().strftime('%H%M%S')}"
                 new_lead = {
@@ -594,7 +666,6 @@ with tab7:
                     "FECHA_ENVIO_FORM": datetime.now(),
                     **{k: test_data.get(k, "") for k in CAMPOS_REQ if k != "N_FORM" and k != "FECHA_ENVIO_FORM"}
                 }
-                # Rellenar campos faltantes con valores por defecto
                 for col in CAMPOS_REQ:
                     if col not in new_lead:
                         if col in ["VALOR_LEAD", "COSTE_DEL_LEAD"]: new_lead[col] = 0.0
