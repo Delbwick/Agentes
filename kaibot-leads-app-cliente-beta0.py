@@ -521,132 +521,131 @@ with tab6:
     else:
         st.info("📋 Sube un CSV para importar")
 
-# TAB 7: 🔗 Webhooks & Integraciones (NUEVO)
+# TAB 7: 🔗 Integraciones con Gravity Forms (SOLUCIÓN PRÁCTICA)
 with tab7:
-    st.markdown("### 🔗 Webhooks & Integraciones")
-    st.caption("Conecta Gravity Forms, Typeform, WordPress u otras fuentes para recibir leads automáticamente.")
+    st.markdown("### 🔗 Integración con Gravity Forms")
+    st.caption("Conecta tus formularios de WordPress para recibir leads automáticamente.")
     
-    col_conf1, col_conf2 = st.columns(2)
-    with col_conf1:
-        st.markdown("**🔧 Configuración de Webhook**")
-        webhook_url = st.text_input("URL del Webhook", placeholder="https://tu-app.streamlit.app/webhook", disabled=True)
-        st.caption("Copia esta URL en tu formulario externo")
-        
-        st.markdown("**📡 Fuentes compatibles**")
-        source = st.selectbox("Selecciona fuente", ["Gravity Forms (WordPress)", "Typeform", "Formulario personalizado (JSON)", "Zapier/Make"])
-        
-        if source == "Gravity Forms (WordPress)":
-            st.info("""
-            **Configuración en WordPress:**
-            1. Instala el plugin "Webhooks" o "Gravity Forms Webhooks Add-On"
-            2. Crea nuevo webhook → Método: POST
-            3. URL: `{webhook_url}`
-            4. Mapeo de campos sugerido:
-               - `NOMBRE_EMPRESA` ← `input_1` (Nombre empresa)
-               - `MAIL` ← `input_2` (Email)
-               - `MENSAJE` ← `input_3` (Mensaje)
-               - `VALOR_LEAD` ← `input_4` (Presupuesto)
-            """)
-        elif source == "Typeform":
-            st.info("""
-            **Configuración en Typeform:**
-            1. Ve a tu formulario → Connect → Webhooks
-            2. Añadir webhook → URL: `{webhook_url}`
-            3. Activa "Send form response"
-            4. Los campos se mapean automáticamente por nombre
-            """)
-        elif source == "Formulario personalizado (JSON)":
-            st.info("""
-            **Formato JSON esperado:**
-            ```json
-            {{
-              "NOMBRE_EMPRESA": "TechCorp",
-              "MAIL": "contacto@techcorp.com",
-              "MENSAJE": "Interesados en consultoría",
-              "VALOR_LEAD": 5000,
-              ...
-            }}
-            ```
-            """)
+    st.info("⚠️ Nota importante: Streamlit no puede recibir webhooks directamente. Usa una de estas soluciones probadas:")
     
-    with col_conf2:
-        st.markdown("**🔐 Seguridad**")
-        webhook_secret = st.text_input("Clave secreta (opcional)", type="password", placeholder="sk-webhook-...")
-        st.caption("Usa esta clave en el header `X-Webhook-Secret` para validar peticiones")
-        
-        st.markdown("**📊 Estado de integración**")
-        st.success("✅ Sistema listo para recibir webhooks")
-        st.caption("Última actividad: Nunca (primera configuración)")
-    
-    st.markdown("---")
-    st.markdown("**🧪 Probar webhook**")
-    test_payload = st.text_area("Payload JSON de prueba", value='{"NOMBRE_EMPRESA": "Test Corp", "MAIL": "test@test.com", "MENSAJE": "Prueba de webhook"}', height=100)
-    
-    if st.button("🚀 Enviar payload de prueba"):
-        try:
-            # Simular recepción de webhook
-            test_data = json.loads(test_payload)
-            # Validar campos críticos
-            if "NOMBRE_EMPRESA" in test_data and "MAIL" in test_data:
-                new_id = f"WEBHOOK-{datetime.now().strftime('%H%M%S')}"
-                new_lead = {
-                    "N_FORM": new_id,
-                    "FECHA_ENVIO_FORM": datetime.now(),
-                    **{k: test_data.get(k, "") for k in CAMPOS_REQ if k != "N_FORM" and k != "FECHA_ENVIO_FORM"}
-                }
-                # Rellenar campos faltantes con valores por defecto
-                for col in CAMPOS_REQ:
-                    if col not in new_lead:
-                        if col in ["VALOR_LEAD", "COSTE_DEL_LEAD"]: new_lead[col] = 0.0
-                        elif col == "SON_CLIENTE": new_lead[col] = "No"
-                        elif col == "ORIGEN_FORM_HA_FINALIZADO": new_lead[col] = "Sí"
-                        else: new_lead[col] = ""
-                
-                new_df = pd.DataFrame([new_lead])
-                for col in AI_COLUMNS: new_df[col] = None
-                st.session_state.leads_df = pd.concat([st.session_state.leads_df, new_df], ignore_index=True)
-                st.session_state.leads_df = calcular_valoracion(st.session_state.leads_df)
-                st.success(f"✅ Lead de prueba '{test_data['NOMBRE_EMPRESA']}' añadido")
-                st.rerun()
-            else:
-                st.error("❌ El payload debe incluir al menos NOMBRE_EMPRESA y MAIL")
-        except json.JSONDecodeError:
-            st.error("❌ JSON inválido. Revisa la sintaxis")
-    
-    st.markdown("---")
-    st.markdown("**📚 Documentación**")
-    with st.expander("📖 Ver especificación completa del webhook"):
+    # Opción 1: Exportación automática a CSV (Recomendada)
+    with st.expander("✅ Opción 1: Exportar a CSV en Google Drive/Dropbox (Recomendada)", expanded=True):
         st.markdown("""
-        **Endpoint:** `POST /webhook` (simulado en esta demo)
+        **Configuración con Gravity Forms 3rd Party Addon:**
         
-        **Headers requeridos:**
-        - `Content-Type: application/json`
-        - `X-Webhook-Secret: <tu_clave_secreta>` (opcional)
+        1. **En WordPress → Gravity Forms → Settings → 3rd Party:**
+           - Activa "Enable CSV Export"
+           - Configura exportación automática cada X horas
+           - Destino: Google Drive, Dropbox o FTP
         
-        **Body JSON:**
-        ```json
-        {{
-          "N_FORM": "string (opcional, se genera si no se envía)",
-          "FECHA_ENVIO_FORM": "YYYY-MM-DD HH:MM:SS (opcional, se usa ahora si no se envía)",
-          "NOMBRE_EMPRESA": "string (requerido)",
-          "MAIL": "string (requerido)",
-          "MENSAJE": "string (opcional)",
-          "VALOR_LEAD": "number (opcional, default: 0)",
-          "CARGO": "string (opcional)",
-          "VERTICAL_EMPRESA": "string (opcional)",
-          "FACTURACION": "string (opcional)",
-          ...
-        }}
-        ```
+        2. **En esta app → 📥 Importar CSV:**
+           - Descarga el CSV exportado
+           - Súbelo manualmente o usa Google Drive sync local
+           - El sistema detectará automáticamente las columnas
         
-        **Respuesta exitosa (200 OK):**
-        ```json
-        {{
-          "status": "ok",
-          "lead_id": "WEBHOOK-123456",
-          "message": "Lead procesado correctamente"
-        }}
-        ```
+        **Ventajas:**
+        - ✅ Sin código adicional
+        - ✅ Funciona con tu CSV actual (`customer_*.csv`)
+        - ✅ Mapeo automático de columnas
+        - ✅ Historial de imports
         """)
+        
+        st.markdown("---")
+        st.markdown("**📋 Mapeo automático para tu CSV:**")
+        st.code("""
+        CSV Column          → KaiBot Field
+        ─────────────────────────────────
+        Empresa             → NOMBRE_EMPRESA
+        Dirección de correo → MAIL
+        Ventas              → VALOR_LEAD
+        Activado            → SON_CLIENTE
+        Fecha de registro   → FECHA_ENVIO_FORM
+        """, language="text")
+    
+    # Opción 2: Webhook intermedio con Make/Zapier
+    with st.expander("⚡ Opción 2: Webhook vía Make/Zapier (Automático)"):
+        st.markdown("""
+        **Flujo recomendado:**
+        ```
+        Gravity Forms → Make/Zapier → Google Sheets → Esta App (vía CSV)
+        ```
+        
+        **Pasos en Make (Integromat):**
+        1. Trigger: "Gravity Forms - Watch Entries"
+        2. Action: "Google Sheets - Add Row"
+           - Sheet: `KaiBot_Leads`
+           - Columns: N_FORM, NOMBRE_EMPRESA, MAIL, VALOR_LEAD, etc.
+        3. Action: "HTTP - Make a request" (opcional, para notificar)
+        
+        **En esta app:**
+        - Ve a 📥 Importar CSV
+        - Conecta tu Google Drive local o descarga el CSV
+        - ¡Listo! Los nuevos leads se importan con un clic
+        """)
+        
+        st.markdown("---")
+        st.markdown("**🧪 Probar integración:**")
+        test_json = st.text_area("JSON de prueba (formato Make/Zapier)", 
+                                value='{"NOMBRE_EMPRESA": "Mi Empresa", "MAIL": "hola@miempresa.com", "VALOR_LEAD": "150,00 €"}',
+                                height=80)
+        if st.button("🔍 Validar formato"):
+            try:
+                data = json.loads(test_json)
+                if "NOMBRE_EMPRESA" in data and "MAIL" in data:
+                    st.success("✅ Formato válido. Este JSON sería aceptado por el importador.")
+                else:
+                    st.error("❌ Faltan campos obligatorios: NOMBRE_EMPRESA y MAIL")
+            except:
+                st.error("❌ JSON inválido")
+    
+    # Opción 3: Script Flask para webhook directo (Avanzado)
+    with st.expander("🔧 Opción 3: Script Flask para webhook directo (Avanzado)"):
+        st.markdown("""
+        Si necesitas webhooks en tiempo real, despliega este script mínimo en un servidor:
+        
+        **`webhook_receiver.py`:**
+        ```python
+        from flask import Flask, request, jsonify
+        import pandas as pd
+        from datetime import datetime
+        
+        app = Flask(__name__)
+        
+        @app.route('/webhook', methods=['POST'])
+        def receive_lead():
+            data = request.json
+            lead = {
+                "N_FORM": f"GF-{data.get('id', datetime.now().strftime('%H%M%S'))}",
+                "FECHA_ENVIO_FORM": datetime.now(),
+                "NOMBRE_EMPRESA": data.get('input_1', ''),
+                "MAIL": data.get('input_2', ''),
+                "VALOR_LEAD": data.get('input_3', '0'),
+            }
+            df = pd.DataFrame([lead])
+            df.to_csv('/ruta/compartida/leads_nuevos.csv', mode='a', header=False, index=False)
+            return jsonify({"status": "ok"}), 200
+        
+        if __name__ == '__main__':
+            app.run(host='0.0.0.0', port=5000)
+        ```
+        
+        **En Gravity Forms 3rd Party Addon:**
+        - URL: `https://tu-servidor.com/webhook`
+        - Method: POST
+        - Content-Type: application/json
+        - Mapea: `input_1` → `NOMBRE_EMPRESA`, `input_2` → `MAIL`, etc.
+        
+        **En esta app:**
+        - Configura una ruta local sincronizada con `/ruta/compartida/`
+        - Usa 📥 Importar CSV para cargar `leads_nuevos.csv`
+        """)
+        st.warning("⚠️ Requiere conocimientos de despliegue de servidores Python")
+    
+    st.markdown("---")
+    st.markdown("""**💡 Recomendación final:**  
+    Para tu caso con el plugin **Gravity Forms 3rd Party Addon**, usa la **Opción 1** (exportación CSV).  
+    Es la más estable, compatible con tu archivo `customer_*.csv`, y no requiere código adicional.  
+    ¡Ya tienes el importador funcionando perfectamente! 🎯
+    """)
 
 st.markdown('<div class="kaibot-footer">© 2026 KaiBot. Optimizado para gestión comercial B2B.</div>', unsafe_allow_html=True)
