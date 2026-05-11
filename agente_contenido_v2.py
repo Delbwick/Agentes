@@ -384,162 +384,480 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["🎯 Generar Contenido", "📁 Mis Archivos", "⚙️ Configuración Avanzada"])
 
 # =====================================================
-# TAB 1 - GENERAR CONTENIDO (Con fixes aplicados)
+# TAB 1 - GENERAR CONTENIDO (COMPLETO + FIXES)
 # =====================================================
 
 with tab1:
     st.markdown("## 🎯 Generador de Contenidos con IA")
     st.markdown("**Análisis profesional en 3 pasos:** Configura → OpenAI analiza → Perplexity valida")
     
+    # PASO 1: CONFIGURACIÓN
     st.markdown("### 📋 Paso 1: Configura tu análisis")
+    
     folders, files = list_folders_and_files(client, bucket_name)
     file_names = [f["name"] for f in files if not f["name"].startswith(BUCKET_FOLDERS["prompts"])]
     
     col_files, col_chars = st.columns([3, 1])
-    with col_files:
-        selected_files = st.multiselect("📄 Documentos de contexto (opcional)", options=file_names, help="Selecciona archivos para basar el análisis.", key="tab1_select_files")
-    with col_chars:
-        max_chars = st.number_input("Límite caracteres", min_value=2000, max_value=50000, value=15000, step=1000, disabled=len(selected_files) == 0, key="tab1_max_chars")
     
-    st.info(f"📁 **Modo:** Análisis con {len(selected_files)} documento(s)" if selected_files else "💭 **Modo:** Consulta general sin documentos")
+    with col_files:
+        selected_files = st.multiselect(
+            "📄 Documentos de contexto (opcional)",
+            options=file_names,
+            help="Selecciona archivos para basar el análisis. Déjalo vacío para consultas generales.",
+            key="tab1_select_files"
+        )
+    
+    with col_chars:
+        max_chars = st.number_input(
+            "Límite caracteres",
+            min_value=2000,
+            max_value=50000,
+            value=15000,
+            step=1000,
+            disabled=len(selected_files) == 0,
+            key="tab1_max_chars"
+        )
+    
+    if selected_files:
+        st.info(f"📁 **Modo:** Análisis con {len(selected_files)} documento(s)")
+    else:
+        st.info("💭 **Modo:** Consulta general sin documentos")
+    
     st.markdown("---")
     
+    # Consulta
     st.markdown("**Tu consulta:**")
-    query_mode = st.radio("Tipo de consulta", ["📝 Personalizada", "📋 Plantilla"], horizontal=True, key="tab1_query_mode")
+    
+    query_mode = st.radio(
+        "Tipo de consulta",
+        ["📝 Personalizada", "📋 Plantilla"],
+        horizontal=True,
+        key="tab1_query_mode"
+    )
     
     if query_mode == "📝 Personalizada":
-        user_query = st.text_area("Escribe tu consulta", placeholder="Ej: Analiza tendencias de marketing B2B industrial para 2026...", height=150, key="tab1_custom_query")
+        user_query = st.text_area(
+            "Escribe tu consulta",
+            placeholder="Ejemplo: Analiza las tendencias de marketing B2B industrial para 2026 y genera 3 recomendaciones estratégicas priorizadas",
+            height=150,
+            key="tab1_custom_query"
+        )
     else:
         templates = {
-            "Análisis Estratégico B2B": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos en marketing B2B industrial...",
-            "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los 3 puntos más relevantes para la toma de decisiones...",
-            "Plan de Acción con KPIs": "Identifica los 5 puntos más importantes para mejorar la generación de leads B2B y crea un plan de acción...",
-            "Benchmark Competitivo": "Realiza un análisis competitivo del sector comparando estrategias de marketing digital B2B...",
-            "Contenido LinkedIn B2B": "Genera 5 ideas de contenido para LinkedIn enfocadas en thought leadership B2B industrial...",
-            "Estrategia Ferias Industriales": "Analiza las mejores prácticas para participación en ferias B2B combinando estrategia digital...",
-            "Tendencias LifeSciences 2026": "Analiza las últimas tendencias en marketing digital para empresas de LifeSciences y MedTech...",
-            "Análisis DAFO Digital": "Realiza un análisis DAFO enfocado en estrategia digital B2B. Valida cada punto con tendencias actuales."
+            "Análisis Estratégico B2B": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos en marketing B2B industrial. Proporciona recomendaciones accionables con ROI estimado y plazos de implementación.",
+            "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los 3 puntos más relevantes para la toma de decisiones en generación de leads B2B. Incluye datos cuantificables y fuentes verificables.",
+            "Plan de Acción con KPIs": "Identifica los 5 puntos más importantes para mejorar la generación de leads B2B y crea un plan de acción detallado con KPIs, plazos y recursos necesarios.",
+            "Benchmark Competitivo": "Realiza un análisis competitivo del sector comparando estrategias de marketing digital B2B. Incluye datos de inversión publicitaria, canales utilizados y resultados obtenidos.",
+            "Contenido LinkedIn B2B": "Genera 5 ideas de contenido para LinkedIn enfocadas en thought leadership B2B industrial. Incluye temas, formatos y calendario para los próximos 3 meses.",
+            "Estrategia Ferias Industriales": "Analiza las mejores prácticas para participación en ferias B2B combinando estrategia digital pre-evento, durante y post-evento para maximizar ROI.",
+            "Tendencias LifeSciences 2026": "Analiza las últimas tendencias en marketing digital para empresas de LifeSciences y MedTech. Identifica oportunidades de posicionamiento y generación de leads.",
+            "Análisis DAFO Digital": "Realiza un análisis DAFO (Debilidades, Amenazas, Fortalezas, Oportunidades) enfocado en estrategia digital B2B. Valida cada punto con tendencias actuales."
         }
         
         # 🔧 FIX: Estado reactivo para plantillas
-        if "tab1_last_template" not in st.session_state: st.session_state.tab1_last_template = None
-        if "tab1_template_query" not in st.session_state: st.session_state.tab1_template_query = list(templates.values())[0]
+        if "tab1_last_template" not in st.session_state:
+            st.session_state.tab1_last_template = None
+        if "tab1_template_query" not in st.session_state:
+            st.session_state.tab1_template_query = list(templates.values())[0]
         
-        selected_template = st.selectbox("Elige una plantilla", list(templates.keys()), key="tab1_template_select")
+        selected_template = st.selectbox(
+            "Elige una plantilla",
+            list(templates.keys()),
+            key="tab1_template_select"
+        )
+        
+        # Actualizar query solo si cambió la plantilla Y no fue editado manualmente
         if st.session_state.tab1_last_template != selected_template:
             st.session_state.tab1_template_query = templates[selected_template]
             st.session_state.tab1_last_template = selected_template
         
-        user_query = st.text_area("Consulta (editable)", value=st.session_state.tab1_template_query, height=150, key="tab1_template_query")
-        if user_query != templates.get(selected_template): st.session_state.tab1_last_template = None
-
+        user_query = st.text_area(
+            "Consulta (editable)",
+            value=st.session_state.tab1_template_query,
+            height=150,
+            key="tab1_template_query"
+        )
+        
+        # Desvincular tracking si el usuario editó manualmente
+        if user_query != templates.get(selected_template):
+            st.session_state.tab1_last_template = None
+    
+    # Modelos
     st.markdown("---")
     st.markdown("**⚙️ Configuración de modelos:**")
+    
     col_openai, col_perplexity = st.columns(2)
+    
     with col_openai:
-        openai_models = {"GPT-4o Mini (Recomendado)": "gpt-4o-mini", "GPT-4o": "gpt-4o", "GPT-4 Turbo": "gpt-4-turbo-preview"}
+        openai_models = {
+            "GPT-4o Mini (Recomendado)": "gpt-4o-mini",
+            "GPT-4o": "gpt-4o",
+            "GPT-4 Turbo": "gpt-4-turbo-preview"
+        }
         selected_openai = st.selectbox("🤖 Modelo OpenAI", list(openai_models.keys()), index=0, key="tab1_openai_model")
         openai_model = openai_models[selected_openai]
+    
     with col_perplexity:
-        perplexity_models = {"Sonar (Recomendado)": "sonar", "Sonar Pro": "sonar-pro", "Llama 3.1 70B": "llama-3.1-70b-instruct"}
+        perplexity_models = {
+            "Sonar (Recomendado)": "sonar",
+            "Sonar Pro": "sonar-pro",
+            "Llama 3.1 70B": "llama-3.1-70b-instruct"
+        }
         selected_perplexity = st.selectbox("🔍 Modelo Perplexity", list(perplexity_models.keys()), index=0, key="tab1_pplx_model")
         perplexity_model = perplexity_models[selected_perplexity]
     
     st.markdown("---")
+    
+    # PASO 2: EJECUTAR
     st.markdown("### 🚀 Paso 2: Generar contenido")
+    
     col_gen, col_clear = st.columns([4, 1])
+    
     with col_gen:
-        generate_content = st.button("▶️ Generar Contenido con IA", type="primary", use_container_width=True, disabled=not user_query.strip(), key="tab1_generate_btn")
+        generate_content = st.button(
+            "▶️ Generar Contenido con IA",
+            type="primary",
+            use_container_width=True,
+            disabled=not user_query.strip(),
+            key="tab1_generate_btn"
+        )
+    
     with col_clear:
         if st.button("🗑️ Limpiar", use_container_width=True, key="tab1_clear_btn"):
             for key in ["openai_response", "perplexity_response", "edited_response"]:
-                if key in st.session_state: del st.session_state[key]
+                if key in st.session_state:
+                    del st.session_state[key]
             st.rerun()
     
     if generate_content:
-        context = load_selected_context(client, bucket_name, selected_files, max_chars) if selected_files else ""
+        context = ""
+        if selected_files:
+            context = load_selected_context(client, bucket_name, selected_files, max_chars)
         
+        # OpenAI
         with st.spinner(f"🤖 {selected_openai} analizando..."):
             try:
-                openai_prompt = """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON..."""
-                user_message = f"CONSULTA:\n{user_query}" + (f"\n\nCONTEXTO:\n{context}" if context else "")
-                response = st.session_state.openai.chat.completions.create(model=openai_model, messages=[{"role": "system", "content": openai_prompt}, {"role": "user", "content": user_message}], response_format={"type": "json_object"})
+                openai_prompt = """Eres un analista estratégico experto en contenidos B2B.
+
+Analiza y genera insights accionables en formato JSON:
+{
+  "summary": "Resumen ejecutivo (2-3 líneas con valor estratégico)",
+  "key_points": ["Insight 1 con datos", "Insight 2 con oportunidad", "Insight 3 con riesgo"],
+  "recommended_actions": ["Acción 1 con plazo y ROI", "Acción 2 medible"],
+  "topics_to_validate": ["Tema 1 a validar online", "Tema 2 a verificar"]
+}
+
+Enfoque: Resultados medibles, oportunidades concretas, ROI."""
+
+                user_message = f"CONSULTA:\n{user_query}"
+                if context:
+                    user_message += f"\n\nCONTEXTO:\n{context}"
+                
+                response = st.session_state.openai.chat.completions.create(
+                    model=openai_model,
+                    messages=[
+                        {"role": "system", "content": openai_prompt},
+                        {"role": "user", "content": user_message}
+                    ],
+                    response_format={"type": "json_object"}
+                )
+                
                 openai_data = json.loads(response.choices[0].message.content)
-                openai_data["metadata"] = {"timestamp": datetime.utcnow().isoformat(), "agent": "openai", "model": openai_model, "query": user_query}
+                openai_data["metadata"] = {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "agent": "openai",
+                    "model": openai_model,
+                    "query": user_query,
+                    "mode": "with_context" if selected_files else "general"
+                }
                 st.session_state.openai_response = openai_data
-            except Exception as e: st.error(f"❌ Error en OpenAI: {str(e)}"); st.stop()
+                
+            except Exception as e:
+                st.error(f"❌ Error en OpenAI: {str(e)}")
+                st.stop()
         
+        # Perplexity
         with st.spinner(f"🔍 {selected_perplexity} validando..."):
             try:
-                pplx_client = OpenAI(api_key=st.session_state.perplexity_key, base_url="https://api.perplexity.ai")
-                perplexity_prompt = """Valida y enriquece análisis con fuentes confiables actuales. Responde en JSON..."""
-                validation_prompt = f"ANÁLISIS A VALIDAR:\n{json.dumps(st.session_state.openai_response, indent=2, ensure_ascii=False)}\n\nCONSULTA ORIGINAL: {user_query}"
-                response = pplx_client.chat.completions.create(model=perplexity_model, messages=[{"role": "system", "content": perplexity_prompt}, {"role": "user", "content": validation_prompt}])
-                clean_text = response.choices[0].message.content.strip()
-                if "```json" in clean_text: clean_text = clean_text.split("```json")[1].split("```")[0].strip()
-                elif "```" in clean_text: clean_text = clean_text.split("```")[1].split("```")[0].strip()
-                try: validated_json = json.loads(clean_text)
+                perplexity_client = OpenAI(
+                    api_key=st.session_state.perplexity_key,
+                    base_url="https://api.perplexity.ai"
+                )
+                
+                perplexity_prompt = """Valida y enriquece análisis con fuentes confiables actuales.
+
+FUENTES PRIORITARIAS: Gartner, McKinsey, Forrester, medios B2B especializados, datos verificables.
+
+Responde en JSON:
+{
+  "summary": "Resumen validado con datos actuales",
+  "key_points": ["Punto 1 validado con fuente", "Punto 2 enriquecido", "Punto 3 con contexto"],
+  "recommended_actions": ["Acción 1 con best practice", "Acción 2 con ROI sector"],
+  "validation_notes": "Qué se validó y con qué fuentes",
+  "sources": ["URL (Título - Fecha)", "URL (Título - Fecha)"],
+  "confidence_level": "alto"
+}"""
+                
+                validation_prompt = f"""ANÁLISIS A VALIDAR:
+{json.dumps(st.session_state.openai_response, indent=2, ensure_ascii=False)}
+
+CONSULTA ORIGINAL: {user_query}
+
+Valida con fuentes actuales online y proporciona URLs verificables."""
+                
+                response = perplexity_client.chat.completions.create(
+                    model=perplexity_model,
+                    messages=[
+                        {"role": "system", "content": perplexity_prompt},
+                        {"role": "user", "content": validation_prompt}
+                    ]
+                )
+                
+                response_text = response.choices[0].message.content
+                clean_text = response_text.strip()
+                
+                if "```json" in clean_text:
+                    clean_text = clean_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in clean_text:
+                    clean_text = clean_text.split("```")[1].split("```")[0].strip()
+                
+                try:
+                    validated_json = json.loads(clean_text)
                 except:
                     json_match = re.search(r'\{.*\}', clean_text, re.DOTALL)
-                    validated_json = json.loads(json_match.group()) if json_match else {}
-                validated_json["metadata"] = {"timestamp": datetime.utcnow().isoformat(), "agent": "perplexity", "model": perplexity_model, "original_query": user_query}
+                    if json_match:
+                        validated_json = json.loads(json_match.group())
+                    else:
+                        raise ValueError("No se pudo extraer JSON válido")
+                
+                validated_json["metadata"] = {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "agent": "perplexity",
+                    "model": perplexity_model,
+                    "original_query": user_query,
+                    "openai_model": openai_model
+                }
+                
                 st.session_state.perplexity_response = validated_json
                 st.success("✅ Contenido generado y validado")
                 st.rerun()
+                
             except Exception as e:
                 st.error(f"❌ Error en Perplexity: {str(e)}")
                 if "openai_response" in st.session_state:
-                    st.warning("⚠️ Usando solo OpenAI")
-                    st.session_state.perplexity_response = st.session_state.openai_response
+                    st.warning("⚠️ Usando solo OpenAI como fallback")
+                    # 🔧 FIX: Crear fallback con estructura compatible
+                    fallback_data = st.session_state.openai_response.copy()
+                    fallback_data["metadata"]["agent"] = "openai_fallback"
+                    fallback_data["metadata"]["fallback_reason"] = str(e)[:100]
+                    # Asegurar campos esperados por la UI
+                    for field in ["summary", "key_points", "recommended_actions"]:
+                        if field not in fallback_data:
+                            fallback_data[field] = [] if field != "summary" else "Contenido generado por OpenAI (sin validación externa)"
+                    st.session_state.perplexity_response = fallback_data
                     st.rerun()
-
+    
+    # PASO 3: RESULTADOS
     if "perplexity_response" in st.session_state:
         st.markdown("---")
         st.markdown("### 📊 Paso 3: Resultado validado")
+        
         final_data = st.session_state.perplexity_response
+        metadata = final_data.get("metadata", {})
+        
+        # 🔧 FIX: Detectar si es fallback de OpenAI
+        is_fallback = metadata.get("agent") in ["openai", "openai_fallback"]
+        
         with st.expander("👁️ Vista Previa del Contenido", expanded=True):
             col_badge1, col_badge2, col_badge3 = st.columns(3)
-            with col_badge1: st.markdown(f"**🤖 OpenAI:** {final_data.get('metadata', {}).get('openai_model', 'N/A')}")
-            with col_badge2: st.markdown(f"**🔍 Perplexity:** {final_data.get('metadata', {}).get('model', 'N/A')}")
-            with col_badge3: 
-                conf = final_data.get('confidence_level','medio').lower()
-                st.markdown(f"**{'🟢' if conf=='alto' else '🟡' if conf=='medio' else '🔴'} Confianza:** {conf.upper()}")
-            st.markdown("---"); st.success(final_data.get("summary", "N/A"))
+            
+            with col_badge1:
+                # 🔧 FIX: Mostrar modelo OpenAI correcto
+                openai_model_display = metadata.get("openai_model") or metadata.get("model", "N/A")
+                st.markdown(f"**🤖 OpenAI:** {openai_model_display}")
+            
+            with col_badge2:
+                # 🔧 FIX: Mostrar estado de Perplexity
+                if is_fallback:
+                    st.markdown("**🔍 Perplexity:** ⚠️ Fallback")
+                else:
+                    st.markdown(f"**🔍 Perplexity:** {metadata.get('model', 'N/A')}")
+            
+            with col_badge3:
+                # 🔧 FIX: Confianza ajustada según origen
+                if is_fallback:
+                    confidence, emoji, label = "bajo", "🔴", "BAJO ⚠️"
+                else:
+                    conf = final_data.get("confidence_level", "medio").lower()
+                    emoji = "🟢" if conf == "alto" else "🟡" if conf == "medio" else "🔴"
+                    confidence, label = conf, conf.upper()
+                st.markdown(f"**{emoji} Confianza:** {label}")
+            
+            st.markdown("---")
+            st.markdown("#### 📝 Resumen Ejecutivo")
+            
+            # 🔧 FIX: Obtener summary con fallbacks múltiples
+            summary = (
+                final_data.get("summary") or 
+                final_data.get("content") or 
+                final_data.get("response") or 
+                "N/A - Sin contenido disponible"
+            )
+            if is_fallback:
+                st.warning(f"⚠️ {summary}")
+            else:
+                st.success(summary)
+            
             col_points, col_actions = st.columns(2)
+            
             with col_points:
                 st.markdown("#### 🎯 Puntos Clave")
-                for i, p in enumerate(final_data.get("key_points", []), 1): st.markdown(f"**{i}.** {p}")
+                points = final_data.get("key_points", final_data.get("insights", []))
+                if points:
+                    for i, point in enumerate(points, 1):
+                        st.markdown(f"**{i}.** {point}")
+                else:
+                    st.caption("ℹ️ Sin puntos clave disponibles")
+            
             with col_actions:
                 st.markdown("#### ✅ Acciones Recomendadas")
-                for i, a in enumerate(final_data.get("recommended_actions", []), 1): st.markdown(f"**{i}.** {a}")
-            if final_data.get("sources"):
-                st.markdown("---\n#### 🔗 Fuentes")
-                for i, s in enumerate(final_data["sources"], 1):
-                    st.markdown(f"{i}. [{s}]({s})" if s.startswith("http") else f"{i}. {s}")
+                actions = final_data.get("recommended_actions", final_data.get("actions", []))
+                if actions:
+                    for i, action in enumerate(actions, 1):
+                        st.markdown(f"**{i}.** {action}")
+                else:
+                    st.caption("ℹ️ Sin acciones recomendadas")
+            
+            # Notas de validación (solo si no es fallback)
+            if not is_fallback and final_data.get("validation_notes"):
+                st.markdown("---")
+                st.markdown("#### 📋 Notas de Validación")
+                st.info(final_data["validation_notes"])
+            
+            # Fuentes (solo si no es fallback)
+            if not is_fallback and final_data.get("sources"):
+                st.markdown("---")
+                st.markdown("#### 🔗 Fuentes Verificadas")
+                for i, source in enumerate(final_data["sources"], 1):
+                    if isinstance(source, str) and source.startswith("http"):
+                        st.markdown(f"{i}. [{source}]({source})")
+                    else:
+                        st.markdown(f"{i}. {source}")
         
-        st.markdown("---\n### 💾 Guardar contenido")
-        if "edited_response" not in st.session_state: st.session_state.edited_response = json.dumps(final_data, indent=2, ensure_ascii=False)
-        edited_json = st.text_area("JSON editable", value=st.session_state.edited_response, height=300, key="tab1_json_editor")
-        try: edited_data = json.loads(edited_json); st.success("✅ JSON válido"); json_is_valid = True
-        except: st.error("❌ JSON inválido"); json_is_valid = False; edited_data = final_data
+        # Comparador (solo si hay respuesta real de Perplexity)
+        if not is_fallback and "openai_response" in st.session_state:
+            with st.expander("🔄 Comparar OpenAI vs Perplexity"):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.markdown("**🔵 OpenAI (Original)**")
+                    st.json(st.session_state.openai_response)
+                with col_b:
+                    st.markdown("**🟣 Perplexity (Validado)**")
+                    st.json(final_data)
+        elif is_fallback:
+            st.info("💡 *Mostrando respuesta de OpenAI. Perplexity no pudo validar por error de conexión o formato.*")
+            with st.expander("🔍 Ver respuesta OpenAI completa"):
+                st.json(st.session_state.get("openai_response", {}))
+        
+        st.markdown("---")
+        st.markdown("### 💾 Guardar contenido")
+        
+        with st.expander("📋 Configurar metadatos", expanded=True):
+            col_m1, col_m2 = st.columns(2)
+            
+            with col_m1:
+                content_tipo = st.text_input(
+                    "🏷️ Tipo",
+                    value="Análisis IA Validado" if not is_fallback else "Análisis IA (Sin validar)",
+                    key="tab1_tipo_meta"
+                )
+                
+                content_objetivo = st.selectbox(
+                    "🎯 Objetivo",
+                    ["Marketing B2B", "Social Media", "Blog Post", "Informe Interno", 
+                     "Presentación", "White Paper", "Publicación Científica"],
+                    index=0,
+                    key="tab1_objetivo_meta"
+                )
+            
+            with col_m2:
+                has_sources = not is_fallback and bool(final_data.get("sources", []))
+                content_fuentes = st.checkbox(
+                    "✅ Fuentes verificadas",
+                    value=has_sources,
+                    disabled=is_fallback,
+                    key="tab1_fuentes_meta"
+                )
+                
+                content_notas = st.text_area(
+                    "📝 Notas",
+                    value=f"Consulta: {user_query[:100]}..." if len(user_query) > 100 else f"Consulta: {user_query}",
+                    height=80,
+                    key="tab1_notas_meta"
+                )
+        
+        with st.expander("✏️ Editar JSON (avanzado)"):
+            if "edited_response" not in st.session_state:
+                st.session_state.edited_response = json.dumps(final_data, indent=2, ensure_ascii=False)
+            
+            edited_json = st.text_area(
+                "JSON editable",
+                value=st.session_state.edited_response,
+                height=400,
+                key="tab1_json_editor"
+            )
+            
+            try:
+                edited_data = json.loads(edited_json)
+                st.success("✅ JSON válido")
+                json_is_valid = True
+            except:
+                st.error("❌ JSON inválido")
+                json_is_valid = False
+                edited_data = final_data
+        
+        if "edited_response" not in st.session_state:
+            edited_data = final_data
+            json_is_valid = True
         
         preview_filename = generate_smart_filename(edited_data)
         st.info(f"📝 **Nombre de archivo:** `{preview_filename}`")
+        
         col_save, col_download = st.columns(2)
+        
         with col_save:
-            if st.button("💾 Guardar en Cloud", type="primary", use_container_width=True, disabled=not json_is_valid, key="tab1_save_btn"):
+            if st.button("💾 Guardar en Cloud", type="primary", use_container_width=True, 
+                        disabled=not json_is_valid, key="tab1_save_btn"):
                 try:
-                    save_analysis_with_metadata(client, bucket_name, BUCKET_FOLDERS["validados"], preview_filename, edited_data, {
-                        "tipo": st.session_state.get("tab1_tipo_meta", "Análisis IA Validado"),
-                        "objetivo": st.session_state.get("tab1_objetivo_meta", "Marketing B2B"),
-                        "fuentes_fiables": st.session_state.get("tab1_fuentes_meta", False),
-                        "notas": st.session_state.get("tab1_notas_meta", user_query[:100])
-                    })
-                    st.success(f"✅ Guardado: {preview_filename}"); st.balloons()
-                except Exception as e: st.error(f"❌ Error: {str(e)}")
+                    filename = generate_smart_filename(edited_data)
+                    analysis_metadata = {
+                        "tipo": content_tipo,
+                        "objetivo": content_objetivo,
+                        "fuentes_fiables": content_fuentes and not is_fallback,
+                        "notas": content_notas + (" [FALLBACK]" if is_fallback else "")
+                    }
+                    
+                    save_analysis_with_metadata(
+                        client, bucket_name,
+                        BUCKET_FOLDERS["validados"],
+                        filename, edited_data,
+                        analysis_metadata
+                    )
+                    
+                    st.success(f"✅ Guardado: {filename}")
+                    st.balloons()
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+        
         with col_download:
-            st.download_button("⬇️ Descargar JSON", json.dumps(edited_data, indent=2, ensure_ascii=False), file_name=preview_filename, mime="application/json", use_container_width=True, key="tab1_download_btn")
-
+            st.download_button(
+                "⬇️ Descargar JSON",
+                json.dumps(edited_data, indent=2, ensure_ascii=False),
+                file_name=preview_filename,
+                mime="application/json",
+                use_container_width=True,
+                key="tab1_download_btn"
+            )
 # =====================================================
 # TAB 2 - MIS ARCHIVOS (Sin cambios, funciona perfecto)
 # =====================================================
