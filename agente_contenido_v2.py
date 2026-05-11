@@ -384,7 +384,7 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["🎯 Generar Contenido", "📁 Mis Archivos", "⚙️ Configuración Avanzada"])
 
 # =====================================================
-# TAB 1 - GENERAR CONTENIDO (COMPLETO + FIXES)
+# TAB 1 - GENERAR CONTENIDO (CON DEBUG + FALLBACK ROBUSTO)
 # =====================================================
 
 with tab1:
@@ -466,7 +466,6 @@ with tab1:
             key="tab1_template_select"
         )
         
-        # Actualizar query solo si cambió la plantilla Y no fue editado manualmente
         if st.session_state.tab1_last_template != selected_template:
             st.session_state.tab1_template_query = templates[selected_template]
             st.session_state.tab1_last_template = selected_template
@@ -478,7 +477,6 @@ with tab1:
             key="tab1_template_query"
         )
         
-        # Desvincular tracking si el usuario editó manualmente
         if user_query != templates.get(selected_template):
             st.session_state.tab1_last_template = None
     
@@ -547,7 +545,8 @@ Analiza y genera insights accionables en formato JSON:
   "topics_to_validate": ["Tema 1 a validar online", "Tema 2 a verificar"]
 }
 
-Enfoque: Resultados medibles, oportunidades concretas, ROI."""
+Enfoque: Resultados medibles, oportunidades concretas, ROI.
+IMPORTANTE: Responde SOLO con JSON válido, sin texto adicional."""
 
                 user_message = f"CONSULTA:\n{user_query}"
                 if context:
@@ -562,18 +561,54 @@ Enfoque: Resultados medibles, oportunidades concretas, ROI."""
                     response_format={"type": "json_object"}
                 )
                 
-                openai_data = json.loads(response.choices[0].message.content)
+                # 🔧 FIX: Parseo robusto de respuesta OpenAI
+                raw_content = response.choices[0].message.content.strip()
+                
+                # Limpiar markdown si existe
+                if "```json" in raw_content:
+                    raw_content = raw_content.split("```json")[1].split("```")[0].strip()
+                elif "```" in raw_content:
+                    raw_content = raw_content.split("```")[1].split("```")[0].strip()
+                
+                openai_data = json.loads(raw_content)
+                
+                # 🔧 FIX: Validar y normalizar estructura
+                if not isinstance(openai_data, dict):
+                    raise ValueError("La respuesta no es un objeto JSON válido")
+                
+                # Asegurar campos mínimos
+                if "summary" not in openai_data:
+                    openai_data["summary"] = openai_data.get("content") or openai_data.get("response") or "Análisis generado exitosamente."
+                if "key_points" not in openai_data:
+                    openai_data["key_points"] = openai_data.get("insights") or openai_data.get("points") or []
+                if "recommended_actions" not in openai_data:
+                    openai_data["recommended_actions"] = openai_data.get("actions") or openai_data.get("next_steps") or []
+                
                 openai_data["metadata"] = {
                     "timestamp": datetime.utcnow().isoformat(),
                     "agent": "openai",
                     "model": openai_model,
                     "query": user_query,
-                    "mode": "with_context" if selected_files else "general"
+                    "mode": "with_context" if selected_files else "general",
+                    "raw_response_ok": True
                 }
                 st.session_state.openai_response = openai_data
                 
             except Exception as e:
                 st.error(f"❌ Error en OpenAI: {str(e)}")
+                # 🔧 FIX: Fallback incluso si OpenAI falla
+                st.session_state.openai_response = {
+                    "summary": f"Error al generar análisis: {str(e)[:200]}",
+                    "key_points": [],
+                    "recommended_actions": [],
+                    "metadata": {
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "agent": "openai_error",
+                        "model": openai_model,
+                        "query": user_query,
+                        "error": str(e)
+                    }
+                }
                 st.stop()
         
         # Perplexity
@@ -643,19 +678,64 @@ Valida con fuentes actuales online y proporciona URLs verificables."""
                 st.rerun()
                 
             except Exception as e:
-                st.error(f"❌ Error en Perplexity: {str(e)}")
+                st.error(f"❌ Error en Perplexity: {str(e)[:200]}")
                 if "openai_response" in st.session_state:
                     st.warning("⚠️ Usando solo OpenAI como fallback")
-                    # 🔧 FIX: Crear fallback con estructura compatible
-                    fallback_data = st.session_state.openai_response.copy()
-                    fallback_data["metadata"]["agent"] = "openai_fallback"
-                    fallback_data["metadata"]["fallback_reason"] = str(e)[:100]
-                    # Asegurar campos esperados por la UI
-                    for field in ["summary", "key_points", "recommended_actions"]:
-                        if field not in fallback_data:
-                            fallback_data[field] = [] if field != "summary" else "Contenido generado por OpenAI (sin validación externa)"
+                    # 🔧 FIX: Fallback robusto que PRESERVA el contenido de OpenAI
+                    fallback_data = {}
+                    original = st.session_state.openai_response
+                    
+                    # Copiar campos de contenido con múltiples fallbacks
+                    fallback_data["summary"] = (
+                        original.get("summary") or 
+                        original.get("content") or 
+                        original.get("response") or 
+                        original.get("text") or
+                        str(original) if isinstance(original, str) else
+                        "Contenido generado por OpenAI. Perplexity no pudo validar."
+                    )
+                    
+                    fallback_data["key_points"] = (
+                        original.get("key_points") or 
+                        original.get("insights") or 
+                        original.get("points") or 
+                        original.get("findings") or
+                        []
+                    )
+                    
+                    fallback_data["recommended_actions"] = (
+                        original.get("recommended_actions") or 
+                        original.get("actions") or 
+                        original.get("next_steps") or 
+                        original.get("recommendations") or
+                        []
+                    )
+                    
+                    # Copiar otros campos útiles
+                    for field in ["topics_to_validate", "analysis", "conclusions", "data"]:
+                        if field in original and field not in fallback_data:
+                            fallback_data[field] = original[field]
+                    
+                    # Metadata de fallback
+                    fallback_data["metadata"] = {
+                        **(original.get("metadata", {})),
+                        "agent": "openai_fallback",
+                        "fallback_reason": str(e)[:150],
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    
+                    # Asegurar que confidence_level exista para la UI
+                    fallback_data["confidence_level"] = "bajo"
+                    
                     st.session_state.perplexity_response = fallback_data
                     st.rerun()
+    
+    # 🔧 DEBUG: Toggle para ver respuesta cruda (descomentar para debug)
+    # if st.checkbox("🔍 Debug: Ver respuesta OpenAI cruda", key="debug_toggle"):
+    #     with st.expander("📦 openai_response completo", expanded=True):
+    #         st.json(st.session_state.get("openai_response", {}))
+    #     with st.expander("📦 perplexity_response completo", expanded=True):
+    #         st.json(st.session_state.get("perplexity_response", {}))
     
     # PASO 3: RESULTADOS
     if "perplexity_response" in st.session_state:
@@ -665,26 +745,24 @@ Valida con fuentes actuales online y proporciona URLs verificables."""
         final_data = st.session_state.perplexity_response
         metadata = final_data.get("metadata", {})
         
-        # 🔧 FIX: Detectar si es fallback de OpenAI
-        is_fallback = metadata.get("agent") in ["openai", "openai_fallback"]
+        # 🔧 FIX: Detectar fallback de forma robusta
+        is_fallback = metadata.get("agent") in ["openai", "openai_fallback", "openai_error"]
         
         with st.expander("👁️ Vista Previa del Contenido", expanded=True):
             col_badge1, col_badge2, col_badge3 = st.columns(3)
             
             with col_badge1:
-                # 🔧 FIX: Mostrar modelo OpenAI correcto
                 openai_model_display = metadata.get("openai_model") or metadata.get("model", "N/A")
                 st.markdown(f"**🤖 OpenAI:** {openai_model_display}")
             
             with col_badge2:
-                # 🔧 FIX: Mostrar estado de Perplexity
                 if is_fallback:
-                    st.markdown("**🔍 Perplexity:** ⚠️ Fallback")
+                    reason = metadata.get("fallback_reason", "Error de validación")
+                    st.markdown(f"**🔍 Perplexity:** ⚠️ Fallback\n\n<small>{reason[:50]}...</small>")
                 else:
                     st.markdown(f"**🔍 Perplexity:** {metadata.get('model', 'N/A')}")
             
             with col_badge3:
-                # 🔧 FIX: Confianza ajustada según origen
                 if is_fallback:
                     confidence, emoji, label = "bajo", "🔴", "BAJO ⚠️"
                 else:
@@ -696,13 +774,18 @@ Valida con fuentes actuales online y proporciona URLs verificables."""
             st.markdown("---")
             st.markdown("#### 📝 Resumen Ejecutivo")
             
-            # 🔧 FIX: Obtener summary con fallbacks múltiples
-            summary = (
-                final_data.get("summary") or 
-                final_data.get("content") or 
-                final_data.get("response") or 
-                "N/A - Sin contenido disponible"
-            )
+            # 🔧 FIX: Obtener summary con fallbacks agresivos
+            summary = final_data.get("summary")
+            if not summary or summary in ["N/A", "", "None"]:
+                # Intentar otros campos
+                for field in ["content", "response", "text", "analysis", "conclusion"]:
+                    if final_data.get(field):
+                        summary = final_data[field]
+                        break
+                # Último recurso: convertir a string
+                if not summary:
+                    summary = str(final_data)[:300] + "..." if len(str(final_data)) > 300 else str(final_data)
+            
             if is_fallback:
                 st.warning(f"⚠️ {summary}")
             else:
@@ -712,19 +795,35 @@ Valida con fuentes actuales online y proporciona URLs verificables."""
             
             with col_points:
                 st.markdown("#### 🎯 Puntos Clave")
-                points = final_data.get("key_points", final_data.get("insights", []))
-                if points:
+                points = final_data.get("key_points", [])
+                # Fallbacks para puntos
+                if not points:
+                    for field in ["insights", "points", "findings", "key_insights"]:
+                        if final_data.get(field):
+                            points = final_data[field]
+                            break
+                if points and isinstance(points, list):
                     for i, point in enumerate(points, 1):
                         st.markdown(f"**{i}.** {point}")
+                elif points and isinstance(points, str):
+                    st.markdown(f"• {points}")
                 else:
                     st.caption("ℹ️ Sin puntos clave disponibles")
             
             with col_actions:
                 st.markdown("#### ✅ Acciones Recomendadas")
-                actions = final_data.get("recommended_actions", final_data.get("actions", []))
-                if actions:
+                actions = final_data.get("recommended_actions", [])
+                # Fallbacks para acciones
+                if not actions:
+                    for field in ["actions", "next_steps", "recommendations", "action_items"]:
+                        if final_data.get(field):
+                            actions = final_data[field]
+                            break
+                if actions and isinstance(actions, list):
                     for i, action in enumerate(actions, 1):
                         st.markdown(f"**{i}.** {action}")
+                elif actions and isinstance(actions, str):
+                    st.markdown(f"• {actions}")
                 else:
                     st.caption("ℹ️ Sin acciones recomendadas")
             
@@ -755,7 +854,7 @@ Valida con fuentes actuales online y proporciona URLs verificables."""
                     st.markdown("**🟣 Perplexity (Validado)**")
                     st.json(final_data)
         elif is_fallback:
-            st.info("💡 *Mostrando respuesta de OpenAI. Perplexity no pudo validar por error de conexión o formato.*")
+            st.info("💡 *Mostrando respuesta de OpenAI. Perplexity no pudo validar por error de conexión, formato o límite de tasa.*")
             with st.expander("🔍 Ver respuesta OpenAI completa"):
                 st.json(st.session_state.get("openai_response", {}))
         
@@ -857,8 +956,7 @@ Valida con fuentes actuales online y proporciona URLs verificables."""
                 mime="application/json",
                 use_container_width=True,
                 key="tab1_download_btn"
-            )
-# =====================================================
+            )# =====================================================
 # TAB 2 - MIS ARCHIVOS (Sin cambios, funciona perfecto)
 # =====================================================
 
