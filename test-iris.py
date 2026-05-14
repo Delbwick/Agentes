@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-📊 ANALIZADOR FINANCIERO CON STREAMLIT - VERSIÓN SINGLE FILE
+📊 ANALIZADOR FINANCIERO CON STREAMLIT - VERSIÓN SINGLE FILE - IRIS 
 Importa CSV + Esquema desde Jupyter Notebook → Matching → Análisis → Visualización
 
 ✅ Todo en un solo archivo para fácil despliegue en Streamlit Cloud
