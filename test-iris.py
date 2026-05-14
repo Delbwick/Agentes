@@ -1,564 +1,536 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-📊 ANALIZADOR FINANCIERO CON STREAMLIT - VERSIÓN SINGLE FILE - IRIS 
-Importa CSV + Esquema desde Jupyter Notebook → Matching → Análisis → Visualización
-
-✅ Todo en un solo archivo para fácil despliegue en Streamlit Cloud
-✅ Compatible con GitHub: solo necesitas este archivo + requirements.txt
+📊 ANALIZADOR DE QUIEBRAS BANCARIAS - STREAMLIT
+Estructura de 5 tabs: Exploración → Preprocesamiento → Modelado → Evaluación → Interpretación
+✅ Datos sintéticos por defecto | ✅ Modelos múltiples | ✅ Persistencia | ✅ UI Profesional
 """
 
 # ============================================================================
-# 📦 IMPORTACIONES
+# 📦 IMPORTACIONES & CONFIG
 # ============================================================================
 import streamlit as st
 import pandas as pd
 import numpy as np
-import json
-import re
 import plotly.express as px
 import plotly.graph_objects as go
-from io import StringIO, BytesIO
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-from datetime import datetime
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.svm import SVC
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
+    confusion_matrix, roc_curve, classification_report
+)
+import pickle
+import io
+import json
+import re
 import nbformat
+from datetime import datetime
+from typing import Dict, List, Tuple, Optional, Any
+import warnings
+warnings.filterwarnings('ignore')
 
-# ============================================================================
-# ⚙️ CONFIGURACIÓN DE PÁGINA
-# ============================================================================
 st.set_page_config(
-    page_title="📊 Analizador Financiero",
-    page_icon="📈",
+    page_title="🏦 Analizador de Quiebras Financieras",
+    page_icon="📉",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # ============================================================================
-# 🗄️ MÓDULO: DATA LOADER
+# 🗄️ STATE MANAGEMENT
+# ============================================================================
+def init_session_state():
+    defaults = {
+        'data_raw': None, 'schema': None, 'mapping': {}, 'data_processed': None,
+        'X_train': None, 'X_test': None, 'y_train': None, 'y_test': None,
+        'feature_names': [], 'preprocessor': None, 'target_col': 'bankrupt',
+        'models': {}, 'metrics': {}, 'evaluation_results': {},
+        'is_synthetic': True, 'upload_available': True
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+init_session_state()
+
+# ============================================================================
+# 🎲 SYNTHETIC DATA GENERATOR
+# ============================================================================
+@st.cache_data
+def generate_synthetic_data(n_companies: int = 80, n_years: int = 6) -> pd.DataFrame:
+    """Genera datos financieros realistas con relación causal hacia quiebra"""
+    np.random.seed(42)
+    sectors = ['Retail', 'Manufactura', 'Tecnología', 'Construcción', 'Servicios']
+    data = []
+    
+    for year in range(2019, 2019 + n_years):
+        for comp_id in range(1, n_companies + 1):
+            sector = np.random.choice(sectors)
+            base_assets = np.random.uniform(1e6, 5e7)
+            growth = np.random.normal(0.05, 0.15)
+            
+            assets = base_assets * (1 + growth * (year - 2019)) * np.random.uniform(0.8, 1.2)
+            liabilities = assets * np.random.uniform(0.4, 0.85) * (1 + np.random.normal(0, 0.1))
+            equity = assets - liabilities
+            revenue = assets * np.random.uniform(0.5, 1.5) * (1 + growth * (year - 2019))
+            expenses = revenue * np.random.uniform(0.6, 0.95)
+            net_income = revenue - expenses
+            cash_flow = net_income * np.random.uniform(0.7, 1.3) + np.random.normal(0, 1e4)
+            
+            debt_ratio = liabilities / assets if assets > 0 else 0
+            current_ratio = cash_flow / (liabilities * 0.1) if liabilities > 0 else np.inf
+            
+            # Lógica de quiebra con ruido
+            bankrupt_prob = (
+                0.6 * min(debt_ratio / 0.7, 1.0) +
+                0.3 * max(0, 1 - current_ratio / 1.5) +
+                0.1 * (1 if net_income < 0 else 0) +
+                np.random.normal(0, 0.1)
+            )
+            bankrupt = 1 if bankrupt_prob > 0.55 else 0
+            
+            data.append({
+                'company_id': f'EMP_{comp_id:04d}',
+                'sector': sector,
+                'year': year,
+                'asset_total': max(0, assets),
+                'liability_total': max(0, liabilities),
+                'equity': max(0, equity),
+                'revenue': max(0, revenue),
+                'net_income': net_income,
+                'cash_flow': cash_flow,
+                'debt_ratio': debt_ratio,
+                'current_ratio': current_ratio,
+                'bankrupt': bankrupt
+            })
+    
+    df = pd.DataFrame(data)
+    
+    # Introducir valores faltantes y outliers controlados
+    mask_missing = np.random.random(df.shape) < 0.03
+    df[df.columns[4:]] = df[df.columns[4:]].mask(mask_missing)
+    outlier_mask = np.random.random(len(df)) < 0.02
+    df.loc[outlier_mask, 'debt_ratio'] = np.random.uniform(1.5, 3.0, outlier_mask.sum())
+    df.loc[outlier_mask, 'current_ratio'] = np.random.uniform(-0.5, 0.2, outlier_mask.sum())
+    
+    return df
+
+# ============================================================================
+# 📥 DATA LOADER & SCHEMA (EXISTING FUNCTIONALITY PRESERVED)
 # ============================================================================
 def load_csv(file) -> pd.DataFrame:
-    """Carga archivo CSV o Excel con detección automática de encoding"""
     if file.name.endswith('.csv'):
-        for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
-            try:
-                return pd.read_csv(file, encoding=encoding)
-            except UnicodeDecodeError:
-                continue
-        raise ValueError("No se pudo determinar el encoding del archivo CSV")
-    elif file.name.endswith(('.xlsx', '.xls')):
-        return pd.read_excel(file)
-    raise ValueError(f"Formato no soportado: {file.name}")
-
+        for enc in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+            try: return pd.read_csv(file, encoding=enc)
+            except UnicodeDecodeError: continue
+        raise ValueError("Encoding no detectado")
+    elif file.name.endswith(('.xlsx', '.xls')): return pd.read_excel(file)
+    raise ValueError("Formato no soportado")
 
 def load_schema_from_notebook(file) -> dict:
-    """Extrae esquema de variables desde notebook Jupyter o archivo JSON"""
     content = file.getvalue()
-    if isinstance(content, bytes):
-        content = content.decode('utf-8')
-    
-    if file.name.endswith('.json'):
-        return json.loads(content)
-    
+    if isinstance(content, bytes): content = content.decode('utf-8')
+    if file.name.endswith('.json'): return json.loads(content)
     if file.name.endswith('.ipynb'):
         nb = nbformat.reads(content, as_version=4)
         for cell in nb.cells:
-            if cell.cell_type == 'code':
-                source = cell.get('source', '')
-                if 'SCHEMA_DEFINITION' in source or '"type":' in source:
-                    schema_match = re.search(r'schema\s*=\s*({.*?})(?=\n\w|\n#|$)', source, re.DOTALL)
-                    if schema_match:
-                        try:
-                            return json.loads(schema_match.group(1))
-                        except json.JSONDecodeError:
-                            import ast
-                            return ast.literal_eval(schema_match.group(1))
-    
-    try:
-        return json.loads(content)
-    except:
-        raise ValueError(
-            "No se pudo extraer el esquema. Formato esperado:\n"
-            "• JSON: {'col': {'type': 'float', ...}}\n"
-            "• Notebook: Celda con variable 'schema' y marcador 'SCHEMA_DEFINITION'"
-        )
-
+            if cell.cell_type == 'code' and ('SCHEMA_DEFINITION' in cell.source or '"type":' in cell.source):
+                m = re.search(r'schema\s*=\s*({.*?})(?=\n\w|\n#|$)', cell.source, re.DOTALL)
+                if m:
+                    try: return json.loads(m.group(1))
+                    except: import ast; return ast.literal_eval(m.group(1))
+    try: return json.loads(content)
+    except: raise ValueError("Formato de esquema no válido. Use JSON o notebook con # SCHEMA_DEFINITION")
 
 def validate_data_with_schema(df: pd.DataFrame, mapping: dict, schema: dict) -> pd.DataFrame:
-    """Valida y transforma datos según esquema mapeado"""
-    df_validated = df.copy()
-    
-    for csv_col, schema_key in mapping.items():
-        if csv_col not in df_validated.columns:
-            continue
-        var_def = schema.get(schema_key, {})
-        var_type = var_def.get('type', 'string')
+    df_v = df.copy()
+    for csv_c, sch_k in mapping.items():
+        if csv_c not in df_v.columns: continue
+        td = schema.get(sch_k, {}).get('type', 'string')
+        if td in ['float', 'decimal', 'currency', 'amount']:
+            df_v[csv_c] = pd.to_numeric(df_v[csv_c].astype(str).str.replace(r'[,$€£%]', '', regex=True).str.strip(), errors='coerce')
+        elif td in ['integer', 'int', 'count']: df_v[csv_c] = pd.to_numeric(df_v[csv_c], errors='coerce').astype('Int64')
+        elif td in ['date', 'datetime', 'timestamp']:
+            df_v[csv_c] = pd.to_datetime(df_v[csv_c], format=schema.get(sch_k, {}).get('format'), errors='coerce')
+        elif td == 'boolean':
+            df_v[csv_c] = df_v[csv_c].astype(str).str.lower().map({'true':1,'false':0,'1':1,'0':0,'si':1,'no':0})
+        if 'min' in schema.get(sch_k, {}): df_v.loc[df_v[csv_c] < schema[sch_k]['min'], csv_c] = None
+        if 'max' in schema.get(sch_k, {}): df_v.loc[df_v[csv_c] > schema[sch_k]['max'], csv_c] = None
+    return df_v
+
+# ============================================================================
+# ⚙️ PREPROCESSING & MODELING ENGINE
+# ============================================================================
+class BankruptcyPreprocessor:
+    def __init__(self, df: pd.DataFrame, target_col: str = 'bankrupt'):
+        self.df = df.copy()
+        self.target_col = target_col
+        self.numeric_cols = df.select_dtypes(include='number').columns.drop([target_col], errors='ignore').tolist()
+        self.categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
         
-        if var_type in ['float', 'decimal', 'currency', 'amount']:
-            df_validated[csv_col] = pd.to_numeric(
-                df_validated[csv_col].astype(str).str.replace(r'[,$€£%]', '', regex=True).str.strip(),
-                errors='coerce'
-            )
-        elif var_type in ['integer', 'int', 'count']:
-            df_validated[csv_col] = pd.to_numeric(df_validated[csv_col], errors='coerce').astype('Int64')
-        elif var_type in ['date', 'datetime', 'timestamp']:
-            date_format = var_def.get('format', None)
-            df_validated[csv_col] = pd.to_datetime(df_validated[csv_col], format=date_format, errors='coerce')
-        elif var_type == 'boolean':
-            df_validated[csv_col] = df_validated[csv_col].astype(str).str.lower().map(
-                {'true': True, 'false': False, '1': True, '0': False, 'si': True, 'no': False}
-            )
+    def fit_transform(self, impute_strategy: str = 'median', encode: str = 'onehot') -> Tuple[pd.DataFrame, Any, Any]:
+        df = self.df.copy()
+        # Imputación
+        if impute_strategy == 'median':
+            df[self.numeric_cols] = df[self.numeric_cols].transform(lambda x: x.fillna(x.median()))
+            for c in self.categorical_cols: df[c] = df[c].fillna(df[c].mode()[0] if not df[c].mode().empty else 'Unknown')
+        elif impute_strategy == 'drop': df = df.dropna()
         
-        if 'min' in var_def:
-            df_validated.loc[df_validated[csv_col] < var_def['min'], csv_col] = None
-        if 'max' in var_def:
-            df_validated.loc[df_validated[csv_col] > var_def['max'], csv_col] = None
-        if 'allowed_values' in var_def:
-            df_validated.loc[~df_validated[csv_col].isin(var_def['allowed_values']), csv_col] = None
-    
-    return df_validated
-
-# ============================================================================
-# 🔗 MÓDULO: COLUMN MATCHER
-# ============================================================================
-class ColumnMatcher:
-    """Gestiona el matching entre columnas CSV y esquema"""
-    
-    def __init__(self, csv_columns: List[str], schema: Dict):
-        self.csv_columns = csv_columns
-        self.schema = schema
-        self.suggestions = self._generate_suggestions()
-    
-    def _generate_suggestions(self) -> Dict[str, List[str]]:
-        """Genera sugerencias de matching basadas en similitud de nombres"""
-        suggestions = {}
-        schema_keys = list(self.schema.keys())
+        # Target encoding
+        if df[self.target_col].dtype == 'object':
+            le = LabelEncoder()
+            df[self.target_col] = le.fit_transform(df[self.target_col])
         
-        for csv_col in self.csv_columns:
-            csv_lower = csv_col.lower().replace('_', '').replace(' ', '').replace('-', '')
-            matches = []
-            for schema_key in schema_keys:
-                schema_lower = schema_key.lower().replace('_', '').replace(' ', '').replace('-', '')
-                if csv_lower == schema_lower or csv_lower in schema_lower or schema_lower in csv_lower:
-                    matches.append((schema_key, 1.0))
-                elif any(kw in csv_lower for kw in schema_lower.split()) or any(kw in schema_lower for kw in csv_lower.split()):
-                    matches.append((schema_key, 0.7))
-            suggestions[csv_col] = [m[0] for m in sorted(matches, key=lambda x: -x[1])]
-        return suggestions
-    
-    def get_schema_info(self, schema_key: str) -> Dict:
-        return self.schema.get(schema_key, {})
-
-
-def render_matcher_interface(matcher: ColumnMatcher) -> Dict[str, str]:
-    """Renderiza interfaz Streamlit para matching de columnas"""
-    mapping = {}
-    st.markdown("### 🔗 Asigna columnas del CSV a variables del esquema")
-    st.info("💡 Las sugerencias se generan automáticamente por similitud de nombres")
-    
-    cols = st.columns(2)
-    for idx, csv_col in enumerate(matcher.csv_columns):
-        col_idx = idx % 2
-        with cols[col_idx]:
-            st.markdown(f"**📄 `{csv_col}`**")
-            options = ["-- Sin mapear --"] + matcher.suggestions.get(csv_col, []) + \
-                     [k for k in matcher.schema.keys() if k not in matcher.suggestions.get(csv_col, [])]
-            seen = set()
-            unique_options = [opt for opt in options if not (opt in seen or seen.add(opt))]
+        # Separar X, y
+        X = df.drop([self.target_col], axis=1)
+        y = df[self.target_col]
+        
+        # Pipeline
+        num_trans = Pipeline([
+            ('imputer', 'passthrough'),
+            ('scaler', StandardScaler())
+        ])
+        cat_trans = Pipeline([
+            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+        ]) if self.categorical_cols else 'passthrough'
+        
+        preprocessor = ColumnTransformer(
+            transformers=[('num', num_trans, self.numeric_cols), ('cat', cat_trans, self.categorical_cols)]
+        )
+        
+        X_processed = preprocessor.fit_transform(X)
+        feature_names = self.numeric_cols.copy()
+        if self.categorical_cols:
+            ohe = preprocessor.named_transformers_['cat'].named_steps['onehot']
+            feature_names += list(ohe.get_feature_names_out(self.categorical_cols))
             
-            default_idx = 0
-            if matcher.suggestions.get(csv_col) and matcher.suggestions[csv_col][0] in unique_options:
-                default_idx = unique_options.index(matcher.suggestions[csv_col][0])
-            
-            selected = st.selectbox("Variable del esquema:", unique_options, key=f"match_{csv_col}", 
-                                  label_visibility="collapsed", index=default_idx)
-            
-            if selected and selected != "-- Sin mapear --":
-                mapping[csv_col] = selected
-                info = matcher.get_schema_info(selected)
-                if info:
-                    with st.expander(f"📋 Info: {selected}", expanded=False):
-                        st.markdown(f"- **Tipo:** `{info.get('type', 'string')}`")
-                        if 'description' in info: st.markdown(f"- **Descripción:** {info['description']}")
-                        if 'format' in info: st.markdown(f"- **Formato:** `{info['format']}`")
-                        if 'required' in info: st.markdown(f"- **Requerida:** {'✅ Sí' if info['required'] else '❌ No'}")
-            st.divider()
+        return pd.DataFrame(X_processed, columns=feature_names), y, preprocessor, feature_names
+
+def train_model(model_name: str, X_train: pd.DataFrame, y_train: pd.DataFrame) -> Any:
+    models = {
+        'Logistic Regression': LogisticRegression(max_iter=1000, class_weight='balanced'),
+        'Decision Tree': DecisionTreeClassifier(max_depth=5, min_samples_split=10, class_weight='balanced'),
+        'Random Forest': RandomForestClassifier(n_estimators=100, max_depth=6, class_weight='balanced', random_state=42),
+        'Gradient Boosting': GradientBoostingClassifier(n_estimators=150, max_depth=4, learning_rate=0.1, random_state=42),
+        'SVM': SVC(kernel='rbf', class_weight='balanced', probability=True, random_state=42)
+    }
+    model = models[model_name]
+    model.fit(X_train, y_train)
+    return model
+
+def evaluate_model(model, X_test: pd.DataFrame, y_test: pd.DataFrame) -> Dict[str, Any]:
+    y_pred = model.predict(X_test)
+    y_proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else [0.5]*len(y_test)
     
-    if mapping and 'data' in st.session_state and st.session_state.data is not None:
-        st.markdown("### ✅ Resumen de Mapping")
-        st.dataframe(st.session_state.data[list(mapping.keys())].head(3))
-    return mapping
+    metrics = {
+        'Accuracy': accuracy_score(y_test, y_pred),
+        'Precision': precision_score(y_test, y_pred, zero_division=0),
+        'Recall': recall_score(y_test, y_pred, zero_division=0),
+        'F1-Score': f1_score(y_test, y_pred, zero_division=0),
+        'ROC-AUC': roc_auc_score(y_test, y_proba)
+    }
+    cm = confusion_matrix(y_test, y_pred)
+    fpr, tpr, _ = roc_curve(y_test, y_proba)
+    return metrics, cm, fpr, tpr
+
+def get_feature_importance(model, feature_names: List[str]) -> pd.DataFrame:
+    if hasattr(model, 'coef_'):
+        importances = np.abs(model.coef_[0])
+    elif hasattr(model, 'feature_importances_'):
+        importances = model.feature_importances_
+    else:
+        return pd.DataFrame({'Feature': feature_names, 'Importance': 0.0})
+    
+    df_imp = pd.DataFrame({'Feature': feature_names, 'Importance': importances}).sort_values('Importance', ascending=False)
+    return df_imp
 
 # ============================================================================
-# 📊 MÓDULO: FINANCIAL ANALYZER
+# 🧠 QWEN SUGGESTIONS ENGINE
 # ============================================================================
-class FinancialAnalyzer:
-    """Analizador especializado en datos financieros"""
+def generate_qwen_suggestions(df: pd.DataFrame, metrics: Optional[Dict] = None) -> List[str]:
+    suggestions = []
+    n_rows, n_cols = df.shape
+    missing_pct = df.isnull().mean().mean() * 100
+    target_col = [c for c in df.columns if 'bankrupt' in c.lower() or 'quiebra' in c.lower()]
     
-    def __init__(self, df: pd.DataFrame):
-        self.df = df
-        self.n_rows, self.n_cols = df.shape
-        self.numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
-        self.categorical_columns = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    if target_col:
+        balance = df[target_col[0]].value_counts(normalize=True)
+        if balance.iloc[1] < 0.3: suggestions.append("⚠️ Clase desbalanceada. Considere SMOTE o ajuste de class_weight en el modelo.")
     
-    @property
-    def memory_usage(self) -> float:
-        return self.df.memory_usage(deep=True).sum() / 1024 ** 2
+    if missing_pct > 5: suggestions.append("🔧 >5% de valores faltantes. Valide imputación por mediana/moda o KNN.")
+    if n_rows < 500: suggestions.append("📈 Dataset pequeño. Use validación cruzada estratificada para evitar overfitting.")
     
-    @property
-    def dtypes_summary(self) -> pd.Series:
-        return self.df.dtypes.value_counts()
+    corr = df.select_dtypes('number').corr()
+    high_corr = [(c1, c2) for c1 in corr.columns for c2 in corr.columns if c1 < c2 and abs(corr.loc[c1, c2]) > 0.85]
+    if high_corr: suggestions.append(f"🔗 Multicolinealidad detectada: {high_corr[0]}. Considere eliminar una o usar PCA.")
     
-    @property
-    def dtypes_detail(self) -> pd.DataFrame:
-        return pd.DataFrame({
-            'columna': self.df.columns,
-            'tipo': self.df.dtypes.values,
-            'nulos': self.df.isnull().sum().values,
-            'únicos': [self.df[col].nunique() for col in self.df.columns]
-        })
+    if metrics and metrics.get('Recall', 0) < 0.6:
+        suggestions.append("🎯 Recall bajo. En quiebras, priorizamos evitar falsos negativos. Ajuste umbral o use modelos ensemble.")
     
-    def get_descriptive_stats(self, columns: Optional[List[str]] = None) -> pd.DataFrame:
-        cols = columns or self.numeric_columns
-        if not cols: return pd.DataFrame()
-        stats = self.df[cols].describe(include='all').T
-        stats['cv'] = stats['std'] / stats['mean']
-        stats['iqr'] = stats['75%'] - stats['25%']
-        return stats
-    
-    def get_missing_values(self) -> pd.DataFrame:
-        missing = self.df.isnull().sum()
-        missing = missing[missing > 0].sort_values(ascending=False)
-        if missing.empty: return pd.DataFrame()
-        return pd.DataFrame({
-            'missing_count': missing,
-            'missing_pct': (missing / len(self.df) * 100).round(2)
-        })
-    
-    def get_duplicates_info(self) -> Dict:
-        dup_count = self.df.duplicated().sum()
-        return {
-            'count': int(dup_count),
-            'percentage': float(dup_count / len(self.df) * 100) if len(self.df) > 0 else 0
-        }
-    
-    def detect_outliers(self, column: str, method: str = 'iqr') -> int:
-        if column not in self.numeric_columns: return 0
-        data = self.df[column].dropna()
-        if method == 'iqr':
-            q1, q3 = data.quantile([0.25, 0.75])
-            iqr = q3 - q1
-            lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-            return int(((data < lower) | (data > upper)).sum())
-        return 0
-    
-    def detect_date_columns(self) -> List[str]:
-        date_cols = []
-        for col in self.df.columns:
-            if any(kw in col.lower() for kw in ['date', 'fecha', 'time', 'timestamp', 'año', 'mes']):
-                date_cols.append(col)
-            elif pd.api.types.is_datetime64_any_dtype(self.df[col]):
-                date_cols.append(col)
-            elif self.df[col].dtype == 'object':
-                sample = self.df[col].dropna().head(100)
-                if len(sample) > 0:
-                    try:
-                        pd.to_datetime(sample, errors='raise')
-                        date_cols.append(col)
-                    except: pass
-        return date_cols
+    suggestions.append("💡 Recorte outliers en `debt_ratio` y `current_ratio` mediante IQR o winsorización.")
+    suggestions.append("📊 Valide estabilidad temporal: entrene por años históricos y test en último año.")
+    return suggestions
 
 # ============================================================================
-# 📈 MÓDULO: VISUALIZATIONS
+# 🖥️ UI COMPONENTS
 # ============================================================================
-class PlotManager:
-    """Gestor de visualizaciones financieras"""
+def render_tab1_exploracion():
+    st.header("🔍 1. Exploración de Datos")
     
-    @staticmethod
-    def histogram(series: pd.Series, title: str = "Distribución") -> go.Figure:
-        fig = px.histogram(x=series.dropna(), nbins=30, title=title, labels={'x': 'Valor', 'y': 'Frecuencia'})
-        mean_val = series.mean()
-        fig.add_vline(x=mean_val, line_dash="dash", line_color="red", annotation_text=f"Media: {mean_val:.2f}")
-        return fig
-    
-    @staticmethod
-    def boxplot_by_category(df: pd.DataFrame, cat_col: str, num_col: str) -> go.Figure:
-        return px.box(df, x=cat_col, y=num_col, title=f"{num_col} por {cat_col}", color=cat_col, points="outliers")
-    
-    @staticmethod
-    def correlation_heatmap(df: pd.DataFrame) -> go.Figure:
-        corr = df.corr(numeric_only=True)
-        return px.imshow(corr, text_auto='.2f', aspect='auto', color_continuous_scale='RdBu_r', title='Matriz de Correlación')
-    
-    @staticmethod
-    def time_series_line(df: pd.DataFrame, date_col: str, value_col: str) -> go.Figure:
-        fig = px.area(df, x=date_col, y=value_col, title=f"Evolución de {value_col}", labels={date_col: 'Fecha', value_col: 'Valor'})
-        if len(df) > 10:
-            fig.add_trace(go.Scatter(
-                x=df[date_col],
-                y=df[value_col].rolling(window=min(30, len(df)//5)).mean(),
-                mode='lines', name='Tendencia (media móvil)', line=dict(dash='dash', color='orange')
-            ))
-        return fig
-    
-    @staticmethod
-    def bar_chart(df: pd.DataFrame, x: str, y: str, title: str = "") -> go.Figure:
-        return px.bar(df, x=x, y=y, title=title, text_auto='.2s')
-    
-    @staticmethod
-    def scatter_plot(df: pd.DataFrame, x: str, y: str, color: str = None, title: str = "") -> go.Figure:
-        return px.scatter(df, x=x, y=y, color=color, title=title, trendline='ols' if not color else None)
-
-# ============================================================================
-# 🎨 MÓDULO: UI COMPONENTS
-# ============================================================================
-def render_header():
-    st.title("📊 Analizador de Datos Financieros")
-    st.markdown("""
-    > **Importa tu CSV + Esquema desde Jupyter → Matching de columnas → Análisis financiero completo**
-    """)
-    st.markdown("---")
-
-def render_sidebar():
-    st.sidebar.header("🔧 Panel de Control")
-    step = st.sidebar.radio(
-        "Selecciona una etapa:",
-        ["📁 1. Importar Datos", "🔗 2. Matching de Columnas", "📈 3. Análisis Financiero", "💾 4. Exportar Resultados"]
-    )
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**🔗 Enlaces útiles:**\n- [📚 Documentación](https://github.com)\n- [🐛 Reportar issue](https://github.com/issues)")
-    return step
-
-def render_footer():
-    st.markdown("---")
-    st.caption(f"📊 Analizador Financiero v1.0 | Desarrollado con Streamlit + Pandas + Plotly | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-
-# ============================================================================
-# 📁 ETAPA 1: IMPORTAR DATOS
-# ============================================================================
-def stage_import_data():
-    st.header("📁 Importar Archivos")
-    col1, col2 = st.columns(2)
-    
+    col1, col2 = st.columns([2, 1])
     with col1:
-        st.subheader("📄 Archivo CSV con Datos")
-        csv_file = st.file_uploader("Sube tu archivo CSV", type=['csv', 'xlsx', 'xls'], key="csv_uploader")
-        if csv_file:
-            try:
-                st.session_state.data = load_csv(csv_file)
-                st.success(f"✅ Datos cargados: {st.session_state.data.shape[0]} filas × {st.session_state.data.shape[1]} columnas")
-                with st.expander("👁️ Vista previa de datos"):
-                    st.dataframe(st.session_state.data.head())
-            except Exception as e:
-                st.error(f"❌ Error al cargar CSV: {str(e)}")
-    
+        mode = st.radio("Fuente de datos:", ["🎲 Datos Sintéticos", "📁 Cargar CSV/Excel"], horizontal=True)
     with col2:
-        st.subheader("📓 Esquema desde Jupyter Notebook")
-        schema_file = st.file_uploader("Sube notebook (.ipynb) o archivo JSON con esquema", type=['ipynb', 'json'], key="schema_uploader")
-        if schema_file:
-            try:
+        if mode == "📁 Cargar CSV/Excel":
+            csv_file = st.file_uploader("Archivo de datos", type=['csv','xlsx','xls'], key="csv_up")
+            if csv_file:
+                st.session_state.data_raw = load_csv(csv_file)
+                st.session_state.is_synthetic = False
+            schema_file = st.file_uploader("Esquema Jupyter/JSON", type=['ipynb','json'], key="schema_up")
+            if schema_file and st.session_state.data_raw is not None:
                 st.session_state.schema = load_schema_from_notebook(schema_file)
-                st.success(f"✅ Esquema cargado: {len(st.session_state.schema)} variables definidas")
-                with st.expander("👁️ Ver esquema"):
-                    st.json(st.session_state.schema, expanded=False)
-            except Exception as e:
-                st.error(f"❌ Error al cargar esquema: {str(e)}")
-    
-    if st.session_state.data is not None and st.session_state.schema is not None:
-        st.info("💡 Ambos archivos cargados. Continúa con el **Matching de Columnas** en el menú lateral.")
+    else:
+        st.session_state.data_raw = generate_synthetic_data()
+        st.session_state.is_synthetic = True
 
-# ============================================================================
-# 🔗 ETAPA 2: MATCHING DE COLUMNAS
-# ============================================================================
-def stage_column_matching():
-    st.header("🔗 Matching de Columnas")
+    if st.session_state.data_raw is None:
+        st.info("Cargue datos o use el generador sintético.")
+        return
+
+    df = st.session_state.data_raw
+    st.success(f"✅ Datos cargados: `{df.shape[0]}` filas × `{df.shape[1]}` columnas | Memoria: `{df.memory_usage(deep=True).sum()/1024**2:.2f} MB`")
     
-    if st.session_state.data is None or st.session_state.schema is None:
-        st.warning("⚠️ Primero importa ambos archivos en la etapa 1.")
+    if not st.session_state.is_synthetic and st.session_state.schema:
+        with st.expander("🔗 Aplicar Mapping de Esquema"):
+            mapping = {}
+            for col in df.columns:
+                opts = ['-- Ignorar --'] + list(st.session_state.schema.keys())
+                sel = st.selectbox(f"{col} →", opts, key=f"map_{col}")
+                if sel != '-- Ignorar --': mapping[col] = sel
+            if mapping and st.button("✅ Aplicar Mapping"):
+                st.session_state.data_raw = validate_data_with_schema(df, mapping, st.session_state.schema)
+                st.rerun()
+
+    # Análisis estructural
+    st.subheader("📊 Estructura y Tipos")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Empresas únicas", df['company_id'].nunique() if 'company_id' in df.columns else "N/A")
+    c2.metric("Años cubiertos", df['year'].nunique() if 'year' in df.columns else "N/A")
+    c3.metric("Variables numéricas", df.select_dtypes('number').shape[1])
+    c4.metric("Variables categóricas", df.select_dtypes('object').shape[1])
+    
+    st.dataframe(df.dtypes.to_frame(name='Tipo'), use_container_width=True)
+    
+    # Distribuciones y temporales
+    st.subheader("📈 Distribuciones y Tendencia Temporal")
+    num_cols = df.select_dtypes('number').columns.tolist()
+    if 'bankrupt' in num_cols: num_cols = [c for c in num_cols if c != 'bankrupt']
+    
+    tab_plots = st.tabs(["🔹 Histogramas", "🔹 Tendencia Temporal", "🔹 Correlaciones"])
+    with tab_plots[0]:
+        col = st.selectbox("Columna para distribuir:", num_cols)
+        fig = px.histogram(df, x=col, nbins=40, marginal='box', title=f"Distribución: {col}")
+        st.plotly_chart(fig, use_container_width=True)
+    with tab_plots[1]:
+        if 'year' in df.columns:
+            time_mean = df.groupby('year')[num_cols].mean().reset_index().melt(id_vars='year')
+            fig = px.line(time_mean, x='year', y='value', color='variable', title="Evolución de Medias Anuales", markers=True)
+            st.plotly_chart(fig, use_container_width=True)
+        else: st.warning("No hay columna `year` para análisis temporal.")
+    with tab_plots[2]:
+        corr = df[num_cols].corr()
+        st.dataframe(corr.style.background_gradient(cmap='RdBu_r', vmin=-1, vmax=1), use_container_width=True)
+        
+    # Qwen Suggestions
+    st.subheader("🤖 Sugerencias de Qwen")
+    sugg = generate_qwen_suggestions(df)
+    for s in sugg: st.info(s)
+
+def render_tab2_preprocesamiento():
+    st.header("🛠️ 2. Preprocesamiento")
+    if st.session_state.data_raw is None:
+        st.warning("⚠️ Cargue datos primero en la pestaña 1.")
         return
     
-    matcher = ColumnMatcher(st.session_state.data.columns.tolist(), st.session_state.schema)
-    mapping = render_matcher_interface(matcher)
-    st.session_state.mapping = mapping
+    df = st.session_state.data_raw.copy()
     
-    if mapping and st.button("✅ Validar y Aplicar Mapping", type="primary"):
-        try:
-            validated_data = validate_data_with_schema(st.session_state.data, mapping, st.session_state.schema)
-            st.session_state.analyzed_data = validated_data
-            st.success("✅ Mapping aplicado correctamente. ¡Listo para analizar!")
-            with st.expander("📊 Resumen de validación"):
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Filas totales", len(validated_data))
-                col2.metric("Columnas mapeadas", len(mapping))
-                col3.metric("Variables numéricas", validated_data.select_dtypes(include=[np.number]).shape[1])
-        except Exception as e:
-            st.error(f"❌ Error en validación: {str(e)}")
+    st.subheader("⚙️ Configuración de Limpieza")
+    c1, c2, c3 = st.columns(3)
+    with c1: impute = st.selectbox("Imputación de faltantes:", ['median', 'mode', 'drop'], key="imp_strategy")
+    with c2: target_col = st.selectbox("Variable objetivo:", df.columns, index=df.columns.get_loc('bankrupt') if 'bankrupt' in df.columns else 0, key="tgt")
+    st.session_state.target_col = target_col
+    with c3: balance_action = st.checkbox("Balancear clases (class_weight)", value=True)
+    
+    if st.button("🔄 Ejecutar Preprocesamiento", type="primary"):
+        with st.spinner("Procesando..."):
+            prep = BankruptcyPreprocessor(df, target_col)
+            X, y, preprocessor, feat_names = prep.fit_transform(impute_strategy=impute)
+            st.session_state.X_train, st.session_state.X_test, st.session_state.y_train, st.session_state.y_test = train_test_split(
+                X, y, test_size=0.2, random_state=42, stratify=y
+            )
+            st.session_state.preprocessor = preprocessor
+            st.session_state.feature_names = feat_names
+            st.session_state.data_processed = pd.concat([X, y], axis=1)
+            st.success("✅ Preprocesamiento completado. Datos listos para modelado.")
+    
+    if st.session_state.X_train is not None:
+        st.success(f"📦 Train: `{st.session_state.X_train.shape[0]}` | Test: `{st.session_state.X_test.shape[0]}` | Features: `{len(st.session_state.feature_names)}`")
+        with st.expander("👁️ Vista de datos procesados"):
+            st.dataframe(st.session_state.data_processed.head())
 
-# ============================================================================
-# 📈 ETAPA 3: ANÁLISIS FINANCIERO
-# ============================================================================
-def stage_financial_analysis():
-    st.header("📈 Análisis Financiero")
-    
-    if st.session_state.analyzed_data is None:
-        st.warning("⚠️ Primero completa el matching de columnas.")
+def render_tab3_modelado():
+    st.header("🧠 3. Desarrollo del Modelo")
+    if st.session_state.X_train is None:
+        st.warning("⚠️ Ejecute el preprocesamiento primero.")
         return
     
-    analyzer = FinancialAnalyzer(st.session_state.analyzed_data)
-    plots = PlotManager()
-    
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📋 Resumen General", "🔢 Estadísticas", "🔍 Calidad de Datos", "📊 Visualizaciones", "🔄 Series Temporales"
+    st.subheader("📦 Selección y Entrenamiento")
+    models_avail = list(st.session_state.models.keys())
+    new_model = st.selectbox("Modelo a entrenar:", [
+        "Logistic Regression", "Decision Tree", "Random Forest", "Gradient Boosting", "SVM"
     ])
     
-    with tab1:
-        st.subheader("📋 Resumen del Dataset")
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Filas", analyzer.n_rows)
-        col2.metric("Columnas", analyzer.n_cols)
-        col3.metric("Memoria (MB)", f"{analyzer.memory_usage:.2f}")
-        col4.metric("Tipos de dato", f"{len(analyzer.dtypes_summary)}")
-        st.markdown("### 📊 Distribución de Tipos de Variable")
-        st.bar_chart(analyzer.dtypes_summary)
-        with st.expander("👁️ Ver tipos de dato por columna"):
-            st.dataframe(analyzer.dtypes_detail)
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button(f"🚀 Entrenar {new_model}", type="primary"):
+            with st.spinner("Entrenando..."):
+                model = train_model(new_model, st.session_state.X_train, st.session_state.y_train)
+                st.session_state.models[new_model] = model
+                st.success(f"✅ `{new_model}` almacenado correctamente.")
+                st.rerun()
+    with c2:
+        if models_avail:
+            load_btn = st.file_uploader("Cargar modelo (.pkl)", type=['pkl'], key="model_up")
+            if load_btn:
+                st.session_state.models['Custom'] = pickle.loads(load_btn.read())
+                st.success("✅ Modelo cargado desde archivo.")
+                st.rerun()
     
-    with tab2:
-        st.subheader("🔢 Estadísticas Descriptivas")
-        numeric_cols = st.multiselect("Selecciona columnas para analizar:", analyzer.numeric_columns, 
-                                     default=analyzer.numeric_columns[:min(5, len(analyzer.numeric_columns))])
-        if numeric_cols:
-            stats_df = analyzer.get_descriptive_stats(numeric_cols)
-            st.dataframe(stats_df.style.format("{:.2f}"))
-            st.markdown("### 🎯 Métricas Clave")
-            for col in numeric_cols[:3]:
-                with st.container():
-                    st.markdown(f"**{col}**")
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Media", f"{stats_df.loc[col, 'mean']:.2f}" if 'mean' in stats_df.columns else "N/A")
-                    c2.metric("Mediana", f"{stats_df.loc[col, '50%']:.2f}" if '50%' in stats_df.columns else "N/A")
-                    c3.metric("Desv. Est.", f"{stats_df.loc[col, 'std']:.2f}" if 'std' in stats_df.columns else "N/A")
-                    c4.metric("Rango", f"{stats_df.loc[col, 'max'] - stats_df.loc[col, 'min']:.2f}" if 'max' in stats_df.columns else "N/A")
-                    st.divider()
-    
-    with tab3:
-        st.subheader("🔍 Calidad de Datos")
-        missing_info = analyzer.get_missing_values()
-        if not missing_info.empty:
-            st.markdown("### ❌ Valores Nulos")
-            st.bar_chart(missing_info['missing_pct'].sort_values(ascending=False))
-            st.dataframe(missing_info.style.format({'missing_count': '{:.0f}', 'missing_pct': '{:.2f}%'}))
-        else:
-            st.success("✅ No se encontraron valores nulos")
-        col1, col2 = st.columns(2)
-        with col1:
-            duplicates = analyzer.get_duplicates_info()
-            st.metric("Filas duplicadas", duplicates['count'])
-            if duplicates['percentage'] > 0:
-                st.warning(f"⚠️ {duplicates['percentage']:.2f}% de duplicados")
-        with col2:
-            if analyzer.numeric_columns:
-                outliers = analyzer.detect_outliers(analyzer.numeric_columns[0])
-                st.metric("Outliers detectados", outliers)
-    
-    with tab4:
-        st.subheader("📊 Visualizaciones Interactivas")
-        if analyzer.numeric_columns:
-            col = st.selectbox("Selecciona columna para histograma:", analyzer.numeric_columns)
-            fig = plots.histogram(st.session_state.analyzed_data[col], title=f"Distribución: {col}")
-            st.plotly_chart(fig, use_container_width=True)
-            if len(analyzer.numeric_columns) >= 2:
-                st.markdown("### 🔗 Matriz de Correlación")
-                corr_cols = st.multiselect("Columnas para correlación:", analyzer.numeric_columns, 
-                                          default=analyzer.numeric_columns[:min(10, len(analyzer.numeric_columns))])
-                if corr_cols and len(corr_cols) >= 2:
-                    fig = plots.correlation_heatmap(st.session_state.analyzed_data[corr_cols])
-                    st.plotly_chart(fig, use_container_width=True)
-        if analyzer.categorical_columns and analyzer.numeric_columns:
-            st.markdown("### 📦 Boxplots por Categoría")
-            cat_col = st.selectbox("Columna categórica:", analyzer.categorical_columns, key="box_cat")
-            num_col = st.selectbox("Variable numérica:", analyzer.numeric_columns, key="box_num")
-            fig = plots.boxplot_by_category(st.session_state.analyzed_data, cat_col, num_col)
-            st.plotly_chart(fig, use_container_width=True)
-    
-    with tab5:
-        st.subheader("🔄 Análisis de Series Temporales")
-        date_cols = analyzer.detect_date_columns()
-        if date_cols:
-            date_col = st.selectbox("Columna de fecha:", date_cols)
-            value_col = st.selectbox("Variable a graficar:", analyzer.numeric_columns)
-            df_temp = st.session_state.analyzed_data.copy()
-            df_temp[date_col] = pd.to_datetime(df_temp[date_col])
-            df_temp = df_temp.sort_values(date_col)
-            fig = plots.time_series_line(df_temp, date_col, value_col)
-            st.plotly_chart(fig, use_container_width=True)
-            period = st.selectbox("Agrupar por:", ['Día', 'Semana', 'Mes', 'Trimestre', 'Año'])
-            freq_map = {'Día': 'D', 'Semana': 'W', 'Mes': 'M', 'Trimestre': 'Q', 'Año': 'Y'}
-            df_grouped = df_temp.set_index(date_col)[value_col].resample(freq_map[period]).mean()
-            st.line_chart(df_grouped)
-        else:
-            st.info("ℹ️ No se detectaron columnas de fecha. Para análisis temporal, mapea una columna como 'date' en el esquema.")
+    if st.session_state.models:
+        st.subheader("💾 Modelos Almacenados")
+        for name, model in st.session_state.models.items():
+            col1, col2, col3 = st.columns([3, 1, 1])
+            col1.markdown(f"**{name}** | Parámetros: `{model.get_params()}`")
+            buf = io.BytesIO()
+            pickle.dump(model, buf)
+            col2.download_button("⬇️ Guardar", buf.getvalue(), f"{name.lower().replace(' ','_')}.pkl", "application/octet-stream")
+            if col3.button("🗑️ Eliminar", key=f"del_{name}"):
+                del st.session_state.models[name]
+                st.rerun()
 
-# ============================================================================
-# 💾 ETAPA 4: EXPORTAR RESULTADOS
-# ============================================================================
-def stage_export_results():
-    st.header("💾 Exportar Resultados")
-    
-    if st.session_state.analyzed_data is None:
-        st.warning("⚠️ Primero realiza un análisis en la etapa 3.")
+def render_tab4_evaluacion():
+    st.header("📊 4. Evaluación de Modelos")
+    if not st.session_state.models:
+        st.warning("⚠️ Entrene al menos un modelo primero.")
         return
     
-    st.markdown("### 📥 Formatos de Exportación")
-    col1, col2 = st.columns(2)
+    st.subheader("🎯 Métricas de Clasificación")
+    selected = st.multiselect("Modelos a evaluar:", list(st.session_state.models.keys()), default=list(st.session_state.models.keys()))
     
-    with col1:
-        if st.button("📊 Descargar CSV Procesado"):
-            csv = st.session_state.analyzed_data.to_csv(index=False, encoding='utf-8-sig')
-            st.download_button(label="📥 Click para descargar", data=csv, file_name="datos_financieros_procesados.csv", mime="text/csv")
-        if st.button("📈 Descargar Resumen Estadístico"):
-            analyzer = FinancialAnalyzer(st.session_state.analyzed_data)
-            stats = analyzer.get_descriptive_stats(analyzer.numeric_columns)
-            csv_stats = stats.to_csv(encoding='utf-8-sig')
-            st.download_button(label="📥 Descargar estadísticas", data=csv_stats, file_name="resumen_estadistico.csv", mime="text/csv")
+    if selected:
+        metrics_df = []
+        for name in selected:
+            model = st.session_state.models[name]
+            m, cm, fpr, tpr = evaluate_model(model, st.session_state.X_test, st.session_state.y_test)
+            m['Modelo'] = name
+            metrics_df.append(m)
+            
+            st.session_state.evaluation_results[name] = {'metrics': m, 'cm': cm, 'fpr': fpr, 'tpr': tpr}
+        
+        st.dataframe(pd.DataFrame(metrics_df).set_index('Modelo').style.format("{:.3f}"), use_container_width=True)
+        
+        # Visualizaciones
+        tab_v = st.tabs(["🔹 Matriz de Confusión", "🔹 Curva ROC", "🔹 Importancia de Features"])
+        with tab_v[0]:
+            cols = st.columns(len(selected))
+            for i, name in enumerate(selected):
+                cm = st.session_state.evaluation_results[name]['cm']
+                fig = px.imshow(cm, text_auto=True, title=f"{name}", labels={'x':'Predicho','y':'Real'}, 
+                              color_continuous_scale='Blues', aspect='auto')
+                cols[i].plotly_chart(fig, use_container_width=True)
+        with tab_v[1]:
+            fig = go.Figure()
+            for name in selected:
+                res = st.session_state.evaluation_results[name]
+                fig.add_trace(go.Scatter(x=res['fpr'], y=res['tpr'], mode='lines', name=f"{name} (AUC={res['metrics']['ROC-AUC']:.3f})"))
+            fig.add_shape(type='line', line=dict(dash='dash'), x0=0, x1=1, y0=0, y1=1)
+            fig.update_layout(title="Curvas ROC", xaxis_title="Tasa de Falsos Positivos", yaxis_title="Tasa de Verdaderos Positivos")
+            st.plotly_chart(fig, use_container_width=True)
+        with tab_v[2]:
+            if st.session_state.feature_names:
+                model = st.session_state.models.get(selected[0])
+                imp = get_feature_importance(model, st.session_state.feature_names).head(10)
+                fig = px.bar(imp, x='Importance', y='Feature', orientation='h', title=f"Top Features: {selected[0]}")
+                st.plotly_chart(fig, use_container_width=True)
+
+def render_tab5_interpretacion():
+    st.header("🔮 5. Interpretación y Conclusiones")
+    if not st.session_state.evaluation_results:
+        st.warning("⚠️ Evalúe modelos primero.")
+        return
     
-    with col2:
-        if st.button("📋 Descargar Reporte JSON"):
-            analyzer = FinancialAnalyzer(st.session_state.analyzed_data)
+    best_model = max(st.session_state.evaluation_results.items(), key=lambda x: x[1]['metrics']['F1-Score'])
+    st.subheader(f"🏆 Modelo Recomendado: `{best_model[0]}`")
+    
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("F1-Score", f"{best_model[1]['metrics']['F1-Score']:.3f}")
+    c2.metric("Recall", f"{best_model[1]['metrics']['Recall']:.3f}")
+    c3.metric("Precision", f"{best_model[1]['metrics']['Precision']:.3f}")
+    c4.metric("ROC-AUC", f"{best_model[1]['metrics']['ROC-AUC']:.3f}")
+    
+    st.subheader("📝 Interpretación Empresarial")
+    model = st.session_state.models[best_model[0]]
+    imp_df = get_feature_importance(model, st.session_state.feature_names)
+    
+    st.markdown(f"""
+    🔍 **Factores clave de riesgo:** `{imp_df.iloc[0]['Feature']}`, `{imp_df.iloc[1]['Feature']}`, `{imp_df.iloc[2]['Feature']}`  
+    💡 **Umbral óptimo:** El modelo prioriza `{best_model[1]['metrics']['Recall']:.1%}` de quiebras reales detectadas.  
+    ⚠️ **Riesgo operativo:** Falsos positivos en `{1-best_model[1]['metrics']['Precision']:.1%}` podrían generar revisión innecesaria de créditos.  
+    📉 **Recomendación:** Implementar alertas tempranas cuando `{imp_df.iloc[0]['Feature']}` supere `{imp_df.iloc[0]['Importance']:.2f}` en peso relativo.
+    """)
+    
+    st.subheader("💾 Exportar Reporte")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("📄 Exportar JSON Completo"):
             report = {
-                'metadata': {'filas': analyzer.n_rows, 'columnas': analyzer.n_cols, 'fecha_generacion': pd.Timestamp.now().isoformat()},
-                'estadisticas': analyzer.get_descriptive_stats(analyzer.numeric_columns).to_dict() if analyzer.numeric_columns else {},
-                'calidad_datos': analyzer.get_missing_values().to_dict() if not analyzer.get_missing_values().empty else {}
+                'metadata': {'date': datetime.now().isoformat(), 'n_models': len(st.session_state.models)},
+                'best_model': best_model[0],
+                'metrics': best_model[1]['metrics'],
+                'feature_importance': imp_df.head(10).to_dict(orient='records'),
+                'qwen_suggestions': generate_qwen_suggestions(st.session_state.data_raw, best_model[1]['metrics'])
             }
-            json_report = json.dumps(report, indent=2, default=str)
-            st.download_button(label="📥 Descargar JSON", data=json_report, file_name="reporte_analisis.json", mime="application/json")
-        if st.button("🔗 Descargar Mapping de Columnas"):
-            mapping_json = json.dumps(st.session_state.mapping, indent=2, ensure_ascii=False)
-            st.download_button(label="📥 Descargar mapping", data=mapping_json, file_name="column_mapping.json", mime="application/json")
+            st.download_button("⬇️ Descargar", json.dumps(report, indent=2, default=str), "reporte_quiebras.json", "application/json")
+    with c2:
+        if st.button("📊 Exportar CSV Evaluaciones"):
+            ev_df = pd.DataFrame({k: v['metrics'] for k,v in st.session_state.evaluation_results.items()}).T
+            st.download_button("⬇️ Descargar", ev_df.to_csv(index_label="modelo"), "metricas_modelos.csv", "text/csv")
+    
+    st.info("💡 **Próximos pasos:** Desplegar modelo como API FastAPI, integrar monitoreo de drift con Evidently AI, y validar en out-of-time sample.")
 
 # ============================================================================
-# 🚀 FUNCIÓN PRINCIPAL
+# 🚀 MAIN APP
 # ============================================================================
 def main():
-    # Inicializar estado de sesión
-    if 'data' not in st.session_state: st.session_state.data = None
-    if 'schema' not in st.session_state: st.session_state.schema = None
-    if 'mapping' not in st.session_state: st.session_state.mapping = {}
-    if 'analyzed_data' not in st.session_state: st.session_state.analyzed_data = None
+    st.title("🏦 Analizador de Quiebras Financieras")
+    st.caption("Pipeline completo: Exploración → Preprocesamiento → Modelado → Evaluación → Interpretación | Datos sintéticos por defecto")
     
-    render_header()
-    step = render_sidebar()
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🔍 1. Exploración", "🛠️ 2. Preprocesamiento", "🧠 3. Modelado", "📊 4. Evaluación", "🔮 5. Interpretación"
+    ])
     
-    if step == "📁 1. Importar Datos":
-        stage_import_data()
-    elif step == "🔗 2. Matching de Columnas":
-        stage_column_matching()
-    elif step == "📈 3. Análisis Financiero":
-        stage_financial_analysis()
-    elif step == "💾 4. Exportar Resultados":
-        stage_export_results()
-    
-    render_footer()
+    with tab1: render_tab1_exploracion()
+    with tab2: render_tab2_preprocesamiento()
+    with tab3: render_tab3_modelado()
+    with tab4: render_tab4_evaluacion()
+    with tab5: render_tab5_interpretacion()
 
 if __name__ == "__main__":
     main()
