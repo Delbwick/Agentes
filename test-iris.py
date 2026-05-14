@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-📊 ANALIZADOR DE QUIEBRAS BANCARIAS - STREAMLIT
-Estructura de 5 tabs: Exploración → Preprocesamiento → Modelado → Evaluación → Interpretación
+🏦 ANALIZADOR DE QUIEBRAS FINANCIERAS - STREAMLIT (SINGLE FILE)
+Pipeline completo: Exploración → Preprocesamiento → Modelado → Evaluación → Interpretación
 ✅ Datos sintéticos por defecto | ✅ Modelos múltiples | ✅ Persistencia | ✅ UI Profesional
 """
 
@@ -15,7 +15,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
@@ -87,7 +87,6 @@ def generate_synthetic_data(n_companies: int = 80, n_years: int = 6) -> pd.DataF
             debt_ratio = liabilities / assets if assets > 0 else 0
             current_ratio = cash_flow / (liabilities * 0.1) if liabilities > 0 else np.inf
             
-            # Lógica de quiebra con ruido
             bankrupt_prob = (
                 0.6 * min(debt_ratio / 0.7, 1.0) +
                 0.3 * max(0, 1 - current_ratio / 1.5) +
@@ -112,14 +111,11 @@ def generate_synthetic_data(n_companies: int = 80, n_years: int = 6) -> pd.DataF
             })
     
     df = pd.DataFrame(data)
-    
-    # Introducir valores faltantes y outliers controlados
     mask_missing = np.random.random(df.shape) < 0.03
     df[df.columns[4:]] = df[df.columns[4:]].mask(mask_missing)
     outlier_mask = np.random.random(len(df)) < 0.02
     df.loc[outlier_mask, 'debt_ratio'] = np.random.uniform(1.5, 3.0, outlier_mask.sum())
     df.loc[outlier_mask, 'current_ratio'] = np.random.uniform(-0.5, 0.2, outlier_mask.sum())
-    
     return df
 
 # ============================================================================
@@ -175,31 +171,22 @@ class BankruptcyPreprocessor:
         self.numeric_cols = df.select_dtypes(include='number').columns.drop([target_col], errors='ignore').tolist()
         self.categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
         
-    def fit_transform(self, impute_strategy: str = 'median', encode: str = 'onehot') -> Tuple[pd.DataFrame, Any, Any]:
+    def fit_transform(self, impute_strategy: str = 'median') -> Tuple[pd.DataFrame, pd.Series, Any, List[str]]:
         df = self.df.copy()
-        # Imputación
         if impute_strategy == 'median':
             df[self.numeric_cols] = df[self.numeric_cols].transform(lambda x: x.fillna(x.median()))
             for c in self.categorical_cols: df[c] = df[c].fillna(df[c].mode()[0] if not df[c].mode().empty else 'Unknown')
         elif impute_strategy == 'drop': df = df.dropna()
         
-        # Target encoding
         if df[self.target_col].dtype == 'object':
             le = LabelEncoder()
             df[self.target_col] = le.fit_transform(df[self.target_col])
-        
-        # Separar X, y
+            
         X = df.drop([self.target_col], axis=1)
         y = df[self.target_col]
         
-        # Pipeline
-        num_trans = Pipeline([
-            ('imputer', 'passthrough'),
-            ('scaler', StandardScaler())
-        ])
-        cat_trans = Pipeline([
-            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-        ]) if self.categorical_cols else 'passthrough'
+        num_trans = Pipeline([('imputer', 'passthrough'), ('scaler', StandardScaler())])
+        cat_trans = Pipeline([('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))]) if self.categorical_cols else 'passthrough'
         
         preprocessor = ColumnTransformer(
             transformers=[('num', num_trans, self.numeric_cols), ('cat', cat_trans, self.categorical_cols)]
@@ -213,10 +200,10 @@ class BankruptcyPreprocessor:
             
         return pd.DataFrame(X_processed, columns=feature_names), y, preprocessor, feature_names
 
-def train_model(model_name: str, X_train: pd.DataFrame, y_train: pd.DataFrame) -> Any:
+def train_model(model_name: str, X_train: pd.DataFrame, y_train: pd.Series) -> Any:
     models = {
-        'Logistic Regression': LogisticRegression(max_iter=1000, class_weight='balanced'),
-        'Decision Tree': DecisionTreeClassifier(max_depth=5, min_samples_split=10, class_weight='balanced'),
+        'Logistic Regression': LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42),
+        'Decision Tree': DecisionTreeClassifier(max_depth=5, min_samples_split=10, class_weight='balanced', random_state=42),
         'Random Forest': RandomForestClassifier(n_estimators=100, max_depth=6, class_weight='balanced', random_state=42),
         'Gradient Boosting': GradientBoostingClassifier(n_estimators=150, max_depth=4, learning_rate=0.1, random_state=42),
         'SVM': SVC(kernel='rbf', class_weight='balanced', probability=True, random_state=42)
@@ -225,7 +212,7 @@ def train_model(model_name: str, X_train: pd.DataFrame, y_train: pd.DataFrame) -
     model.fit(X_train, y_train)
     return model
 
-def evaluate_model(model, X_test: pd.DataFrame, y_test: pd.DataFrame) -> Dict[str, Any]:
+def evaluate_model(model, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, Any]:
     y_pred = model.predict(X_test)
     y_proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else [0.5]*len(y_test)
     
@@ -241,12 +228,9 @@ def evaluate_model(model, X_test: pd.DataFrame, y_test: pd.DataFrame) -> Dict[st
     return metrics, cm, fpr, tpr
 
 def get_feature_importance(model, feature_names: List[str]) -> pd.DataFrame:
-    if hasattr(model, 'coef_'):
-        importances = np.abs(model.coef_[0])
-    elif hasattr(model, 'feature_importances_'):
-        importances = model.feature_importances_
-    else:
-        return pd.DataFrame({'Feature': feature_names, 'Importance': 0.0})
+    if hasattr(model, 'coef_'): importances = np.abs(model.coef_[0])
+    elif hasattr(model, 'feature_importances_'): importances = model.feature_importances_
+    else: return pd.DataFrame({'Feature': feature_names, 'Importance': 0.0})
     
     df_imp = pd.DataFrame({'Feature': feature_names, 'Importance': importances}).sort_values('Importance', ascending=False)
     return df_imp
@@ -256,24 +240,19 @@ def get_feature_importance(model, feature_names: List[str]) -> pd.DataFrame:
 # ============================================================================
 def generate_qwen_suggestions(df: pd.DataFrame, metrics: Optional[Dict] = None) -> List[str]:
     suggestions = []
-    n_rows, n_cols = df.shape
-    missing_pct = df.isnull().mean().mean() * 100
     target_col = [c for c in df.columns if 'bankrupt' in c.lower() or 'quiebra' in c.lower()]
-    
     if target_col:
         balance = df[target_col[0]].value_counts(normalize=True)
-        if balance.iloc[1] < 0.3: suggestions.append("⚠️ Clase desbalanceada. Considere SMOTE o ajuste de class_weight en el modelo.")
-    
+        if balance.iloc[1] < 0.3: suggestions.append("⚠️ Clase desbalanceada. Considere SMOTE o ajuste de `class_weight`.")
+    missing_pct = df.isnull().mean().mean() * 100
     if missing_pct > 5: suggestions.append("🔧 >5% de valores faltantes. Valide imputación por mediana/moda o KNN.")
-    if n_rows < 500: suggestions.append("📈 Dataset pequeño. Use validación cruzada estratificada para evitar overfitting.")
+    if len(df) < 500: suggestions.append("📈 Dataset pequeño. Use validación cruzada estratificada para evitar overfitting.")
     
     corr = df.select_dtypes('number').corr()
     high_corr = [(c1, c2) for c1 in corr.columns for c2 in corr.columns if c1 < c2 and abs(corr.loc[c1, c2]) > 0.85]
-    if high_corr: suggestions.append(f"🔗 Multicolinealidad detectada: {high_corr[0]}. Considere eliminar una o usar PCA.")
-    
+    if high_corr: suggestions.append(f"🔗 Multicolinealidad detectada: `{high_corr[0]}`. Considere eliminar una o usar PCA.")
     if metrics and metrics.get('Recall', 0) < 0.6:
         suggestions.append("🎯 Recall bajo. En quiebras, priorizamos evitar falsos negativos. Ajuste umbral o use modelos ensemble.")
-    
     suggestions.append("💡 Recorte outliers en `debt_ratio` y `current_ratio` mediante IQR o winsorización.")
     suggestions.append("📊 Valide estabilidad temporal: entrene por años históricos y test en último año.")
     return suggestions
@@ -283,7 +262,6 @@ def generate_qwen_suggestions(df: pd.DataFrame, metrics: Optional[Dict] = None) 
 # ============================================================================
 def render_tab1_exploracion():
     st.header("🔍 1. Exploración de Datos")
-    
     col1, col2 = st.columns([2, 1])
     with col1:
         mode = st.radio("Fuente de datos:", ["🎲 Datos Sintéticos", "📁 Cargar CSV/Excel"], horizontal=True)
@@ -296,9 +274,9 @@ def render_tab1_exploracion():
             schema_file = st.file_uploader("Esquema Jupyter/JSON", type=['ipynb','json'], key="schema_up")
             if schema_file and st.session_state.data_raw is not None:
                 st.session_state.schema = load_schema_from_notebook(schema_file)
-    else:
-        st.session_state.data_raw = generate_synthetic_data()
-        st.session_state.is_synthetic = True
+        else:
+            st.session_state.data_raw = generate_synthetic_data()
+            st.session_state.is_synthetic = True
 
     if st.session_state.data_raw is None:
         st.info("Cargue datos o use el generador sintético.")
@@ -318,17 +296,14 @@ def render_tab1_exploracion():
                 st.session_state.data_raw = validate_data_with_schema(df, mapping, st.session_state.schema)
                 st.rerun()
 
-    # Análisis estructural
     st.subheader("📊 Estructura y Tipos")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Empresas únicas", df['company_id'].nunique() if 'company_id' in df.columns else "N/A")
     c2.metric("Años cubiertos", df['year'].nunique() if 'year' in df.columns else "N/A")
     c3.metric("Variables numéricas", df.select_dtypes('number').shape[1])
     c4.metric("Variables categóricas", df.select_dtypes('object').shape[1])
-    
     st.dataframe(df.dtypes.to_frame(name='Tipo'), use_container_width=True)
     
-    # Distribuciones y temporales
     st.subheader("📈 Distribuciones y Tendencia Temporal")
     num_cols = df.select_dtypes('number').columns.tolist()
     if 'bankrupt' in num_cols: num_cols = [c for c in num_cols if c != 'bankrupt']
@@ -348,7 +323,6 @@ def render_tab1_exploracion():
         corr = df[num_cols].corr()
         st.dataframe(corr.style.background_gradient(cmap='RdBu_r', vmin=-1, vmax=1), use_container_width=True)
         
-    # Qwen Suggestions
     st.subheader("🤖 Sugerencias de Qwen")
     sugg = generate_qwen_suggestions(df)
     for s in sugg: st.info(s)
@@ -360,13 +334,12 @@ def render_tab2_preprocesamiento():
         return
     
     df = st.session_state.data_raw.copy()
-    
     st.subheader("⚙️ Configuración de Limpieza")
     c1, c2, c3 = st.columns(3)
     with c1: impute = st.selectbox("Imputación de faltantes:", ['median', 'mode', 'drop'], key="imp_strategy")
     with c2: target_col = st.selectbox("Variable objetivo:", df.columns, index=df.columns.get_loc('bankrupt') if 'bankrupt' in df.columns else 0, key="tgt")
     st.session_state.target_col = target_col
-    with c3: balance_action = st.checkbox("Balancear clases (class_weight)", value=True)
+    with c3: st.checkbox("Balancear clases (class_weight)", value=True)
     
     if st.button("🔄 Ejecutar Preprocesamiento", type="primary"):
         with st.spinner("Procesando..."):
@@ -392,7 +365,6 @@ def render_tab3_modelado():
         return
     
     st.subheader("📦 Selección y Entrenamiento")
-    models_avail = list(st.session_state.models.keys())
     new_model = st.selectbox("Modelo a entrenar:", [
         "Logistic Regression", "Decision Tree", "Random Forest", "Gradient Boosting", "SVM"
     ])
@@ -406,18 +378,17 @@ def render_tab3_modelado():
                 st.success(f"✅ `{new_model}` almacenado correctamente.")
                 st.rerun()
     with c2:
-        if models_avail:
-            load_btn = st.file_uploader("Cargar modelo (.pkl)", type=['pkl'], key="model_up")
-            if load_btn:
-                st.session_state.models['Custom'] = pickle.loads(load_btn.read())
-                st.success("✅ Modelo cargado desde archivo.")
-                st.rerun()
+        load_btn = st.file_uploader("Cargar modelo (.pkl)", type=['pkl'], key="model_up")
+        if load_btn:
+            st.session_state.models['Custom_Model'] = pickle.loads(load_btn.read())
+            st.success("✅ Modelo cargado desde archivo.")
+            st.rerun()
     
     if st.session_state.models:
         st.subheader("💾 Modelos Almacenados")
-        for name, model in st.session_state.models.items():
+        for name, model in list(st.session_state.models.items()):
             col1, col2, col3 = st.columns([3, 1, 1])
-            col1.markdown(f"**{name}** | Parámetros: `{model.get_params()}`")
+            col1.markdown(f"**{name}** | Parámetros: `{str(model.get_params())[:100]}...`")
             buf = io.BytesIO()
             pickle.dump(model, buf)
             col2.download_button("⬇️ Guardar", buf.getvalue(), f"{name.lower().replace(' ','_')}.pkl", "application/octet-stream")
@@ -441,12 +412,10 @@ def render_tab4_evaluacion():
             m, cm, fpr, tpr = evaluate_model(model, st.session_state.X_test, st.session_state.y_test)
             m['Modelo'] = name
             metrics_df.append(m)
-            
             st.session_state.evaluation_results[name] = {'metrics': m, 'cm': cm, 'fpr': fpr, 'tpr': tpr}
         
         st.dataframe(pd.DataFrame(metrics_df).set_index('Modelo').style.format("{:.3f}"), use_container_width=True)
         
-        # Visualizaciones
         tab_v = st.tabs(["🔹 Matriz de Confusión", "🔹 Curva ROC", "🔹 Importancia de Features"])
         with tab_v[0]:
             cols = st.columns(len(selected))
