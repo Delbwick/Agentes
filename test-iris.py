@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🏦 ANALIZADOR DE QUIEBRAS FINANCIERAS - STREAMLIT (SINGLE FILE)
-Pipeline completo: Exploración → Preprocesamiento → Modelado → Evaluación → Interpretación
-✅ Datos sintéticos por defecto | ✅ Modelos múltiples | ✅ Persistencia | ✅ UI Profesional
+🏦 ANALIZADOR DE QUIEBRAS FINANCIERAS - STREAMLIT (SINGLE FILE + SIDEBAR)
+Navegación por sidebar | 5 apartados | Datos sintéticos | Modelos persistentes
 """
 
 # ============================================================================
-# 📦 IMPORTACIONES & CONFIG
+# 📦 IMPORTACIONES
 # ============================================================================
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -22,10 +21,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.svm import SVC
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
-    confusion_matrix, roc_curve, classification_report
-)
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix, roc_curve
 import pickle
 import io
 import json
@@ -51,8 +47,7 @@ def init_session_state():
         'data_raw': None, 'schema': None, 'mapping': {}, 'data_processed': None,
         'X_train': None, 'X_test': None, 'y_train': None, 'y_test': None,
         'feature_names': [], 'preprocessor': None, 'target_col': 'bankrupt',
-        'models': {}, 'metrics': {}, 'evaluation_results': {},
-        'is_synthetic': True, 'upload_available': True
+        'models': {}, 'evaluation_results': {}, 'is_synthetic': True
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -61,11 +56,10 @@ def init_session_state():
 init_session_state()
 
 # ============================================================================
-# 🎲 SYNTHETIC DATA GENERATOR
+# 🎲 SYNTHETIC DATA GENERATOR (CORREGIDO)
 # ============================================================================
 @st.cache_data
 def generate_synthetic_data(n_companies: int = 80, n_years: int = 6) -> pd.DataFrame:
-    """Genera datos financieros realistas con relación causal hacia quiebra"""
     np.random.seed(42)
     sectors = ['Retail', 'Manufactura', 'Tecnología', 'Construcción', 'Servicios']
     data = []
@@ -111,15 +105,19 @@ def generate_synthetic_data(n_companies: int = 80, n_years: int = 6) -> pd.DataF
             })
     
     df = pd.DataFrame(data)
-    mask_missing = np.random.random(df.shape) < 0.03
-    df[df.columns[4:]] = df[df.columns[4:]].mask(mask_missing)
+    
+    # ✅ CORRECCIÓN: mask debe coincidir en forma con el subconjunto de columnas
+    cols_numeric = df.select_dtypes(include='number').columns
+    mask_missing = np.random.random(df[cols_numeric].shape) < 0.03
+    df[cols_numeric] = df[cols_numeric].mask(mask_missing)
+    
     outlier_mask = np.random.random(len(df)) < 0.02
     df.loc[outlier_mask, 'debt_ratio'] = np.random.uniform(1.5, 3.0, outlier_mask.sum())
     df.loc[outlier_mask, 'current_ratio'] = np.random.uniform(-0.5, 0.2, outlier_mask.sum())
     return df
 
 # ============================================================================
-# 📥 DATA LOADER & SCHEMA (EXISTING FUNCTIONALITY PRESERVED)
+# 📥 DATA LOADER & SCHEMA
 # ============================================================================
 def load_csv(file) -> pd.DataFrame:
     if file.name.endswith('.csv'):
@@ -152,7 +150,8 @@ def validate_data_with_schema(df: pd.DataFrame, mapping: dict, schema: dict) -> 
         td = schema.get(sch_k, {}).get('type', 'string')
         if td in ['float', 'decimal', 'currency', 'amount']:
             df_v[csv_c] = pd.to_numeric(df_v[csv_c].astype(str).str.replace(r'[,$€£%]', '', regex=True).str.strip(), errors='coerce')
-        elif td in ['integer', 'int', 'count']: df_v[csv_c] = pd.to_numeric(df_v[csv_c], errors='coerce').astype('Int64')
+        elif td in ['integer', 'int', 'count']: 
+            df_v[csv_c] = pd.to_numeric(df_v[csv_c], errors='coerce').astype('Int64')
         elif td in ['date', 'datetime', 'timestamp']:
             df_v[csv_c] = pd.to_datetime(df_v[csv_c], format=schema.get(sch_k, {}).get('format'), errors='coerce')
         elif td == 'boolean':
@@ -162,7 +161,7 @@ def validate_data_with_schema(df: pd.DataFrame, mapping: dict, schema: dict) -> 
     return df_v
 
 # ============================================================================
-# ⚙️ PREPROCESSING & MODELING ENGINE
+# ⚙️ PREPROCESSING & MODELING
 # ============================================================================
 class BankruptcyPreprocessor:
     def __init__(self, df: pd.DataFrame, target_col: str = 'bankrupt'):
@@ -175,12 +174,13 @@ class BankruptcyPreprocessor:
         df = self.df.copy()
         if impute_strategy == 'median':
             df[self.numeric_cols] = df[self.numeric_cols].transform(lambda x: x.fillna(x.median()))
-            for c in self.categorical_cols: df[c] = df[c].fillna(df[c].mode()[0] if not df[c].mode().empty else 'Unknown')
-        elif impute_strategy == 'drop': df = df.dropna()
-        
+            for c in self.categorical_cols: 
+                df[c] = df[c].fillna(df[c].mode()[0] if not df[c].mode().empty else 'Unknown')
+        elif impute_strategy == 'drop': 
+            df = df.dropna()
+            
         if df[self.target_col].dtype == 'object':
-            le = LabelEncoder()
-            df[self.target_col] = le.fit_transform(df[self.target_col])
+            df[self.target_col] = LabelEncoder().fit_transform(df[self.target_col])
             
         X = df.drop([self.target_col], axis=1)
         y = df[self.target_col]
@@ -215,7 +215,6 @@ def train_model(model_name: str, X_train: pd.DataFrame, y_train: pd.Series) -> A
 def evaluate_model(model, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, Any]:
     y_pred = model.predict(X_test)
     y_proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else [0.5]*len(y_test)
-    
     metrics = {
         'Accuracy': accuracy_score(y_test, y_pred),
         'Precision': precision_score(y_test, y_pred, zero_division=0),
@@ -223,20 +222,16 @@ def evaluate_model(model, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, 
         'F1-Score': f1_score(y_test, y_pred, zero_division=0),
         'ROC-AUC': roc_auc_score(y_test, y_proba)
     }
-    cm = confusion_matrix(y_test, y_pred)
-    fpr, tpr, _ = roc_curve(y_test, y_proba)
-    return metrics, cm, fpr, tpr
+    return metrics, confusion_matrix(y_test, y_pred), *roc_curve(y_test, y_proba)[:2]
 
 def get_feature_importance(model, feature_names: List[str]) -> pd.DataFrame:
     if hasattr(model, 'coef_'): importances = np.abs(model.coef_[0])
     elif hasattr(model, 'feature_importances_'): importances = model.feature_importances_
     else: return pd.DataFrame({'Feature': feature_names, 'Importance': 0.0})
-    
-    df_imp = pd.DataFrame({'Feature': feature_names, 'Importance': importances}).sort_values('Importance', ascending=False)
-    return df_imp
+    return pd.DataFrame({'Feature': feature_names, 'Importance': importances}).sort_values('Importance', ascending=False)
 
 # ============================================================================
-# 🧠 QWEN SUGGESTIONS ENGINE
+# 🧠 QWEN SUGGESTIONS
 # ============================================================================
 def generate_qwen_suggestions(df: pd.DataFrame, metrics: Optional[Dict] = None) -> List[str]:
     suggestions = []
@@ -248,9 +243,12 @@ def generate_qwen_suggestions(df: pd.DataFrame, metrics: Optional[Dict] = None) 
     if missing_pct > 5: suggestions.append("🔧 >5% de valores faltantes. Valide imputación por mediana/moda o KNN.")
     if len(df) < 500: suggestions.append("📈 Dataset pequeño. Use validación cruzada estratificada para evitar overfitting.")
     
-    corr = df.select_dtypes('number').corr()
-    high_corr = [(c1, c2) for c1 in corr.columns for c2 in corr.columns if c1 < c2 and abs(corr.loc[c1, c2]) > 0.85]
-    if high_corr: suggestions.append(f"🔗 Multicolinealidad detectada: `{high_corr[0]}`. Considere eliminar una o usar PCA.")
+    num_df = df.select_dtypes('number')
+    if len(num_df.columns) > 1:
+        corr = num_df.corr()
+        high_corr = [(c1, c2) for c1 in corr.columns for c2 in corr.columns if c1 < c2 and abs(corr.loc[c1, c2]) > 0.85]
+        if high_corr: suggestions.append(f"🔗 Multicolinealidad detectada: `{high_corr[0]}`. Considere eliminar una o usar PCA.")
+        
     if metrics and metrics.get('Recall', 0) < 0.6:
         suggestions.append("🎯 Recall bajo. En quiebras, priorizamos evitar falsos negativos. Ajuste umbral o use modelos ensemble.")
     suggestions.append("💡 Recorte outliers en `debt_ratio` y `current_ratio` mediante IQR o winsorización.")
@@ -258,9 +256,9 @@ def generate_qwen_suggestions(df: pd.DataFrame, metrics: Optional[Dict] = None) 
     return suggestions
 
 # ============================================================================
-# 🖥️ UI COMPONENTS
+# 🖥️ SECCIONES (5 APARTADOS)
 # ============================================================================
-def render_tab1_exploracion():
+def section_exploracion():
     st.header("🔍 1. Exploración de Datos")
     col1, col2 = st.columns([2, 1])
     with col1:
@@ -283,7 +281,7 @@ def render_tab1_exploracion():
         return
 
     df = st.session_state.data_raw
-    st.success(f"✅ Datos cargados: `{df.shape[0]}` filas × `{df.shape[1]}` columnas | Memoria: `{df.memory_usage(deep=True).sum()/1024**2:.2f} MB`")
+    st.success(f"✅ `{df.shape[0]}` filas × `{df.shape[1]}` columnas | `{df.memory_usage(deep=True).sum()/1024**2:.2f} MB`")
     
     if not st.session_state.is_synthetic and st.session_state.schema:
         with st.expander("🔗 Aplicar Mapping de Esquema"):
@@ -298,52 +296,48 @@ def render_tab1_exploracion():
 
     st.subheader("📊 Estructura y Tipos")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Empresas únicas", df['company_id'].nunique() if 'company_id' in df.columns else "N/A")
-    c2.metric("Años cubiertos", df['year'].nunique() if 'year' in df.columns else "N/A")
-    c3.metric("Variables numéricas", df.select_dtypes('number').shape[1])
-    c4.metric("Variables categóricas", df.select_dtypes('object').shape[1])
+    c1.metric("Empresas", df['company_id'].nunique() if 'company_id' in df.columns else "N/A")
+    c2.metric("Años", df['year'].nunique() if 'year' in df.columns else "N/A")
+    c3.metric("Numéricas", df.select_dtypes('number').shape[1])
+    c4.metric("Categóricas", df.select_dtypes('object').shape[1])
     st.dataframe(df.dtypes.to_frame(name='Tipo'), use_container_width=True)
     
-    st.subheader("📈 Distribuciones y Tendencia Temporal")
+    st.subheader("📈 Distribuciones y Tendencia")
     num_cols = df.select_dtypes('number').columns.tolist()
     if 'bankrupt' in num_cols: num_cols = [c for c in num_cols if c != 'bankrupt']
     
-    tab_plots = st.tabs(["🔹 Histogramas", "🔹 Tendencia Temporal", "🔹 Correlaciones"])
+    tab_plots = st.tabs(["Histogramas", "Tendencia Temporal", "Correlaciones"])
     with tab_plots[0]:
-        col = st.selectbox("Columna para distribuir:", num_cols)
-        fig = px.histogram(df, x=col, nbins=40, marginal='box', title=f"Distribución: {col}")
+        col = st.selectbox("Columna:", num_cols)
+        fig = px.histogram(df, x=col, nbins=40, marginal='box')
         st.plotly_chart(fig, use_container_width=True)
     with tab_plots[1]:
         if 'year' in df.columns:
             time_mean = df.groupby('year')[num_cols].mean().reset_index().melt(id_vars='year')
-            fig = px.line(time_mean, x='year', y='value', color='variable', title="Evolución de Medias Anuales", markers=True)
-            st.plotly_chart(fig, use_container_width=True)
-        else: st.warning("No hay columna `year` para análisis temporal.")
+            st.plotly_chart(px.line(time_mean, x='year', y='value', color='variable', markers=True), use_container_width=True)
     with tab_plots[2]:
-        corr = df[num_cols].corr()
-        st.dataframe(corr.style.background_gradient(cmap='RdBu_r', vmin=-1, vmax=1), use_container_width=True)
-        
+        if num_cols:
+            st.dataframe(df[num_cols].corr().style.background_gradient(cmap='RdBu_r'), use_container_width=True)
+            
     st.subheader("🤖 Sugerencias de Qwen")
-    sugg = generate_qwen_suggestions(df)
-    for s in sugg: st.info(s)
+    for s in generate_qwen_suggestions(df): st.info(s)
 
-def render_tab2_preprocesamiento():
+def section_preprocesamiento():
     st.header("🛠️ 2. Preprocesamiento")
-    if st.session_state.data_raw is None:
-        st.warning("⚠️ Cargue datos primero en la pestaña 1.")
-        return
-    
+    if st.session_state.data_raw is None: st.warning("⚠️ Cargue datos primero."); return
     df = st.session_state.data_raw.copy()
-    st.subheader("⚙️ Configuración de Limpieza")
+    
     c1, c2, c3 = st.columns(3)
-    with c1: impute = st.selectbox("Imputación de faltantes:", ['median', 'mode', 'drop'], key="imp_strategy")
-    with c2: target_col = st.selectbox("Variable objetivo:", df.columns, index=df.columns.get_loc('bankrupt') if 'bankrupt' in df.columns else 0, key="tgt")
-    st.session_state.target_col = target_col
-    with c3: st.checkbox("Balancear clases (class_weight)", value=True)
+    with c1: impute = st.selectbox("Imputación:", ['median', 'mode', 'drop'], key="imp_strategy")
+    with c2: 
+        target_opts = list(df.columns)
+        idx = target_opts.index('bankrupt') if 'bankrupt' in target_opts else 0
+        st.session_state.target_col = st.selectbox("Objetivo:", target_opts, index=idx, key="tgt")
+    with c3: st.checkbox("Balancear clases", value=True, key="balance_cb")
     
     if st.button("🔄 Ejecutar Preprocesamiento", type="primary"):
         with st.spinner("Procesando..."):
-            prep = BankruptcyPreprocessor(df, target_col)
+            prep = BankruptcyPreprocessor(df, st.session_state.target_col)
             X, y, preprocessor, feat_names = prep.fit_transform(impute_strategy=impute)
             st.session_state.X_train, st.session_state.X_test, st.session_state.y_train, st.session_state.y_test = train_test_split(
                 X, y, test_size=0.2, random_state=42, stratify=y
@@ -351,155 +345,122 @@ def render_tab2_preprocesamiento():
             st.session_state.preprocessor = preprocessor
             st.session_state.feature_names = feat_names
             st.session_state.data_processed = pd.concat([X, y], axis=1)
-            st.success("✅ Preprocesamiento completado. Datos listos para modelado.")
-    
-    if st.session_state.X_train is not None:
-        st.success(f"📦 Train: `{st.session_state.X_train.shape[0]}` | Test: `{st.session_state.X_test.shape[0]}` | Features: `{len(st.session_state.feature_names)}`")
-        with st.expander("👁️ Vista de datos procesados"):
-            st.dataframe(st.session_state.data_processed.head())
-
-def render_tab3_modelado():
-    st.header("🧠 3. Desarrollo del Modelo")
-    if st.session_state.X_train is None:
-        st.warning("⚠️ Ejecute el preprocesamiento primero.")
-        return
-    
-    st.subheader("📦 Selección y Entrenamiento")
-    new_model = st.selectbox("Modelo a entrenar:", [
-        "Logistic Regression", "Decision Tree", "Random Forest", "Gradient Boosting", "SVM"
-    ])
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button(f"🚀 Entrenar {new_model}", type="primary"):
-            with st.spinner("Entrenando..."):
-                model = train_model(new_model, st.session_state.X_train, st.session_state.y_train)
-                st.session_state.models[new_model] = model
-                st.success(f"✅ `{new_model}` almacenado correctamente.")
-                st.rerun()
-    with c2:
-        load_btn = st.file_uploader("Cargar modelo (.pkl)", type=['pkl'], key="model_up")
-        if load_btn:
-            st.session_state.models['Custom_Model'] = pickle.loads(load_btn.read())
-            st.success("✅ Modelo cargado desde archivo.")
+            st.success("✅ Listo para modelado.")
             st.rerun()
-    
-    if st.session_state.models:
-        st.subheader("💾 Modelos Almacenados")
-        for name, model in list(st.session_state.models.items()):
-            col1, col2, col3 = st.columns([3, 1, 1])
-            col1.markdown(f"**{name}** | Parámetros: `{str(model.get_params())[:100]}...`")
-            buf = io.BytesIO()
-            pickle.dump(model, buf)
-            col2.download_button("⬇️ Guardar", buf.getvalue(), f"{name.lower().replace(' ','_')}.pkl", "application/octet-stream")
-            if col3.button("🗑️ Eliminar", key=f"del_{name}"):
-                del st.session_state.models[name]
-                st.rerun()
+            
+    if st.session_state.X_train is not None:
+        st.success(f"📦 Train: `{st.session_state.X_train.shape[0]}` | Test: `{st.session_state.X_test.shape[0]}`")
+        st.dataframe(st.session_state.data_processed.head())
 
-def render_tab4_evaluacion():
+def section_modelado():
+    st.header("🧠 3. Desarrollo del Modelo")
+    if st.session_state.X_train is None: st.warning("⚠️ Ejecute preprocesamiento primero."); return
+    
+    new_model = st.selectbox("Modelo:", ["Logistic Regression", "Decision Tree", "Random Forest", "Gradient Boosting", "SVM"])
+    if st.button(f"🚀 Entrenar {new_model}", type="primary"):
+        with st.spinner("Entrenando..."):
+            st.session_state.models[new_model] = train_model(new_model, st.session_state.X_train, st.session_state.y_train)
+            st.success(f"✅ `{new_model}` guardado.")
+            st.rerun()
+            
+    load_btn = st.file_uploader("Cargar .pkl", type=['pkl'])
+    if load_btn:
+        st.session_state.models['Custom_Model'] = pickle.loads(load_btn.read())
+        st.success("✅ Modelo cargado.")
+        st.rerun()
+        
+    if st.session_state.models:
+        st.subheader("💾 Almacenados")
+        for name, model in list(st.session_state.models.items()):
+            c1, c2, c3 = st.columns([3, 1, 1])
+            c1.markdown(f"**{name}**")
+            buf = io.BytesIO(); pickle.dump(model, buf)
+            c2.download_button("⬇️ Guardar", buf.getvalue(), f"{name.lower().replace(' ','_')}.pkl", "application/octet-stream")
+            if c3.button("🗑️", key=f"del_{name}"):
+                del st.session_state.models[name]; st.rerun()
+
+def section_evaluacion():
     st.header("📊 4. Evaluación de Modelos")
-    if not st.session_state.models:
-        st.warning("⚠️ Entrene al menos un modelo primero.")
-        return
+    if not st.session_state.models: st.warning("⚠️ Entrene al menos un modelo."); return
     
-    st.subheader("🎯 Métricas de Clasificación")
-    selected = st.multiselect("Modelos a evaluar:", list(st.session_state.models.keys()), default=list(st.session_state.models.keys()))
-    
+    selected = st.multiselect("Evaluar:", list(st.session_state.models.keys()), default=list(st.session_state.models.keys()))
     if selected:
-        metrics_df = []
+        rows = []
         for name in selected:
             model = st.session_state.models[name]
             m, cm, fpr, tpr = evaluate_model(model, st.session_state.X_test, st.session_state.y_test)
-            m['Modelo'] = name
-            metrics_df.append(m)
+            m['Modelo'] = name; rows.append(m)
             st.session_state.evaluation_results[name] = {'metrics': m, 'cm': cm, 'fpr': fpr, 'tpr': tpr}
+            
+        st.dataframe(pd.DataFrame(rows).set_index('Modelo').style.format("{:.3f}"), use_container_width=True)
         
-        st.dataframe(pd.DataFrame(metrics_df).set_index('Modelo').style.format("{:.3f}"), use_container_width=True)
-        
-        tab_v = st.tabs(["🔹 Matriz de Confusión", "🔹 Curva ROC", "🔹 Importancia de Features"])
-        with tab_v[0]:
+        t1, t2, t3 = st.tabs(["Confusión", "ROC", "Importancia"])
+        with t1:
             cols = st.columns(len(selected))
-            for i, name in enumerate(selected):
-                cm = st.session_state.evaluation_results[name]['cm']
-                fig = px.imshow(cm, text_auto=True, title=f"{name}", labels={'x':'Predicho','y':'Real'}, 
-                              color_continuous_scale='Blues', aspect='auto')
-                cols[i].plotly_chart(fig, use_container_width=True)
-        with tab_v[1]:
+            for i, n in enumerate(selected):
+                cols[i].plotly_chart(px.imshow(st.session_state.evaluation_results[n]['cm'], text_auto=True, title=n, aspect='auto'), use_container_width=True)
+        with t2:
             fig = go.Figure()
-            for name in selected:
-                res = st.session_state.evaluation_results[name]
-                fig.add_trace(go.Scatter(x=res['fpr'], y=res['tpr'], mode='lines', name=f"{name} (AUC={res['metrics']['ROC-AUC']:.3f})"))
+            for n in selected:
+                r = st.session_state.evaluation_results[n]
+                fig.add_trace(go.Scatter(x=r['fpr'], y=r['tpr'], mode='lines', name=f"{n} (AUC={r['metrics']['ROC-AUC']:.3f})"))
             fig.add_shape(type='line', line=dict(dash='dash'), x0=0, x1=1, y0=0, y1=1)
-            fig.update_layout(title="Curvas ROC", xaxis_title="Tasa de Falsos Positivos", yaxis_title="Tasa de Verdaderos Positivos")
             st.plotly_chart(fig, use_container_width=True)
-        with tab_v[2]:
+        with t3:
             if st.session_state.feature_names:
-                model = st.session_state.models.get(selected[0])
-                imp = get_feature_importance(model, st.session_state.feature_names).head(10)
-                fig = px.bar(imp, x='Importance', y='Feature', orientation='h', title=f"Top Features: {selected[0]}")
-                st.plotly_chart(fig, use_container_width=True)
+                imp = get_feature_importance(st.session_state.models[selected[0]], st.session_state.feature_names).head(10)
+                st.plotly_chart(px.bar(imp, x='Importance', y='Feature', orientation='h'), use_container_width=True)
 
-def render_tab5_interpretacion():
+def section_interpretacion():
     st.header("🔮 5. Interpretación y Conclusiones")
-    if not st.session_state.evaluation_results:
-        st.warning("⚠️ Evalúe modelos primero.")
-        return
+    if not st.session_state.evaluation_results: st.warning("⚠️ Evalúe primero."); return
     
-    best_model = max(st.session_state.evaluation_results.items(), key=lambda x: x[1]['metrics']['F1-Score'])
-    st.subheader(f"🏆 Modelo Recomendado: `{best_model[0]}`")
-    
+    best = max(st.session_state.evaluation_results.items(), key=lambda x: x[1]['metrics']['F1-Score'])
+    st.subheader(f"🏆 Recomendado: `{best[0]}`")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("F1-Score", f"{best_model[1]['metrics']['F1-Score']:.3f}")
-    c2.metric("Recall", f"{best_model[1]['metrics']['Recall']:.3f}")
-    c3.metric("Precision", f"{best_model[1]['metrics']['Precision']:.3f}")
-    c4.metric("ROC-AUC", f"{best_model[1]['metrics']['ROC-AUC']:.3f}")
+    c1.metric("F1", f"{best[1]['metrics']['F1-Score']:.3f}")
+    c2.metric("Recall", f"{best[1]['metrics']['Recall']:.3f}")
+    c3.metric("Precision", f"{best[1]['metrics']['Precision']:.3f}")
+    c4.metric("ROC-AUC", f"{best[1]['metrics']['ROC-AUC']:.3f}")
     
-    st.subheader("📝 Interpretación Empresarial")
-    model = st.session_state.models[best_model[0]]
-    imp_df = get_feature_importance(model, st.session_state.feature_names)
-    
+    st.subheader("📝 Interpretación")
+    model = st.session_state.models[best[0]]
+    imp = get_feature_importance(model, st.session_state.feature_names)
     st.markdown(f"""
-    🔍 **Factores clave de riesgo:** `{imp_df.iloc[0]['Feature']}`, `{imp_df.iloc[1]['Feature']}`, `{imp_df.iloc[2]['Feature']}`  
-    💡 **Umbral óptimo:** El modelo prioriza `{best_model[1]['metrics']['Recall']:.1%}` de quiebras reales detectadas.  
-    ⚠️ **Riesgo operativo:** Falsos positivos en `{1-best_model[1]['metrics']['Precision']:.1%}` podrían generar revisión innecesaria de créditos.  
-    📉 **Recomendación:** Implementar alertas tempranas cuando `{imp_df.iloc[0]['Feature']}` supere `{imp_df.iloc[0]['Importance']:.2f}` en peso relativo.
+    🔍 **Riesgo clave:** `{imp.iloc[0]['Feature']}`, `{imp.iloc[1]['Feature']}`, `{imp.iloc[2]['Feature']}`  
+    💡 **Cobertura:** `{best[1]['metrics']['Recall']:.1%}` quiebras reales detectadas.  
+    ⚠️ **Falsos positivos:** `{1-best[1]['metrics']['Precision']:.1%}` revisiones innecesarias.  
+    📉 **Acción:** Alertas cuando `{imp.iloc[0]['Feature']}` supere umbral crítico.
     """)
     
-    st.subheader("💾 Exportar Reporte")
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("📄 Exportar JSON Completo"):
-            report = {
-                'metadata': {'date': datetime.now().isoformat(), 'n_models': len(st.session_state.models)},
-                'best_model': best_model[0],
-                'metrics': best_model[1]['metrics'],
-                'feature_importance': imp_df.head(10).to_dict(orient='records'),
-                'qwen_suggestions': generate_qwen_suggestions(st.session_state.data_raw, best_model[1]['metrics'])
-            }
-            st.download_button("⬇️ Descargar", json.dumps(report, indent=2, default=str), "reporte_quiebras.json", "application/json")
-    with c2:
-        if st.button("📊 Exportar CSV Evaluaciones"):
-            ev_df = pd.DataFrame({k: v['metrics'] for k,v in st.session_state.evaluation_results.items()}).T
-            st.download_button("⬇️ Descargar", ev_df.to_csv(index_label="modelo"), "metricas_modelos.csv", "text/csv")
-    
-    st.info("💡 **Próximos pasos:** Desplegar modelo como API FastAPI, integrar monitoreo de drift con Evidently AI, y validar en out-of-time sample.")
+    if st.button("📄 Exportar Reporte JSON"):
+        report = {'date': datetime.now().isoformat(), 'best_model': best[0], 'metrics': best[1]['metrics'], 
+                  'top_features': imp.head(5).to_dict(orient='records'), 'suggestions': generate_qwen_suggestions(st.session_state.data_raw, best[1]['metrics'])}
+        st.download_button("⬇️ Descargar", json.dumps(report, indent=2, default=str), "reporte.json", "application/json")
 
 # ============================================================================
-# 🚀 MAIN APP
+# 🚀 MAIN APP (SIDEBAR NAVIGATION)
 # ============================================================================
 def main():
     st.title("🏦 Analizador de Quiebras Financieras")
-    st.caption("Pipeline completo: Exploración → Preprocesamiento → Modelado → Evaluación → Interpretación | Datos sintéticos por defecto")
+    st.caption("Pipeline completo: Exploración → Preprocesamiento → Modelado → Evaluación → Interpretación")
     
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "🔍 1. Exploración", "🛠️ 2. Preprocesamiento", "🧠 3. Modelado", "📊 4. Evaluación", "🔮 5. Interpretación"
-    ])
+    section = st.sidebar.radio("📑 Navegación:", [
+        "🔍 1. Exploración", 
+        "🛠️ 2. Preprocesamiento", 
+        "🧠 3. Modelado", 
+        "📊 4. Evaluación", 
+        "🔮 5. Interpretación"
+    ], index=0)
     
-    with tab1: render_tab1_exploracion()
-    with tab2: render_tab2_preprocesamiento()
-    with tab3: render_tab3_modelado()
-    with tab4: render_tab4_evaluacion()
-    with tab5: render_tab5_interpretacion()
+    st.sidebar.markdown("---")
+    st.sidebar.caption("💾 Los datos y modelos se mantienen en sesión activa. No cierran al cambiar de apartado.")
+    
+    if "1. Exploración" in section: section_exploracion()
+    elif "2. Preprocesamiento" in section: section_preprocesamiento()
+    elif "3. Modelado" in section: section_modelado()
+    elif "4. Evaluación" in section: section_evaluacion()
+    elif "5. Interpretación" in section: section_interpretacion()
 
 if __name__ == "__main__":
     main()
