@@ -956,7 +956,240 @@ Valida con fuentes actuales online y proporciona URLs verificables."""
                 mime="application/json",
                 use_container_width=True,
                 key="tab1_download_btn"
-            )# =====================================================
+            )
+            
+        # =====================================================
+        # PASO 4: REPRESENTACIÓN VISUAL DEL CONTENIDO
+        # =====================================================
+        
+        st.markdown("---")
+        st.markdown("### 🎨 Paso 4: Contenido listo para usar")
+        st.markdown("*Transforma el análisis en formatos listos para publicar*")
+        
+        # Selector de formato de salida
+        output_format = st.radio(
+            "📋 Selecciona el formato de salida",
+            ["📊 Infografía (Email)", "💼 Post LinkedIn", "🌐 Artículo Web", "📝 Texto Plano"],
+            horizontal=True,
+            key="tab1_output_format"
+        )
+        
+        # 🔧 Función helper para generar contenido formateado
+        def generate_formatted_content(data: dict, format_type: str, query: str) -> str:
+            """Genera contenido formateado según el tipo de salida"""
+            summary = data.get("summary", "")
+            points = data.get("key_points", [])
+            actions = data.get("recommended_actions", [])
+            sources = data.get("sources", [])
+            
+            if format_type == "📊 Infografía (Email)":
+                # Formato compacto para email con infografía adjunta
+                content = f"""🔹 *{summary}*
+
+📌 Puntos clave:
+"""
+                for i, p in enumerate(points, 1):
+                    # Limpiar prefijos como "Validado:" para formato visual
+                    clean_p = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)
+                    content += f"• {clean_p}\n"
+                
+                content += f"""
+🎯 Acciones recomendadas:
+"""
+                for i, a in enumerate(actions, 1):
+                    content += f"→ {a}\n"
+                
+                if sources:
+                    content += f"""
+🔗 Fuentes: {len(sources)} referencias verificadas
+"""
+                content += f"\n---\n*Generado con KaiBot IA | {datetime.now().strftime('%d/%m/%Y')}*"
+                return content.strip()
+            
+            elif format_type == "💼 Post LinkedIn":
+                # Formato optimizado para LinkedIn: hook + valor + CTA + hashtags
+                hook = summary[:150] + "..." if len(summary) > 150 else summary
+                
+                content = f"""{hook}
+
+🧵 Hilo con insights clave:
+
+"""
+                for i, p in enumerate(points[:3], 1):  # Máximo 3 puntos para LinkedIn
+                    clean_p = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)
+                    content += f"{i}/ {clean_p}\n\n"
+                
+                content += """💡 ¿Qué opinas sobre estas tendencias? 
+👇 Déjame tu perspectiva en comentarios.
+
+#B2B #MarketingDigital #Innovación #KaiBot"""
+                return content.strip()
+            
+            elif format_type == "🌐 Artículo Web":
+                # Formato HTML básico para web/blog
+                content = f"""<article>
+  <h1>{summary}</h1>
+  
+  <section>
+    <h2>🔍 Puntos Clave</h2>
+    <ul>
+"""
+                for p in points:
+                    clean_p = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)
+                    content += f"      <li>{clean_p}</li>\n"
+                
+                content += """    </ul>
+  </section>
+  
+  <section>
+    <h2>✅ Acciones Recomendadas</h2>
+    <ol>
+"""
+                for a in actions:
+                    content += f"      <li>{a}</li>\n"
+                
+                if sources:
+                    content += """    </ol>
+  </section>
+  
+  <section>
+    <h2>📚 Fuentes</h2>
+    <ul>
+"""
+                    for s in sources:
+                        if s.startswith("http"):
+                            url = s.split(" ")[0]
+                            title = s.split("(", 1)[1].rstrip(")") if "(" in s else "Fuente"
+                            content += f'      <li><a href="{url}" target="_blank">{title}</a></li>\n'
+                        else:
+                            content += f"      <li>{s}</li>\n"
+                
+                content += f"""    </ul>
+    <p><small>Generado con KaiBot IA | {datetime.now().strftime('%d/%m/%Y')}</small></p>
+  </section>
+</article>"""
+                return content.strip()
+            
+            else:  # Texto Plano
+                content = f"""RESUMEN EJECUTIVO
+{'='*50}
+{summary}
+
+PUNTOS CLAVE
+{'-'*50}
+"""
+                for i, p in enumerate(points, 1):
+                    content += f"{i}. {p}\n"
+                
+                content += f"""
+ACCIONES RECOMENDADAS
+{'-'*50}
+"""
+                for i, a in enumerate(actions, 1):
+                    content += f"{i}. {a}\n"
+                
+                if sources:
+                    content += f"""
+FUENTES VERIFICADAS
+{'-'*50}
+"""
+                    for i, s in enumerate(sources, 1):
+                        content += f"{i}. {s}\n"
+                
+                content += f"\n---\nGenerado con KaiBot IA | {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+                return content.strip()
+        
+        # Generar y mostrar contenido formateado
+        formatted_content = generate_formatted_content(final_data, output_format, user_query)
+        
+        # Preview visual con styling
+        with st.expander("👁️ Vista previa del contenido formateado", expanded=True):
+            if output_format == "🌐 Artículo Web":
+                st.markdown(formatted_content, unsafe_allow_html=True)
+            else:
+                st.markdown(f"```text\n{formatted_content}\n```")
+        
+        # Botones de acción
+        col_copy, col_download, col_regenerate = st.columns([2, 2, 1])
+        
+        with col_copy:
+            # 🔧 Streamlit no tiene copy-to-clipboard nativo, usamos workaround con st.code + instrucciones
+            st.code(formatted_content, language="text" if output_format != "🌐 Artículo Web" else "html")
+            st.caption("💡 Selecciona el texto arriba y usa Ctrl+C / Cmd+C para copiar")
+        
+        with col_download:
+            # Determinar extensión según formato
+            ext_map = {
+                "📊 Infografía (Email)": "txt",
+                "💼 Post LinkedIn": "txt", 
+                "🌐 Artículo Web": "html",
+                "📝 Texto Plano": "txt"
+            }
+            ext = ext_map.get(output_format, "txt")
+            filename_base = preview_filename.replace(".json", f"_{output_format.split()[1].lower()}.{ext}")
+            
+            st.download_button(
+                "⬇️ Descargar formato",
+                formatted_content,
+                file_name=filename_base,
+                mime="text/html" if ext == "html" else "text/plain",
+                use_container_width=True,
+                key="tab1_download_formatted"
+            )
+        
+        with col_regenerate:
+            if st.button("🔄 Regenerar", use_container_width=True, key="tab1_regenerate_format"):
+                # Forzar regeneración limpiando cache del formato
+                if "tab1_formatted_cache" in st.session_state:
+                    del st.session_state.tab1_formatted_cache
+                st.rerun()
+        
+        # 💡 Tips contextuales según formato
+        with st.expander("💡 Tips para este formato", expanded=False):
+            if output_format == "📊 Infografía (Email)":
+                st.markdown("""
+                - ✂️ **Mantén el texto breve**: Las infografías funcionan mejor con frases de <15 palabras
+                - 🎨 **Usa iconos**: Los emojis o iconos ayudan a escanear rápido el contenido
+                - 📱 **Test mobile**: El 60% de emails se abren en móvil, verifica legibilidad
+                - 🔗 **Enlace único**: Incluye solo 1 CTA principal para maximizar clicks
+                """)
+            elif output_format == "💼 Post LinkedIn":
+                st.markdown("""
+                - 🪝 **Hook en primera línea**: Las primeras 2 frases determinan si se expande el post
+                - 🧵 **Hilos > Posts largos**: Divide insights complejos en 3-5 posts conectados
+                - 📊 **Incluye datos**: Los posts con cifras tienen 3x más engagement
+                - ⏰ **Mejor horario**: Martes-Jueves 8-10am o 5-7pm para audiencia B2B
+                """)
+            elif output_format == "🌐 Artículo Web":
+                st.markdown("""
+                - 🔍 **SEO básico**: Incluye la keyword principal en H1 y primeros 100 caracteres
+                - 📐 **Longitud ideal**: 800-1500 palabras para artículos B2B de autoridad
+                - 🔗 **Enlaces internos**: Enlaza a 2-3 recursos propios para mejorar SEO y retención
+                - 🖼️ **Imágenes**: Añade 1 imagen cada 300 palabras para reducir bounce rate
+                """)
+            else:
+                st.markdown("""
+                - 📋 **Copiar y pegar**: Listo para usar en documentos, presentaciones o briefings
+                - ✏️ **Editable**: Puedes modificar cualquier sección antes de usar
+                - 🔄 **Versiones**: Genera múltiples formatos desde el mismo análisis
+                """)
+        
+        # 🎯 Bonus: Generar variantes automáticas (opcional)
+        if st.checkbox("✨ Generar variantes adicionales", key="tab1_generate_variants"):
+            st.markdown("#### 🎲 Variantes automáticas")
+            
+            variants = {
+                "🎯 Versión Ejecutiva (1-línea)": f"💡 {summary[:200]}{'...' if len(summary) > 200 else ''}",
+                "📱 Versión Mobile (<280 chars)": f"{summary[:250]}{'...' if len(summary) > 250 else ''} #B2B #KaiBot",
+                "🗣️ Versión Pitch (30 seg)": f"¿Sabías que {summary.lower().replace('.', ',')[:180]}? Descubre más con KaiBot."
+            }
+            
+            for label, content in variants.items():
+                with st.container():
+                    st.markdown(f"**{label}**")
+                    st.code(content, language="text")
+                    st.caption(f"Longitud: {len(content)} caracteres")
+# =====================================================
 # TAB 2 - MIS ARCHIVOS (Sin cambios, funciona perfecto)
 # =====================================================
 
