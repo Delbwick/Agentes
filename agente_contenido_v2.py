@@ -1189,6 +1189,375 @@ FUENTES VERIFICADAS
                     st.markdown(f"**{label}**")
                     st.code(content, language="text")
                     st.caption(f"Longitud: {len(content)} caracteres")
+
+        # =====================================================
+        # PASO 5: GENERADOR DE INFOGRAFÍAS
+        # =====================================================
+        
+        st.markdown("---")
+        st.markdown("### 🎨 Paso 5: Generar Infografía")
+        st.markdown("*Crea una infografía visual lista para Gamma, Canva o email*")
+        
+        # 🔧 Función para estructurar contenido para infografías
+        def structure_for_infographic(data: dict, branding: dict = None) -> dict:
+            """Estructura el análisis en formato optimizado para infografías"""
+            if branding is None:
+                branding = {
+                    "primary_color": "#0066CC",
+                    "secondary_color": "#F8FAFC", 
+                    "accent_color": "#10B981",
+                    "font": "Inter, sans-serif",
+                    "logo_url": "https://kaibot.es/wp-content/uploads/2020/07/image-4-300x184.png"
+                }
+            
+            summary = data.get("summary", "")
+            points = data.get("key_points", [])
+            actions = data.get("recommended_actions", [])
+            sources = data.get("sources", [])
+            
+            # Limpiar puntos para formato visual
+            clean_points = []
+            for p in points:
+                # Eliminar prefijos de validación para formato limpio
+                clean = re.sub(r'^(Validado|No validado|Verificado)[^:]*:\s*', '', p, flags=re.IGNORECASE)
+                # Truncar si es muy largo para infografía
+                clean_points.append(clean[:180] + "..." if len(clean) > 180 else clean)
+            
+            # Estructura compatible con Gamma.app (JSON importable)
+            gamma_structure = {
+                "version": "1.0",
+                "title": summary[:80] + "..." if len(summary) > 80 else summary,
+                "theme": {
+                    "primaryColor": branding["primary_color"],
+                    "backgroundColor": branding["secondary_color"],
+                    "accentColor": branding["accent_color"],
+                    "fontFamily": branding["font"]
+                },
+                "slides": [
+                    {
+                        "type": "header",
+                        "title": branding.get("client_name", "KaiBot") + " | Análisis IA",
+                        "subtitle": summary[:120] + "..." if len(summary) > 120 else summary,
+                        "logo": branding.get("logo_url")
+                    },
+                    {
+                        "type": "key_points",
+                        "title": "🔍 Puntos Clave",
+                        "items": [{"text": p, "icon": "✅" if "validado" in p.lower() else "⚠️"} 
+                                 for p in clean_points[:4]]  # Máximo 4 para legibilidad
+                    },
+                    {
+                        "type": "actions", 
+                        "title": "🎯 Acciones Recomendadas",
+                        "items": [{"text": a[:150] + "..." if len(a) > 150 else a} 
+                                 for a in actions[:3]]  # Máximo 3 acciones
+                    }
+                ],
+                "footer": {
+                    "text": f"Generado con KaiBot IA | {datetime.now().strftime('%d/%m/%Y')}",
+                    "sources": [s.split(" ")[0] for s in sources[:3] if s.startswith("http")] if sources else []
+                },
+                "metadata": {
+                    "generated_by": "KaiBot Infographic Generator",
+                    "confidence": data.get("confidence_level", "medio"),
+                    "source_query": data.get("metadata", {}).get("original_query", "")[:200]
+                }
+            }
+            
+            return gamma_structure
+        
+        # 🔧 Función para generar prompt de imagen para DALL-E 3
+        def generate_infographic_prompt(data: dict, style: str = "professional") -> str:
+            """Genera un prompt optimizado para DALL-E 3 creando una infografía"""
+            summary = data.get("summary", "")[:200]
+            points = data.get("key_points", [])[:3]
+            
+            style_prompts = {
+                "professional": "estilo corporativo minimalista, paleta azul profesional, iconos lineales, tipografía sans-serif limpia, fondo blanco con acentos en azul #0066CC",
+                "modern": "diseño moderno con gradientes sutiles, tarjetas con sombras suaves, iconos 3D minimalistas, tipografía Inter, fondo claro",
+                "bold": "estilo impactante con colores vibrantes, tipografía bold, iconos grandes, alto contraste, diseño tipo poster"
+            }
+            
+            points_text = " • ".join([re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)[:100] for p in points])
+            
+            prompt = f"""Crea una infografía profesional en español sobre: {summary}
+
+Elementos visuales:
+- Título destacado en la parte superior
+- 3 puntos clave con iconos: {points_text}
+- Sección de "Acciones Recomendadas" con checkmarks
+- Footer con fuentes y marca "KaiBot IA"
+
+Estilo: {style_prompts.get(style, style_prompts["professional"])}
+
+Formato: Vertical 1080x1920px, optimizado para email y mobile.
+Texto: Todo en español, legible, sin errores ortográficos.
+NO incluyas texto placeholder ni lorem ipsum."""
+            
+            return prompt
+        
+        # Configuración de infografía
+        col_style, col_brand = st.columns([2, 1])
+        
+        with col_style:
+            infographic_style = st.selectbox(
+                "🎨 Estilo visual",
+                ["professional", "modern", "bold"],
+                format_func=lambda x: {"professional": "🏢 Profesional (KaiBot)", "modern": "✨ Moderno", "bold": "🔥 Impactante"}[x],
+                key="tab1_infographic_style"
+            )
+        
+        with col_brand:
+            use_kaibot_branding = st.checkbox("🏷️ Usar branding KaiBot", value=True, key="tab1_kaibot_brand")
+            branding = {
+                "primary_color": "#0066CC",
+                "secondary_color": "#F8FAFC",
+                "accent_color": "#10B981", 
+                "font": "Inter, sans-serif",
+                "logo_url": "https://kaibot.es/wp-content/uploads/2020/07/image-4-300x184.png",
+                "client_name": "KaiBot"
+            } if use_kaibot_branding else None
+        
+        # Botones de generación
+        col_gen_img, col_gen_json, col_preview = st.columns([2, 2, 1])
+        
+        with col_gen_img:
+            generate_image = st.button(
+                "🖼️ Generar imagen con IA", 
+                type="primary",
+                use_container_width=True,
+                key="tab1_gen_infographic_img"
+            )
+        
+        with col_gen_json:
+            generate_gamma_json = st.button(
+                "📥 Exportar para Gamma",
+                use_container_width=True, 
+                key="tab1_gen_gamma_json"
+            )
+        
+        with col_preview:
+            show_preview = st.button("👁️ Preview", use_container_width=True, key="tab1_infographic_preview")
+        
+        # === GENERAR IMAGEN CON DALL-E 3 ===
+        if generate_image:
+            with st.spinner("🎨 Generando infografía con DALL-E 3..."):
+                try:
+                    prompt = generate_infographic_prompt(final_data, infographic_style)
+                    
+                    response = st.session_state.openai.images.generate(
+                        model="dall-e-3",
+                        prompt=prompt,
+                        size="1024x1792",  # Formato vertical para infografía
+                        quality="standard",
+                        n=1
+                    )
+                    
+                    image_url = response.data[0].url
+                    
+                    st.success("✅ Infografía generada")
+                    
+                    # Mostrar imagen
+                    st.image(image_url, caption="Infografía generada con KaiBot IA", use_container_width=True)
+                    
+                    # Botón de descarga (nota: URLs de DALL-E expiran en 1h)
+                    st.download_button(
+                        "⬇️ Descargar imagen",
+                        requests.get(image_url).content if 'requests' in globals() else None,
+                        file_name=f"infografia_kaiBot_{datetime.now().strftime('%Y%m%d_%H%M')}.png",
+                        mime="image/png",
+                        disabled=True,  # Requiere backend para descargar URL externa
+                        help="💡 Haz clic derecho → 'Guardar imagen como' o usa el botón de descarga de Gamma"
+                    )
+                    
+                    st.info("⏱️ *Nota: La URL de la imagen expira en 1 hora. Guárdala o úsala en Gamma antes.*")
+                    
+                    # Guardar URL en session para referencia
+                    st.session_state.last_infographic_url = image_url
+                    
+                except Exception as e:
+                    st.error(f"❌ Error generando imagen: {str(e)}")
+                    st.info("💡 Alternativa: Usa el botón 'Exportar para Gamma' para crear la infografía manualmente")
+        
+        # === EXPORTAR JSON PARA GAMMA ===
+        if generate_gamma_json:
+            gamma_data = structure_for_infographic(final_data, branding)
+            
+            with st.expander("📋 JSON para Gamma.app", expanded=True):
+                st.code(json.dumps(gamma_data, indent=2, ensure_ascii=False), language="json")
+                
+                col_copy_gamma, col_download_gamma = st.columns(2)
+                
+                with col_copy_gamma:
+                    st.caption("💡 Copia el JSON arriba y pégalo en Gamma.app → Import → JSON")
+                
+                with col_download_gamma:
+                    st.download_button(
+                        "⬇️ Descargar JSON Gamma",
+                        json.dumps(gamma_data, indent=2, ensure_ascii=False),
+                        file_name=f"infografia_gamma_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+                        mime="application/json",
+                        use_container_width=True,
+                        key="tab1_download_gamma"
+                    )
+            
+            # Instrucciones para Gamma
+            with st.expander("📚 Cómo importar en Gamma.app", expanded=False):
+                st.markdown("""
+                1. Ve a [Gamma.app](https://gamma.app) y crea una nueva presentación
+                2. Haz clic en **"Import"** → **"JSON"**
+                3. Pega el JSON de arriba o sube el archivo descargado
+                4. Gamma generará automáticamente las diapositivas con tu contenido
+                5. Personaliza colores, iconos y layout con el editor visual de Gamma
+                
+                🔗 [Guía oficial de importación JSON en Gamma](https://gamma.app/docs/import-json)
+                """)
+        
+        # === VISTA PREVIA VISUAL EN STREAMLIT ===
+        if show_preview or "show_infographic_preview" in st.session_state:
+            st.session_state.show_infographic_preview = True
+            
+            with st.expander("👁️ Vista previa de la infografía", expanded=True):
+                # Header
+                st.markdown(f"""
+                <div style='
+                    background: linear-gradient(135deg, {branding["primary_color"]} 0%, #0052A3 100%);
+                    padding: 1.5rem;
+                    border-radius: 12px;
+                    color: white;
+                    margin-bottom: 1rem;
+                    text-align: center;
+                '>
+                    <img src="{branding["logo_url"]}" width="80" style="margin-bottom: 0.5rem;">
+                    <h3 style="margin: 0.5rem 0;">{branding["client_name"]} | Análisis IA</h3>
+                    <p style="margin: 0; opacity: 0.9; font-size: 0.95rem;">
+                        {final_data.get("summary", "")[:150]}{"..." if len(final_data.get("summary", "")) > 150 else ""}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Puntos clave
+                st.markdown("#### 🔍 Puntos Clave")
+                for i, p in enumerate(final_data.get("key_points", [])[:4], 1):
+                    clean_p = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)
+                    icon = "✅" if "validado" in p.lower() or "confirmado" in p.lower() else "⚠️"
+                    st.markdown(f"""
+                    <div style='
+                        display: flex;
+                        align-items: flex-start;
+                        gap: 0.75rem;
+                        padding: 0.75rem;
+                        background: white;
+                        border-left: 4px solid {branding["accent_color"] if "validado" in p.lower() else "#F59E0B"};
+                        border-radius: 0 8px 8px 0;
+                        margin-bottom: 0.5rem;
+                        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                    '>
+                        <span style="font-size: 1.2rem;">{icon}</span>
+                        <span>{clean_p[:180]}{"..." if len(clean_p) > 180 else ""}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                # Acciones
+                st.markdown("#### 🎯 Acciones Recomendadas")
+                for i, a in enumerate(final_data.get("recommended_actions", [])[:3], 1):
+                    st.markdown(f"""
+                    <div style='
+                        padding: 0.75rem;
+                        background: #F8FAFC;
+                        border-radius: 8px;
+                        margin-bottom: 0.5rem;
+                        border: 1px solid #E2E8F0;
+                    '>
+                        <strong>{i}.</strong> {a[:150]}{"..." if len(a) > 150 else ""}
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                # Footer
+                sources = final_data.get("sources", [])
+                st.markdown(f"""
+                <div style='
+                    text-align: center;
+                    padding: 1rem;
+                    background: #1E293B;
+                    color: rgba(255,255,255,0.8);
+                    border-radius: 12px;
+                    font-size: 0.85rem;
+                    margin-top: 1rem;
+                '>
+                    <p style="margin: 0 0 0.5rem 0;">
+                        🔗 Fuentes: {len(sources)} referencias verificadas
+                    </p>
+                    <p style="margin: 0; opacity: 0.7;">
+                        Generado con KaiBot IA | {datetime.now().strftime('%d/%m/%Y')}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # === TIPS DE DISEÑO PARA INFOGRAFÍAS ===
+        with st.expander("💡 Tips para infografías efectivas", expanded=False):
+            st.markdown("""
+            #### 🎨 Diseño visual
+            - **Jerarquía clara**: Título > Puntos clave > Acciones > Fuentes
+            - **Espacio en blanco**: Deja "aire" entre secciones para mejor legibilidad
+            - **Iconos consistentes**: Usa ✅ para validado, ⚠️ para no verificado, 🎯 para acciones
+            
+            #### 📱 Optimización mobile
+            - **Texto mínimo**: Máximo 15-20 palabras por punto clave
+            - **Tamaño de fuente**: Mínimo 16px para cuerpo, 24px+ para títulos
+            - **Contraste**: Asegura ratio 4.5:1 mínimo para accesibilidad
+            
+            #### 🔄 Integración con Gamma
+            - Usa el JSON exportado para generar automáticamente la estructura
+            - Personaliza colores con la paleta de tu marca en Gamma
+            - Añade tu logo en el header y footer para branding consistente
+            
+            #### 📊 Métricas de éxito
+            - **Email**: CTR > 3% con infografía vs 1.2% solo texto
+            - **LinkedIn**: Posts con infografías tienen 3x más engagement
+            - **Web**: Tiempo en página +40% con contenido visual estructurado
+            """)
+        
+        # === COMPARATIVA CON GAMMA (para el cliente) ===
+        if st.checkbox("🔍 Comparar con salida de Gamma", key="tab1_gamma_comparison"):
+            st.markdown("#### 📊 Análisis comparativo: Nuestro Agente vs Gamma")
+            
+            col_agent, col_gamma = st.columns(2)
+            
+            with col_agent:
+                st.markdown("**🤖 Nuestro Agente (KaiBot)**")
+                st.info("""
+                ✅ Ventajas:
+                - Contenido validado con fuentes verificables
+                - Estructura JSON lista para automatización
+                - Metadatos de confianza y trazabilidad
+                - Personalizable por cliente/sector
+                
+                ⚠️ Consideraciones:
+                - Requiere paso adicional para visualización
+                - Formato técnico (JSON) no visual por defecto
+                """)
+            
+            with col_gamma:
+                st.markdown("**🎨 Gamma.app**")
+                st.info("""
+                ✅ Ventajas:
+                - Diseño visual inmediato y profesional
+                - Editor drag-and-drop intuitivo
+                - Exportación directa a PDF/PNG/Web
+                - Plantillas pre-diseñadas
+                
+                ⚠️ Consideraciones:
+                - Contenido no validado automáticamente
+                - Menos control sobre estructura de datos
+                - Requiere input manual o importación JSON
+                """)
+            
+            st.success("""
+            💡 **Recomendación**: Usa **nuestro agente para generar contenido validado** 
+            y **Gamma para la capa visual**. El JSON exportable en Paso 5 permite 
+            importar automáticamente la estructura en Gamma, combinando lo mejor de ambos.
+            """)
 # =====================================================
 # TAB 2 - MIS ARCHIVOS (Sin cambios, funciona perfecto)
 # =====================================================
