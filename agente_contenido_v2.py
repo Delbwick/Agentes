@@ -384,8 +384,9 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["🎯 Generar Contenido", "📁 Mis Archivos", "⚙️ Configuración Avanzada"])
 
 
+
 # =====================================================
-# TAB 1 - GENERAR CONTENIDO (COMPLETO + MODO FLEXIBLE)
+# TAB 1 - GENERAR CONTENIDO (CORREGIDO + CAJA CONSULTA)
 # =====================================================
 
 with tab1:
@@ -395,7 +396,7 @@ with tab1:
     # =====================================================
     # PASO 1: CONFIGURACIÓN
     # =====================================================
-    st.markdown("### 📋 Paso 1: Configura tu análisis")
+    st.markdown("###  Paso 1: Configura tu análisis")
     
     folders, files = list_folders_and_files(client, bucket_name)
     file_names = [f["name"] for f in files if not f["name"].startswith(BUCKET_FOLDERS["prompts"])]
@@ -416,7 +417,7 @@ with tab1:
     
     # 🟦 MODO FLEXIBLE
     if query_mode == "🔧 Flexible":
-        st.markdown("*Configura parámetros clave. El sistema generará el prompt automáticamente sin depender de la pestaña avanzada.*")
+        st.markdown("*Configura parámetros clave. El sistema generará el prompt automáticamente.*")
         col1, col2 = st.columns(2)
         with col1:
             role = st.selectbox("👤 Rol / Perfil", ["Responsable de Marketing B2B", "CEO / Director General", "Consultor Estratégico", "Content Manager", "Especialista en Ventas", "Inversor / VC", "Otro..."], key="tab1_role")
@@ -424,12 +425,21 @@ with tab1:
             context = st.text_area("📋 Contexto / Antecedentes", placeholder="Empresa, producto, campaña, situación actual, público objetivo...", height=100, key="tab1_context")
         with col2:
             output_format = st.selectbox("📤 Formato Output", ["Infografía / Visual", "Email corporativo", "Post LinkedIn / Thread", "Artículo Web / Blog", "Informe Ejecutivo", "Pitch comercial"], key="tab1_format")
-            sources = st.text_area("🔗 Fuentes externas (URLs, LinkedIn, datos, notas...)", placeholder="https://..., @perfil..., informe sectorial, notas internas...", height=100, key="tab1_sources")
+            sources = st.text_area(" Fuentes externas (URLs, LinkedIn, datos, notas...)", placeholder="https://..., @perfil..., informe sectorial, notas internas...", height=100, key="tab1_sources")
+        
+        #  NUEVO: Caja de consulta libre en modo Flexible
+        st.markdown("**💬 Consulta adicional (opcional):**")
+        free_query = st.text_area("Añade instrucciones específicas, preguntas concretas o matices para el análisis:", 
+                                  placeholder="Ej: Enfócate en el mercado español, compara con competidores directos, destaca cifras de ROI...", 
+                                  height=80, key="tab1_free_query_flexible")
         
         openai_prompt = f"Eres un experto estratégico actuando como {role}. Genera contenido de alto valor optimizado específicamente para formato: {output_format}. Responde EXCLUSIVAMENTE en formato JSON válido."
         user_query = f"CONTEXTO:\n{context}\n\nFUENTES A CONSIDERAR:\n{sources}\n\nINSTRUCCIÓN:\nGenera un análisis en JSON con esta estructura exacta:\n{{\n  \"summary\": \"Resumen ejecutivo (máx. 3 líneas)\",\n  \"key_points\": [\"Insight 1\", \"Insight 2\", \"Insight 3\"],\n  \"recommended_actions\": [\"Acción 1 concreta\", \"Acción 2 con métrica\"],\n  \"topics_to_validate\": [\"Dato a verificar\", \"Tendencia a confirmar\"]\n}}\nEnfoque: Profesional, directo, orientado a resultados medibles."
+        
+        if free_query.strip():
+            user_query += f"\n\nCONSULTA ESPECÍFICA DEL USUARIO:\n{free_query}"
     
-    # 🟨 MODO PERSONALIZADO
+    #  MODO PERSONALIZADO
     elif query_mode == "📝 Personalizada":
         user_query = st.text_area("Escribe tu consulta", placeholder="Ej: Analiza tendencias B2B para 2026...", height=150, key="tab1_custom_query")
         use_adv = st.checkbox("⚙️ Usar prompts avanzados (Configuración → Tab 3)", value=True, key="tab1_use_adv")
@@ -499,8 +509,8 @@ with tab1:
         context = ""
         if selected_files: context = load_selected_context(client, bucket_name, selected_files, max_chars)
         
-        # 🤖 OPENAI
-        with st.spinner(f"🤖 {selected_openai} analizando..."):
+        #  OPENAI
+        with st.spinner(f" {selected_openai} analizando..."):
             try:
                 user_message = f"CONSULTA:\n{user_query}" + (f"\n\nCONTEXTO ADICIONAL:\n{context}" if context else "")
                 response = st.session_state.openai.chat.completions.create(
@@ -513,7 +523,6 @@ with tab1:
                 elif "```" in raw: raw = raw.split("```")[1].split("```")[0].strip()
                 
                 openai_data = json.loads(raw)
-                # Normalizar campos
                 openai_data["summary"] = openai_data.get("summary") or openai_data.get("content") or "Análisis generado."
                 openai_data["key_points"] = openai_data.get("key_points") or openai_data.get("insights") or []
                 openai_data["recommended_actions"] = openai_data.get("recommended_actions") or openai_data.get("actions") or []
@@ -570,41 +579,57 @@ with tab1:
         with st.expander("👁️ Vista Previa del Contenido", expanded=True):
             c1, c2, c3 = st.columns(3)
             with c1: st.markdown(f"**🤖 OpenAI:** {meta.get('openai_model') or meta.get('model', 'N/A')}")
-            with c2: st.markdown("**🔍 Perplexity:** ⚠️ Fallback" if is_fallback else f"**🔍 Perplexity:** {meta.get('model', 'N/A')}")
+            with c2: st.markdown("**🔍 Perplexity:** ️ Fallback" if is_fallback else f"**🔍 Perplexity:** {meta.get('model', 'N/A')}")
             with c3: 
                 conf = "bajo" if is_fallback else final_data.get("confidence_level", "medio").lower()
-                st.markdown(f"**{'🔴' if conf=='bajo' else '🟡' if conf=='medio' else '🟢'} Confianza:** {conf.upper()}")
+                st.markdown(f"**{'' if conf=='bajo' else '' if conf=='medio' else '🟢'} Confianza:** {conf.upper()}")
             
             st.markdown("---\n#### 📝 Resumen Ejecutivo")
+            # ✅ FIX: Uso correcto de if/else en lugar de expresión condicional
             summary = final_data.get("summary") or final_data.get("content") or "N/A"
-            st.warning(f"⚠️ {summary}") if is_fallback else st.success(summary)
+            if is_fallback:
+                st.warning(f"⚠️ {summary}")
+            else:
+                st.success(summary)
             
             cp, ca = st.columns(2)
             with cp:
                 st.markdown("#### 🎯 Puntos Clave")
                 pts = final_data.get("key_points", []) or []
-                for i, p in enumerate(pts, 1): st.markdown(f"**{i}.** {p}") if pts else st.caption("ℹ️ Sin puntos clave")
+                if pts:
+                    for i, p in enumerate(pts, 1): st.markdown(f"**{i}.** {p}")
+                else:
+                    st.caption("ℹ️ Sin puntos clave disponibles")
             with ca:
                 st.markdown("#### ✅ Acciones Recomendadas")
                 acts = final_data.get("recommended_actions", []) or []
-                for i, a in enumerate(acts, 1): st.markdown(f"**{i}.** {a}") if acts else st.caption("ℹ️ Sin acciones")
+                if acts:
+                    for i, a in enumerate(acts, 1): st.markdown(f"**{i}.** {a}")
+                else:
+                    st.caption("ℹ️ Sin acciones recomendadas")
                 
-            if not is_fallback and final_data.get("validation_notes"): st.markdown(f"\n---\n#### 📋 Notas de Validación\n{final_data['validation_notes']}")
+            if not is_fallback and final_data.get("validation_notes"):
+                st.markdown("\n---\n#### 📋 Notas de Validación")
+                st.info(final_data["validation_notes"])
             if not is_fallback and final_data.get("sources"):
-                st.markdown("\n---\n#### 🔗 Fuentes")
-                for i, s in enumerate(final_data["sources"], 1): st.markdown(f"{i}. [{s}]({s})" if s.startswith("http") else f"{i}. {s}")
+                st.markdown("\n---\n#### 🔗 Fuentes Verificadas")
+                for i, s in enumerate(final_data["sources"], 1):
+                    st.markdown(f"{i}. [{s}]({s})" if s.startswith("http") else f"{i}. {s}")
 
         # =====================================================
         # PASO 4: CONTENIDO FORMATEADO
         # =====================================================
         st.markdown("---\n### 🎨 Paso 4: Contenido listo para usar")
-        fmt = st.radio("📋 Formato", ["📊 Email/Infografía", "💼 LinkedIn", "🌐 Web/HTML", "📝 Texto Plano"], horizontal=True, key="tab1_out_fmt")
+        fmt = st.radio("📋 Formato", [" Email/Infografía", "💼 LinkedIn", "🌐 Web/HTML", "📝 Texto Plano"], horizontal=True, key="tab1_out_fmt")
         
         def gen_fmt(d, f):
             s, pts, acts = d.get("summary",""), d.get("key_points",[]), d.get("recommended_actions",[])
-            if f=="📊 Email/Infografía": return f"🔹 {s}\n\n📌 Puntos:\n" + "\n".join(f"• {p}" for p in pts) + "\n\n🎯 Acciones:\n" + "\n".join(f"→ {a}" for a in acts)
-            elif f=="💼 LinkedIn": return f"{s[:150]}...\n\n🧵 Insights:\n" + "\n\n".join(f"{i+1}/ {p}" for i,p in enumerate(pts[:3])) + "\n\n💡 ¿Qué opinas?\n👇 Comenta.\n\n#B2B #Marketing #KaiBot"
-            elif f=="🌐 Web/HTML": return f"<article><h1>{s}</h1><h2>Puntos</h2><ul>{''.join(f'<li>{p}</li>' for p in pts)}</ul><h2>Acciones</h2><ol>{''.join(f'<li>{a}</li>' for a in acts)}</ol></article>"
+            if f=="📊 Email/Infografía": 
+                return f"🔹 {s}\n\n📌 Puntos:\n" + "\n".join(f"• {p}" for p in pts) + "\n\n🎯 Acciones:\n" + "\n".join(f"→ {a}" for a in acts)
+            elif f=="💼 LinkedIn": 
+                return f"{s[:150]}...\n\n🧵 Insights:\n" + "\n\n".join(f"{i+1}/ {p}" for i,p in enumerate(pts[:3])) + "\n\n ¿Qué opinas?\n👇 Comenta.\n\n#B2B #Marketing #KaiBot"
+            elif f=="🌐 Web/HTML": 
+                return f"<article><h1>{s}</h1><h2>Puntos</h2><ul>{''.join(f'<li>{p}</li>' for p in pts)}</ul><h2>Acciones</h2><ol>{''.join(f'<li>{a}</li>' for a in acts)}</ol></article>"
             return f"RESUMEN:\n{s}\n\nPUNTOS:\n" + "\n".join(f"{i}. {p}" for i,p in enumerate(pts,1)) + "\n\nACCIONES:\n" + "\n".join(f"{i}. {a}" for i,a in enumerate(acts,1))
             
         content = gen_fmt(final_data, fmt)
@@ -613,12 +638,11 @@ with tab1:
         st.download_button("⬇️ Descargar", content, file_name=f"kaibot_output_{datetime.now().strftime('%Y%m%d_%H%M')}.{ext}", mime="text/html" if ext=="html" else "text/plain", key="tab1_dl_fmt")
 
         # =====================================================
-        # PASO 5: INFOGRAFÍA (PILLOW INDEPENDIENTE)
+        # PASO 5: INFOGRAFÍA (PILLOW)
         # =====================================================
         st.markdown("---\n### 🖼️ Paso 5: Generar Infografía")
         try:
             from PIL import Image, ImageDraw, ImageFont
-            import textwrap
             from io import BytesIO
             PIL_OK = True
         except ImportError:
@@ -626,7 +650,7 @@ with tab1:
             st.error("📦 Falta `Pillow`. Ejecuta `pip install Pillow` para activar esta función.")
             
         if PIL_OK:
-            st_info = st.selectbox("🎨 Estilo", ["professional", "dark", "clean"], format_func=lambda x: {"professional":"🏢 Profesional", "dark":"🌑 Dark", "clean":"☁️ Minimalista"}[x], key="tab1_inf_style")
+            st_info = st.selectbox("🎨 Estilo", ["professional", "dark", "clean"], format_func=lambda x: {"professional":"🏢 Profesional", "dark":"🌑 Dark", "clean":"️ Minimalista"}[x], key="tab1_inf_style")
             if st.button("🖼️ Generar Infografía", type="primary", use_container_width=True, key="tab1_gen_inf"):
                 with st.spinner("🎨 Generando..."):
                     try:
@@ -657,14 +681,14 @@ with tab1:
                         draw.text((95,215), "KB", font=fS, fill=hdr)
                         
                         y = wrap(draw, final_data.get("summary","")[:300], 450, fB, W-160, txt)
-                        y = wrap(draw, "🔍 PUNTOS CLAVE", y+60, fS, W-160, acc)
+                        y = wrap(draw, " PUNTOS CLAVE", y+60, fS, W-160, acc)
                         for p in final_data.get("key_points",[])[:4]:
                             cp = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)[:200]
                             draw.rectangle([60,y-10,W-60,y+100], fill=light, outline=acc, width=4)
                             draw.text((90, y), f"{'✅' if 'validado' in p.lower() else '⚠️'} {cp}", font=fB, fill=txt)
                             y += 120
                             
-                        y = wrap(draw, "🎯 ACCIONES", y+40, fS, W-160, acc)
+                        y = wrap(draw, " ACCIONES", y+40, fS, W-160, acc)
                         for a in final_data.get("recommended_actions",[])[:3]:
                             y = wrap(draw, f"• {a[:180]}", y+20, fB, W-160, txt)
                             
@@ -693,7 +717,7 @@ with tab1:
                 c_obj = st.selectbox("🎯 Objetivo", ["Marketing B2B", "Social Media", "Blog Post", "Informe Interno", "Presentación"], index=0, key="tab1_obj_meta")
             with cm2:
                 c_src = st.checkbox("✅ Fuentes verificadas", value=not is_fallback and bool(final_data.get("sources")), disabled=is_fallback, key="tab1_src_meta")
-                c_notas = st.text_area("📝 Notas", value=f"Modo: {query_mode}", height=60, key="tab1_notas_meta")
+                c_notas = st.text_area(" Notas", value=f"Modo: {query_mode}", height=60, key="tab1_notas_meta")
                 
             if "edited_response" not in st.session_state: st.session_state.edited_response = json.dumps(final_data, indent=2, ensure_ascii=False)
             edited = st.text_area("JSON editable", value=st.session_state.edited_response, height=300, key="tab1_json_ed")
@@ -710,7 +734,9 @@ with tab1:
                         st.success(f"✅ Guardado: {fname}"); st.balloons()
                     except Exception as e: st.error(f"❌ Error: {e}")
             with cd:
-                st.download_button("⬇️ Descargar JSON", json.dumps(ed_data, indent=2, ensure_ascii=False), file_name=fname, mime="application/json", use_container_width=True, key="tab1_dl_json")
+                st.download_button("️ Descargar JSON", json.dumps(ed_data, indent=2, ensure_ascii=False), file_name=fname, mime="application/json", use_container_width=True, key="tab1_dl_json")
+
+
 
 # =====================================================
 # TAB 2 - MIS ARCHIVOS (Sin cambios, funciona perfecto)
