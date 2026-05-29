@@ -383,1012 +383,334 @@ with st.sidebar:
 
 tab1, tab2, tab3 = st.tabs(["🎯 Generar Contenido", "📁 Mis Archivos", "⚙️ Configuración Avanzada"])
 
+
 # =====================================================
-# TAB 1 - GENERAR CONTENIDO (CON DEBUG + FALLBACK ROBUSTO)
+# TAB 1 - GENERAR CONTENIDO (COMPLETO + MODO FLEXIBLE)
 # =====================================================
 
 with tab1:
     st.markdown("## 🎯 Generador de Contenidos con IA")
     st.markdown("**Análisis profesional en 3 pasos:** Configura → OpenAI analiza → Perplexity valida")
     
+    # =====================================================
     # PASO 1: CONFIGURACIÓN
+    # =====================================================
     st.markdown("### 📋 Paso 1: Configura tu análisis")
     
     folders, files = list_folders_and_files(client, bucket_name)
     file_names = [f["name"] for f in files if not f["name"].startswith(BUCKET_FOLDERS["prompts"])]
     
     col_files, col_chars = st.columns([3, 1])
-    
     with col_files:
-        selected_files = st.multiselect(
-            "📄 Documentos de contexto (opcional)",
-            options=file_names,
-            help="Selecciona archivos para basar el análisis. Déjalo vacío para consultas generales.",
-            key="tab1_select_files"
-        )
-    
+        selected_files = st.multiselect("📄 Documentos de contexto (opcional)", options=file_names, key="tab1_select_files")
     with col_chars:
-        max_chars = st.number_input(
-            "Límite caracteres",
-            min_value=2000,
-            max_value=50000,
-            value=15000,
-            step=1000,
-            disabled=len(selected_files) == 0,
-            key="tab1_max_chars"
-        )
+        max_chars = st.number_input("Límite caracteres", min_value=2000, max_value=50000, value=15000, step=1000, disabled=len(selected_files)==0, key="tab1_max_chars")
     
-    if selected_files:
-        st.info(f"📁 **Modo:** Análisis con {len(selected_files)} documento(s)")
-    else:
-        st.info("💭 **Modo:** Consulta general sin documentos")
-    
+    st.info(f"📁 **Modo:** Análisis con {len(selected_files)} documento(s)" if selected_files else "💭 **Modo:** Consulta general sin documentos")
     st.markdown("---")
     
-    # Consulta
-    st.markdown("**Tu consulta:**")
+    query_mode = st.radio("📝 Método de entrada", ["🔧 Flexible", "📝 Personalizada", "📋 Plantilla"], horizontal=True, key="tab1_query_mode")
     
-    query_mode = st.radio(
-        "Tipo de consulta",
-        ["📝 Personalizada", "📋 Plantilla"],
-        horizontal=True,
-        key="tab1_query_mode"
-    )
+    openai_prompt = ""
+    user_query = ""
     
-    if query_mode == "📝 Personalizada":
-        user_query = st.text_area(
-            "Escribe tu consulta",
-            placeholder="Ejemplo: Analiza las tendencias de marketing B2B industrial para 2026 y genera 3 recomendaciones estratégicas priorizadas",
-            height=150,
-            key="tab1_custom_query"
-        )
+    # 🟦 MODO FLEXIBLE
+    if query_mode == "🔧 Flexible":
+        st.markdown("*Configura parámetros clave. El sistema generará el prompt automáticamente sin depender de la pestaña avanzada.*")
+        col1, col2 = st.columns(2)
+        with col1:
+            role = st.selectbox("👤 Rol / Perfil", ["Responsable de Marketing B2B", "CEO / Director General", "Consultor Estratégico", "Content Manager", "Especialista en Ventas", "Inversor / VC", "Otro..."], key="tab1_role")
+            if role == "Otro...": role = st.text_input("Especificar rol exacto", key="tab1_role_custom")
+            context = st.text_area("📋 Contexto / Antecedentes", placeholder="Empresa, producto, campaña, situación actual, público objetivo...", height=100, key="tab1_context")
+        with col2:
+            output_format = st.selectbox("📤 Formato Output", ["Infografía / Visual", "Email corporativo", "Post LinkedIn / Thread", "Artículo Web / Blog", "Informe Ejecutivo", "Pitch comercial"], key="tab1_format")
+            sources = st.text_area("🔗 Fuentes externas (URLs, LinkedIn, datos, notas...)", placeholder="https://..., @perfil..., informe sectorial, notas internas...", height=100, key="tab1_sources")
+        
+        openai_prompt = f"Eres un experto estratégico actuando como {role}. Genera contenido de alto valor optimizado específicamente para formato: {output_format}. Responde EXCLUSIVAMENTE en formato JSON válido."
+        user_query = f"CONTEXTO:\n{context}\n\nFUENTES A CONSIDERAR:\n{sources}\n\nINSTRUCCIÓN:\nGenera un análisis en JSON con esta estructura exacta:\n{{\n  \"summary\": \"Resumen ejecutivo (máx. 3 líneas)\",\n  \"key_points\": [\"Insight 1\", \"Insight 2\", \"Insight 3\"],\n  \"recommended_actions\": [\"Acción 1 concreta\", \"Acción 2 con métrica\"],\n  \"topics_to_validate\": [\"Dato a verificar\", \"Tendencia a confirmar\"]\n}}\nEnfoque: Profesional, directo, orientado a resultados medibles."
+    
+    # 🟨 MODO PERSONALIZADO
+    elif query_mode == "📝 Personalizada":
+        user_query = st.text_area("Escribe tu consulta", placeholder="Ej: Analiza tendencias B2B para 2026...", height=150, key="tab1_custom_query")
+        use_adv = st.checkbox("⚙️ Usar prompts avanzados (Configuración → Tab 3)", value=True, key="tab1_use_adv")
+        if use_adv:
+            openai_prompt = st.session_state.get("tab3_openai_prompt", """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON...""")
+        else:
+            openai_prompt = """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON..."""
+            
+    # 🟥 MODO PLANTILLA
     else:
         templates = {
-            "Análisis Estratégico B2B": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos en marketing B2B industrial. Proporciona recomendaciones accionables con ROI estimado y plazos de implementación.",
-            "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los 3 puntos más relevantes para la toma de decisiones en generación de leads B2B. Incluye datos cuantificables y fuentes verificables.",
-            "Plan de Acción con KPIs": "Identifica los 5 puntos más importantes para mejorar la generación de leads B2B y crea un plan de acción detallado con KPIs, plazos y recursos necesarios.",
-            "Benchmark Competitivo": "Realiza un análisis competitivo del sector comparando estrategias de marketing digital B2B. Incluye datos de inversión publicitaria, canales utilizados y resultados obtenidos.",
-            "Contenido LinkedIn B2B": "Genera 5 ideas de contenido para LinkedIn enfocadas en thought leadership B2B industrial. Incluye temas, formatos y calendario para los próximos 3 meses.",
-            "Estrategia Ferias Industriales": "Analiza las mejores prácticas para participación en ferias B2B combinando estrategia digital pre-evento, durante y post-evento para maximizar ROI.",
-            "Tendencias LifeSciences 2026": "Analiza las últimas tendencias en marketing digital para empresas de LifeSciences y MedTech. Identifica oportunidades de posicionamiento y generación de leads.",
-            "Análisis DAFO Digital": "Realiza un análisis DAFO (Debilidades, Amenazas, Fortalezas, Oportunidades) enfocado en estrategia digital B2B. Valida cada punto con tendencias actuales."
+            "Análisis Estratégico B2B": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos en marketing B2B industrial...",
+            "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los 3 puntos más relevantes para la toma de decisiones...",
+            "Plan de Acción con KPIs": "Identifica los 5 puntos más importantes para mejorar la generación de leads B2B y crea un plan de acción...",
+            "Benchmark Competitivo": "Realiza un análisis competitivo del sector comparando estrategias de marketing digital B2B...",
+            "Contenido LinkedIn B2B": "Genera 5 ideas de contenido para LinkedIn enfocadas en thought leadership B2B industrial...",
+            "Estrategia Ferias Industriales": "Analiza las mejores prácticas para participación en ferias B2B combinando estrategia digital...",
+            "Tendencias LifeSciences 2026": "Analiza las últimas tendencias en marketing digital para empresas de LifeSciences y MedTech...",
+            "Análisis DAFO Digital": "Realiza un análisis DAFO enfocado en estrategia digital B2B. Valida cada punto con tendencias actuales."
         }
         
-        # 🔧 FIX: Estado reactivo para plantillas
-        if "tab1_last_template" not in st.session_state:
-            st.session_state.tab1_last_template = None
-        if "tab1_template_query" not in st.session_state:
-            st.session_state.tab1_template_query = list(templates.values())[0]
+        if "tab1_last_template" not in st.session_state: st.session_state.tab1_last_template = None
+        if "tab1_template_query" not in st.session_state: st.session_state.tab1_template_query = list(templates.values())[0]
         
-        selected_template = st.selectbox(
-            "Elige una plantilla",
-            list(templates.keys()),
-            key="tab1_template_select"
-        )
-        
+        selected_template = st.selectbox("Elige una plantilla", list(templates.keys()), key="tab1_template_select")
         if st.session_state.tab1_last_template != selected_template:
             st.session_state.tab1_template_query = templates[selected_template]
             st.session_state.tab1_last_template = selected_template
+            
+        user_query = st.text_area("Consulta (editable)", value=st.session_state.tab1_template_query, height=150, key="tab1_template_query")
+        if user_query != templates.get(selected_template): st.session_state.tab1_last_template = None
         
-        user_query = st.text_area(
-            "Consulta (editable)",
-            value=st.session_state.tab1_template_query,
-            height=150,
-            key="tab1_template_query"
-        )
-        
-        if user_query != templates.get(selected_template):
-            st.session_state.tab1_last_template = None
-    
-    # Modelos
+        use_adv = st.checkbox("⚙️ Usar prompts avanzados (Configuración → Tab 3)", value=True, key="tab1_use_adv_tpl")
+        openai_prompt = st.session_state.get("tab3_openai_prompt", """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON...""") if use_adv else """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON..."""
+
+    # =====================================================
+    # CONFIGURACIÓN DE MODELOS
+    # =====================================================
     st.markdown("---")
     st.markdown("**⚙️ Configuración de modelos:**")
-    
     col_openai, col_perplexity = st.columns(2)
-    
     with col_openai:
-        openai_models = {
-            "GPT-4o Mini (Recomendado)": "gpt-4o-mini",
-            "GPT-4o": "gpt-4o",
-            "GPT-4 Turbo": "gpt-4-turbo-preview"
-        }
+        openai_models = {"GPT-4o Mini (Recomendado)": "gpt-4o-mini", "GPT-4o": "gpt-4o", "GPT-4 Turbo": "gpt-4-turbo-preview"}
         selected_openai = st.selectbox("🤖 Modelo OpenAI", list(openai_models.keys()), index=0, key="tab1_openai_model")
         openai_model = openai_models[selected_openai]
-    
     with col_perplexity:
-        perplexity_models = {
-            "Sonar (Recomendado)": "sonar",
-            "Sonar Pro": "sonar-pro",
-            "Llama 3.1 70B": "llama-3.1-70b-instruct"
-        }
+        perplexity_models = {"Sonar (Recomendado)": "sonar", "Sonar Pro": "sonar-pro", "Llama 3.1 70B": "llama-3.1-70b-instruct"}
         selected_perplexity = st.selectbox("🔍 Modelo Perplexity", list(perplexity_models.keys()), index=0, key="tab1_pplx_model")
         perplexity_model = perplexity_models[selected_perplexity]
     
-    st.markdown("---")
-    
+    st.info("💡 *Perplexity validará automáticamente la respuesta, independientemente del modo elegido.*")
+
+    # =====================================================
     # PASO 2: EJECUTAR
+    # =====================================================
     st.markdown("### 🚀 Paso 2: Generar contenido")
-    
     col_gen, col_clear = st.columns([4, 1])
-    
     with col_gen:
-        generate_content = st.button(
-            "▶️ Generar Contenido con IA",
-            type="primary",
-            use_container_width=True,
-            disabled=not user_query.strip(),
-            key="tab1_generate_btn"
-        )
-    
+        generate_content = st.button("▶️ Generar Contenido con IA", type="primary", use_container_width=True, disabled=not user_query.strip(), key="tab1_generate_btn")
     with col_clear:
         if st.button("🗑️ Limpiar", use_container_width=True, key="tab1_clear_btn"):
             for key in ["openai_response", "perplexity_response", "edited_response"]:
-                if key in st.session_state:
-                    del st.session_state[key]
+                st.session_state.pop(key, None)
             st.rerun()
     
     if generate_content:
         context = ""
-        if selected_files:
-            context = load_selected_context(client, bucket_name, selected_files, max_chars)
+        if selected_files: context = load_selected_context(client, bucket_name, selected_files, max_chars)
         
-        # OpenAI
+        # 🤖 OPENAI
         with st.spinner(f"🤖 {selected_openai} analizando..."):
             try:
-                openai_prompt = """Eres un analista estratégico experto en contenidos B2B.
-
-Analiza y genera insights accionables en formato JSON:
-{
-  "summary": "Resumen ejecutivo (2-3 líneas con valor estratégico)",
-  "key_points": ["Insight 1 con datos", "Insight 2 con oportunidad", "Insight 3 con riesgo"],
-  "recommended_actions": ["Acción 1 con plazo y ROI", "Acción 2 medible"],
-  "topics_to_validate": ["Tema 1 a validar online", "Tema 2 a verificar"]
-}
-
-Enfoque: Resultados medibles, oportunidades concretas, ROI.
-IMPORTANTE: Responde SOLO con JSON válido, sin texto adicional."""
-
-                user_message = f"CONSULTA:\n{user_query}"
-                if context:
-                    user_message += f"\n\nCONTEXTO:\n{context}"
-                
+                user_message = f"CONSULTA:\n{user_query}" + (f"\n\nCONTEXTO ADICIONAL:\n{context}" if context else "")
                 response = st.session_state.openai.chat.completions.create(
-                    model=openai_model,
-                    messages=[
-                        {"role": "system", "content": openai_prompt},
-                        {"role": "user", "content": user_message}
-                    ],
+                    model=openai_model, 
+                    messages=[{"role": "system", "content": openai_prompt}, {"role": "user", "content": user_message}], 
                     response_format={"type": "json_object"}
                 )
+                raw = response.choices[0].message.content.strip()
+                if "```json" in raw: raw = raw.split("```json")[1].split("```")[0].strip()
+                elif "```" in raw: raw = raw.split("```")[1].split("```")[0].strip()
                 
-                # 🔧 FIX: Parseo robusto de respuesta OpenAI
-                raw_content = response.choices[0].message.content.strip()
-                
-                # Limpiar markdown si existe
-                if "```json" in raw_content:
-                    raw_content = raw_content.split("```json")[1].split("```")[0].strip()
-                elif "```" in raw_content:
-                    raw_content = raw_content.split("```")[1].split("```")[0].strip()
-                
-                openai_data = json.loads(raw_content)
-                
-                # 🔧 FIX: Validar y normalizar estructura
-                if not isinstance(openai_data, dict):
-                    raise ValueError("La respuesta no es un objeto JSON válido")
-                
-                # Asegurar campos mínimos
-                if "summary" not in openai_data:
-                    openai_data["summary"] = openai_data.get("content") or openai_data.get("response") or "Análisis generado exitosamente."
-                if "key_points" not in openai_data:
-                    openai_data["key_points"] = openai_data.get("insights") or openai_data.get("points") or []
-                if "recommended_actions" not in openai_data:
-                    openai_data["recommended_actions"] = openai_data.get("actions") or openai_data.get("next_steps") or []
-                
-                openai_data["metadata"] = {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "agent": "openai",
-                    "model": openai_model,
-                    "query": user_query,
-                    "mode": "with_context" if selected_files else "general",
-                    "raw_response_ok": True
-                }
+                openai_data = json.loads(raw)
+                # Normalizar campos
+                openai_data["summary"] = openai_data.get("summary") or openai_data.get("content") or "Análisis generado."
+                openai_data["key_points"] = openai_data.get("key_points") or openai_data.get("insights") or []
+                openai_data["recommended_actions"] = openai_data.get("recommended_actions") or openai_data.get("actions") or []
+                openai_data["metadata"] = {"timestamp": datetime.utcnow().isoformat(), "agent": "openai", "model": openai_model, "query": user_query, "mode": query_mode}
                 st.session_state.openai_response = openai_data
-                
             except Exception as e:
                 st.error(f"❌ Error en OpenAI: {str(e)}")
-                # 🔧 FIX: Fallback incluso si OpenAI falla
-                st.session_state.openai_response = {
-                    "summary": f"Error al generar análisis: {str(e)[:200]}",
-                    "key_points": [],
-                    "recommended_actions": [],
-                    "metadata": {
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "agent": "openai_error",
-                        "model": openai_model,
-                        "query": user_query,
-                        "error": str(e)
-                    }
-                }
                 st.stop()
         
-        # Perplexity
+        # 🔍 PERPLEXITY
         with st.spinner(f"🔍 {selected_perplexity} validando..."):
             try:
-                perplexity_client = OpenAI(
-                    api_key=st.session_state.perplexity_key,
-                    base_url="https://api.perplexity.ai"
-                )
+                pplx = OpenAI(api_key=st.session_state.perplexity_key, base_url="https://api.perplexity.ai")
+                pplx_sys = """Valida y enriquece análisis con fuentes confiables actuales. Responde en JSON: {"summary": "...", "key_points": [...], "recommended_actions": [...], "validation_notes": "...", "sources": [...], "confidence_level": "alto"}"""
+                pplx_msg = f"ANÁLISIS A VALIDAR:\n{json.dumps(st.session_state.openai_response, indent=2, ensure_ascii=False)}\n\nCONSULTA ORIGINAL: {user_query}"
+                res = pplx.chat.completions.create(model=perplexity_model, messages=[{"role": "system", "content": pplx_sys}, {"role": "user", "content": pplx_msg}])
                 
-                perplexity_prompt = """Valida y enriquece análisis con fuentes confiables actuales.
-
-FUENTES PRIORITARIAS: Gartner, McKinsey, Forrester, medios B2B especializados, datos verificables.
-
-Responde en JSON:
-{
-  "summary": "Resumen validado con datos actuales",
-  "key_points": ["Punto 1 validado con fuente", "Punto 2 enriquecido", "Punto 3 con contexto"],
-  "recommended_actions": ["Acción 1 con best practice", "Acción 2 con ROI sector"],
-  "validation_notes": "Qué se validó y con qué fuentes",
-  "sources": ["URL (Título - Fecha)", "URL (Título - Fecha)"],
-  "confidence_level": "alto"
-}"""
+                clean = res.choices[0].message.content.strip()
+                if "```json" in clean: clean = clean.split("```json")[1].split("```")[0].strip()
+                elif "```" in clean: clean = clean.split("```")[1].split("```")[0].strip()
                 
-                validation_prompt = f"""ANÁLISIS A VALIDAR:
-{json.dumps(st.session_state.openai_response, indent=2, ensure_ascii=False)}
-
-CONSULTA ORIGINAL: {user_query}
-
-Valida con fuentes actuales online y proporciona URLs verificables."""
-                
-                response = perplexity_client.chat.completions.create(
-                    model=perplexity_model,
-                    messages=[
-                        {"role": "system", "content": perplexity_prompt},
-                        {"role": "user", "content": validation_prompt}
-                    ]
-                )
-                
-                response_text = response.choices[0].message.content
-                clean_text = response_text.strip()
-                
-                if "```json" in clean_text:
-                    clean_text = clean_text.split("```json")[1].split("```")[0].strip()
-                elif "```" in clean_text:
-                    clean_text = clean_text.split("```")[1].split("```")[0].strip()
-                
-                try:
-                    validated_json = json.loads(clean_text)
+                try: validated = json.loads(clean)
                 except:
-                    json_match = re.search(r'\{.*\}', clean_text, re.DOTALL)
-                    if json_match:
-                        validated_json = json.loads(json_match.group())
-                    else:
-                        raise ValueError("No se pudo extraer JSON válido")
+                    m = re.search(r'\{.*\}', clean, re.DOTALL)
+                    validated = json.loads(m.group()) if m else {}
                 
-                validated_json["metadata"] = {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "agent": "perplexity",
-                    "model": perplexity_model,
-                    "original_query": user_query,
-                    "openai_model": openai_model
-                }
-                
-                st.session_state.perplexity_response = validated_json
+                validated["metadata"] = {"timestamp": datetime.utcnow().isoformat(), "agent": "perplexity", "model": perplexity_model, "original_query": user_query, "openai_model": openai_model}
+                st.session_state.perplexity_response = validated
                 st.success("✅ Contenido generado y validado")
                 st.rerun()
-                
             except Exception as e:
-                st.error(f"❌ Error en Perplexity: {str(e)[:200]}")
+                st.error(f"❌ Error en Perplexity: {str(e)[:150]}")
                 if "openai_response" in st.session_state:
                     st.warning("⚠️ Usando solo OpenAI como fallback")
-                    # 🔧 FIX: Fallback robusto que PRESERVA el contenido de OpenAI
-                    fallback_data = {}
-                    original = st.session_state.openai_response
-                    
-                    # Copiar campos de contenido con múltiples fallbacks
-                    fallback_data["summary"] = (
-                        original.get("summary") or 
-                        original.get("content") or 
-                        original.get("response") or 
-                        original.get("text") or
-                        str(original) if isinstance(original, str) else
-                        "Contenido generado por OpenAI. Perplexity no pudo validar."
-                    )
-                    
-                    fallback_data["key_points"] = (
-                        original.get("key_points") or 
-                        original.get("insights") or 
-                        original.get("points") or 
-                        original.get("findings") or
-                        []
-                    )
-                    
-                    fallback_data["recommended_actions"] = (
-                        original.get("recommended_actions") or 
-                        original.get("actions") or 
-                        original.get("next_steps") or 
-                        original.get("recommendations") or
-                        []
-                    )
-                    
-                    # Copiar otros campos útiles
-                    for field in ["topics_to_validate", "analysis", "conclusions", "data"]:
-                        if field in original and field not in fallback_data:
-                            fallback_data[field] = original[field]
-                    
-                    # Metadata de fallback
-                    fallback_data["metadata"] = {
-                        **(original.get("metadata", {})),
-                        "agent": "openai_fallback",
-                        "fallback_reason": str(e)[:150],
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                    
-                    # Asegurar que confidence_level exista para la UI
-                    fallback_data["confidence_level"] = "bajo"
-                    
-                    st.session_state.perplexity_response = fallback_data
+                    fb = st.session_state.openai_response.copy()
+                    fb["metadata"]["agent"] = "openai_fallback"
+                    fb["metadata"]["fallback_reason"] = str(e)[:100]
+                    fb["confidence_level"] = "bajo"
+                    for f in ["validation_notes", "sources"]:
+                        fb[f] = fb.get(f, "" if f=="validation_notes" else [])
+                    st.session_state.perplexity_response = fb
                     st.rerun()
-    
-    # 🔧 DEBUG: Toggle para ver respuesta cruda (descomentar para debug)
-    # if st.checkbox("🔍 Debug: Ver respuesta OpenAI cruda", key="debug_toggle"):
-    #     with st.expander("📦 openai_response completo", expanded=True):
-    #         st.json(st.session_state.get("openai_response", {}))
-    #     with st.expander("📦 perplexity_response completo", expanded=True):
-    #         st.json(st.session_state.get("perplexity_response", {}))
-    
+
+    # =====================================================
     # PASO 3: RESULTADOS
+    # =====================================================
     if "perplexity_response" in st.session_state:
         st.markdown("---")
         st.markdown("### 📊 Paso 3: Resultado validado")
-        
         final_data = st.session_state.perplexity_response
-        metadata = final_data.get("metadata", {})
-        
-        # 🔧 FIX: Detectar fallback de forma robusta
-        is_fallback = metadata.get("agent") in ["openai", "openai_fallback", "openai_error"]
+        meta = final_data.get("metadata", {})
+        is_fallback = meta.get("agent") in ["openai", "openai_fallback", "openai_error"]
         
         with st.expander("👁️ Vista Previa del Contenido", expanded=True):
-            col_badge1, col_badge2, col_badge3 = st.columns(3)
+            c1, c2, c3 = st.columns(3)
+            with c1: st.markdown(f"**🤖 OpenAI:** {meta.get('openai_model') or meta.get('model', 'N/A')}")
+            with c2: st.markdown("**🔍 Perplexity:** ⚠️ Fallback" if is_fallback else f"**🔍 Perplexity:** {meta.get('model', 'N/A')}")
+            with c3: 
+                conf = "bajo" if is_fallback else final_data.get("confidence_level", "medio").lower()
+                st.markdown(f"**{'🔴' if conf=='bajo' else '🟡' if conf=='medio' else '🟢'} Confianza:** {conf.upper()}")
             
-            with col_badge1:
-                openai_model_display = metadata.get("openai_model") or metadata.get("model", "N/A")
-                st.markdown(f"**🤖 OpenAI:** {openai_model_display}")
+            st.markdown("---\n#### 📝 Resumen Ejecutivo")
+            summary = final_data.get("summary") or final_data.get("content") or "N/A"
+            st.warning(f"⚠️ {summary}") if is_fallback else st.success(summary)
             
-            with col_badge2:
-                if is_fallback:
-                    reason = metadata.get("fallback_reason", "Error de validación")
-                    st.markdown(f"**🔍 Perplexity:** ⚠️ Fallback\n\n<small>{reason[:50]}...</small>")
-                else:
-                    st.markdown(f"**🔍 Perplexity:** {metadata.get('model', 'N/A')}")
-            
-            with col_badge3:
-                if is_fallback:
-                    confidence, emoji, label = "bajo", "🔴", "BAJO ⚠️"
-                else:
-                    conf = final_data.get("confidence_level", "medio").lower()
-                    emoji = "🟢" if conf == "alto" else "🟡" if conf == "medio" else "🔴"
-                    confidence, label = conf, conf.upper()
-                st.markdown(f"**{emoji} Confianza:** {label}")
-            
-            st.markdown("---")
-            st.markdown("#### 📝 Resumen Ejecutivo")
-            
-            # 🔧 FIX: Obtener summary con fallbacks agresivos
-            summary = final_data.get("summary")
-            if not summary or summary in ["N/A", "", "None"]:
-                # Intentar otros campos
-                for field in ["content", "response", "text", "analysis", "conclusion"]:
-                    if final_data.get(field):
-                        summary = final_data[field]
-                        break
-                # Último recurso: convertir a string
-                if not summary:
-                    summary = str(final_data)[:300] + "..." if len(str(final_data)) > 300 else str(final_data)
-            
-            if is_fallback:
-                st.warning(f"⚠️ {summary}")
-            else:
-                st.success(summary)
-            
-            col_points, col_actions = st.columns(2)
-            
-            with col_points:
+            cp, ca = st.columns(2)
+            with cp:
                 st.markdown("#### 🎯 Puntos Clave")
-                points = final_data.get("key_points", [])
-                # Fallbacks para puntos
-                if not points:
-                    for field in ["insights", "points", "findings", "key_insights"]:
-                        if final_data.get(field):
-                            points = final_data[field]
-                            break
-                if points and isinstance(points, list):
-                    for i, point in enumerate(points, 1):
-                        st.markdown(f"**{i}.** {point}")
-                elif points and isinstance(points, str):
-                    st.markdown(f"• {points}")
-                else:
-                    st.caption("ℹ️ Sin puntos clave disponibles")
-            
-            with col_actions:
+                pts = final_data.get("key_points", []) or []
+                for i, p in enumerate(pts, 1): st.markdown(f"**{i}.** {p}") if pts else st.caption("ℹ️ Sin puntos clave")
+            with ca:
                 st.markdown("#### ✅ Acciones Recomendadas")
-                actions = final_data.get("recommended_actions", [])
-                # Fallbacks para acciones
-                if not actions:
-                    for field in ["actions", "next_steps", "recommendations", "action_items"]:
-                        if final_data.get(field):
-                            actions = final_data[field]
-                            break
-                if actions and isinstance(actions, list):
-                    for i, action in enumerate(actions, 1):
-                        st.markdown(f"**{i}.** {action}")
-                elif actions and isinstance(actions, str):
-                    st.markdown(f"• {actions}")
-                else:
-                    st.caption("ℹ️ Sin acciones recomendadas")
-            
-            # Notas de validación (solo si no es fallback)
-            if not is_fallback and final_data.get("validation_notes"):
-                st.markdown("---")
-                st.markdown("#### 📋 Notas de Validación")
-                st.info(final_data["validation_notes"])
-            
-            # Fuentes (solo si no es fallback)
+                acts = final_data.get("recommended_actions", []) or []
+                for i, a in enumerate(acts, 1): st.markdown(f"**{i}.** {a}") if acts else st.caption("ℹ️ Sin acciones")
+                
+            if not is_fallback and final_data.get("validation_notes"): st.markdown(f"\n---\n#### 📋 Notas de Validación\n{final_data['validation_notes']}")
             if not is_fallback and final_data.get("sources"):
-                st.markdown("---")
-                st.markdown("#### 🔗 Fuentes Verificadas")
-                for i, source in enumerate(final_data["sources"], 1):
-                    if isinstance(source, str) and source.startswith("http"):
-                        st.markdown(f"{i}. [{source}]({source})")
-                    else:
-                        st.markdown(f"{i}. {source}")
-        
-        # Comparador (solo si hay respuesta real de Perplexity)
-        if not is_fallback and "openai_response" in st.session_state:
-            with st.expander("🔄 Comparar OpenAI vs Perplexity"):
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.markdown("**🔵 OpenAI (Original)**")
-                    st.json(st.session_state.openai_response)
-                with col_b:
-                    st.markdown("**🟣 Perplexity (Validado)**")
-                    st.json(final_data)
-        elif is_fallback:
-            st.info("💡 *Mostrando respuesta de OpenAI. Perplexity no pudo validar por error de conexión, formato o límite de tasa.*")
-            with st.expander("🔍 Ver respuesta OpenAI completa"):
-                st.json(st.session_state.get("openai_response", {}))
-        
-        st.markdown("---")
-        st.markdown("### 💾 Guardar contenido")
-        
-        with st.expander("📋 Configurar metadatos", expanded=True):
-            col_m1, col_m2 = st.columns(2)
-            
-            with col_m1:
-                content_tipo = st.text_input(
-                    "🏷️ Tipo",
-                    value="Análisis IA Validado" if not is_fallback else "Análisis IA (Sin validar)",
-                    key="tab1_tipo_meta"
-                )
-                
-                content_objetivo = st.selectbox(
-                    "🎯 Objetivo",
-                    ["Marketing B2B", "Social Media", "Blog Post", "Informe Interno", 
-                     "Presentación", "White Paper", "Publicación Científica"],
-                    index=0,
-                    key="tab1_objetivo_meta"
-                )
-            
-            with col_m2:
-                has_sources = not is_fallback and bool(final_data.get("sources", []))
-                content_fuentes = st.checkbox(
-                    "✅ Fuentes verificadas",
-                    value=has_sources,
-                    disabled=is_fallback,
-                    key="tab1_fuentes_meta"
-                )
-                
-                content_notas = st.text_area(
-                    "📝 Notas",
-                    value=f"Consulta: {user_query[:100]}..." if len(user_query) > 100 else f"Consulta: {user_query}",
-                    height=80,
-                    key="tab1_notas_meta"
-                )
-        
-        with st.expander("✏️ Editar JSON (avanzado)"):
-            if "edited_response" not in st.session_state:
-                st.session_state.edited_response = json.dumps(final_data, indent=2, ensure_ascii=False)
-            
-            edited_json = st.text_area(
-                "JSON editable",
-                value=st.session_state.edited_response,
-                height=400,
-                key="tab1_json_editor"
-            )
-            
-            try:
-                edited_data = json.loads(edited_json)
-                st.success("✅ JSON válido")
-                json_is_valid = True
-            except:
-                st.error("❌ JSON inválido")
-                json_is_valid = False
-                edited_data = final_data
-        
-        if "edited_response" not in st.session_state:
-            edited_data = final_data
-            json_is_valid = True
-        
-        preview_filename = generate_smart_filename(edited_data)
-        st.info(f"📝 **Nombre de archivo:** `{preview_filename}`")
-        
-        col_save, col_download = st.columns(2)
-        
-        with col_save:
-            if st.button("💾 Guardar en Cloud", type="primary", use_container_width=True, 
-                        disabled=not json_is_valid, key="tab1_save_btn"):
-                try:
-                    filename = generate_smart_filename(edited_data)
-                    analysis_metadata = {
-                        "tipo": content_tipo,
-                        "objetivo": content_objetivo,
-                        "fuentes_fiables": content_fuentes and not is_fallback,
-                        "notas": content_notas + (" [FALLBACK]" if is_fallback else "")
-                    }
-                    
-                    save_analysis_with_metadata(
-                        client, bucket_name,
-                        BUCKET_FOLDERS["validados"],
-                        filename, edited_data,
-                        analysis_metadata
-                    )
-                    
-                    st.success(f"✅ Guardado: {filename}")
-                    st.balloons()
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
-        
-        with col_download:
-            st.download_button(
-                "⬇️ Descargar JSON",
-                json.dumps(edited_data, indent=2, ensure_ascii=False),
-                file_name=preview_filename,
-                mime="application/json",
-                use_container_width=True,
-                key="tab1_download_btn"
-            )
-            
-        # =====================================================
-        # PASO 4: REPRESENTACIÓN VISUAL DEL CONTENIDO
-        # =====================================================
-        
-        st.markdown("---")
-        st.markdown("### 🎨 Paso 4: Contenido listo para usar")
-        st.markdown("*Transforma el análisis en formatos listos para publicar*")
-        
-        # Selector de formato de salida
-        output_format = st.radio(
-            "📋 Selecciona el formato de salida",
-            ["📊 Infografía (Email)", "💼 Post LinkedIn", "🌐 Artículo Web", "📝 Texto Plano"],
-            horizontal=True,
-            key="tab1_output_format"
-        )
-        
-        # 🔧 Función helper para generar contenido formateado
-        def generate_formatted_content(data: dict, format_type: str, query: str) -> str:
-            """Genera contenido formateado según el tipo de salida"""
-            summary = data.get("summary", "")
-            points = data.get("key_points", [])
-            actions = data.get("recommended_actions", [])
-            sources = data.get("sources", [])
-            
-            if format_type == "📊 Infografía (Email)":
-                # Formato compacto para email con infografía adjunta
-                content = f"""🔹 *{summary}*
-
-📌 Puntos clave:
-"""
-                for i, p in enumerate(points, 1):
-                    # Limpiar prefijos como "Validado:" para formato visual
-                    clean_p = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)
-                    content += f"• {clean_p}\n"
-                
-                content += f"""
-🎯 Acciones recomendadas:
-"""
-                for i, a in enumerate(actions, 1):
-                    content += f"→ {a}\n"
-                
-                if sources:
-                    content += f"""
-🔗 Fuentes: {len(sources)} referencias verificadas
-"""
-                content += f"\n---\n*Generado con KaiBot IA | {datetime.now().strftime('%d/%m/%Y')}*"
-                return content.strip()
-            
-            elif format_type == "💼 Post LinkedIn":
-                # Formato optimizado para LinkedIn: hook + valor + CTA + hashtags
-                hook = summary[:150] + "..." if len(summary) > 150 else summary
-                
-                content = f"""{hook}
-
-🧵 Hilo con insights clave:
-
-"""
-                for i, p in enumerate(points[:3], 1):  # Máximo 3 puntos para LinkedIn
-                    clean_p = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)
-                    content += f"{i}/ {clean_p}\n\n"
-                
-                content += """💡 ¿Qué opinas sobre estas tendencias? 
-👇 Déjame tu perspectiva en comentarios.
-
-#B2B #MarketingDigital #Innovación #KaiBot"""
-                return content.strip()
-            
-            elif format_type == "🌐 Artículo Web":
-                # Formato HTML básico para web/blog
-                content = f"""<article>
-  <h1>{summary}</h1>
-  
-  <section>
-    <h2>🔍 Puntos Clave</h2>
-    <ul>
-"""
-                for p in points:
-                    clean_p = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)
-                    content += f"      <li>{clean_p}</li>\n"
-                
-                content += """    </ul>
-  </section>
-  
-  <section>
-    <h2>✅ Acciones Recomendadas</h2>
-    <ol>
-"""
-                for a in actions:
-                    content += f"      <li>{a}</li>\n"
-                
-                if sources:
-                    content += """    </ol>
-  </section>
-  
-  <section>
-    <h2>📚 Fuentes</h2>
-    <ul>
-"""
-                    for s in sources:
-                        if s.startswith("http"):
-                            url = s.split(" ")[0]
-                            title = s.split("(", 1)[1].rstrip(")") if "(" in s else "Fuente"
-                            content += f'      <li><a href="{url}" target="_blank">{title}</a></li>\n'
-                        else:
-                            content += f"      <li>{s}</li>\n"
-                
-                content += f"""    </ul>
-    <p><small>Generado con KaiBot IA | {datetime.now().strftime('%d/%m/%Y')}</small></p>
-  </section>
-</article>"""
-                return content.strip()
-            
-            else:  # Texto Plano
-                content = f"""RESUMEN EJECUTIVO
-{'='*50}
-{summary}
-
-PUNTOS CLAVE
-{'-'*50}
-"""
-                for i, p in enumerate(points, 1):
-                    content += f"{i}. {p}\n"
-                
-                content += f"""
-ACCIONES RECOMENDADAS
-{'-'*50}
-"""
-                for i, a in enumerate(actions, 1):
-                    content += f"{i}. {a}\n"
-                
-                if sources:
-                    content += f"""
-FUENTES VERIFICADAS
-{'-'*50}
-"""
-                    for i, s in enumerate(sources, 1):
-                        content += f"{i}. {s}\n"
-                
-                content += f"\n---\nGenerado con KaiBot IA | {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-                return content.strip()
-        
-        # Generar y mostrar contenido formateado
-        formatted_content = generate_formatted_content(final_data, output_format, user_query)
-        
-        # Preview visual con styling
-        with st.expander("👁️ Vista previa del contenido formateado", expanded=True):
-            if output_format == "🌐 Artículo Web":
-                st.markdown(formatted_content, unsafe_allow_html=True)
-            else:
-                st.markdown(f"```text\n{formatted_content}\n```")
-        
-        # Botones de acción
-        col_copy, col_download, col_regenerate = st.columns([2, 2, 1])
-        
-        with col_copy:
-            # 🔧 Streamlit no tiene copy-to-clipboard nativo, usamos workaround con st.code + instrucciones
-            st.code(formatted_content, language="text" if output_format != "🌐 Artículo Web" else "html")
-            st.caption("💡 Selecciona el texto arriba y usa Ctrl+C / Cmd+C para copiar")
-        
-        with col_download:
-            # Determinar extensión según formato
-            ext_map = {
-                "📊 Infografía (Email)": "txt",
-                "💼 Post LinkedIn": "txt", 
-                "🌐 Artículo Web": "html",
-                "📝 Texto Plano": "txt"
-            }
-            ext = ext_map.get(output_format, "txt")
-            filename_base = preview_filename.replace(".json", f"_{output_format.split()[1].lower()}.{ext}")
-            
-            st.download_button(
-                "⬇️ Descargar formato",
-                formatted_content,
-                file_name=filename_base,
-                mime="text/html" if ext == "html" else "text/plain",
-                use_container_width=True,
-                key="tab1_download_formatted"
-            )
-        
-        with col_regenerate:
-            if st.button("🔄 Regenerar", use_container_width=True, key="tab1_regenerate_format"):
-                # Forzar regeneración limpiando cache del formato
-                if "tab1_formatted_cache" in st.session_state:
-                    del st.session_state.tab1_formatted_cache
-                st.rerun()
-        
-        # 💡 Tips contextuales según formato
-        with st.expander("💡 Tips para este formato", expanded=False):
-            if output_format == "📊 Infografía (Email)":
-                st.markdown("""
-                - ✂️ **Mantén el texto breve**: Las infografías funcionan mejor con frases de <15 palabras
-                - 🎨 **Usa iconos**: Los emojis o iconos ayudan a escanear rápido el contenido
-                - 📱 **Test mobile**: El 60% de emails se abren en móvil, verifica legibilidad
-                - 🔗 **Enlace único**: Incluye solo 1 CTA principal para maximizar clicks
-                """)
-            elif output_format == "💼 Post LinkedIn":
-                st.markdown("""
-                - 🪝 **Hook en primera línea**: Las primeras 2 frases determinan si se expande el post
-                - 🧵 **Hilos > Posts largos**: Divide insights complejos en 3-5 posts conectados
-                - 📊 **Incluye datos**: Los posts con cifras tienen 3x más engagement
-                - ⏰ **Mejor horario**: Martes-Jueves 8-10am o 5-7pm para audiencia B2B
-                """)
-            elif output_format == "🌐 Artículo Web":
-                st.markdown("""
-                - 🔍 **SEO básico**: Incluye la keyword principal en H1 y primeros 100 caracteres
-                - 📐 **Longitud ideal**: 800-1500 palabras para artículos B2B de autoridad
-                - 🔗 **Enlaces internos**: Enlaza a 2-3 recursos propios para mejorar SEO y retención
-                - 🖼️ **Imágenes**: Añade 1 imagen cada 300 palabras para reducir bounce rate
-                """)
-            else:
-                st.markdown("""
-                - 📋 **Copiar y pegar**: Listo para usar en documentos, presentaciones o briefings
-                - ✏️ **Editable**: Puedes modificar cualquier sección antes de usar
-                - 🔄 **Versiones**: Genera múltiples formatos desde el mismo análisis
-                """)
-        
-        # 🎯 Bonus: Generar variantes automáticas (opcional)
-        if st.checkbox("✨ Generar variantes adicionales", key="tab1_generate_variants"):
-            st.markdown("#### 🎲 Variantes automáticas")
-            
-            variants = {
-                "🎯 Versión Ejecutiva (1-línea)": f"💡 {summary[:200]}{'...' if len(summary) > 200 else ''}",
-                "📱 Versión Mobile (<280 chars)": f"{summary[:250]}{'...' if len(summary) > 250 else ''} #B2B #KaiBot",
-                "🗣️ Versión Pitch (30 seg)": f"¿Sabías que {summary.lower().replace('.', ',')[:180]}? Descubre más con KaiBot."
-            }
-            
-            for label, content in variants.items():
-                with st.container():
-                    st.markdown(f"**{label}**")
-                    st.code(content, language="text")
-                    st.caption(f"Longitud: {len(content)} caracteres")
-
+                st.markdown("\n---\n#### 🔗 Fuentes")
+                for i, s in enumerate(final_data["sources"], 1): st.markdown(f"{i}. [{s}]({s})" if s.startswith("http") else f"{i}. {s}")
 
         # =====================================================
-        # PASO 5: GENERADOR DE INFOGRAFÍAS (INDEPENDIENTE - PILLOW)
+        # PASO 4: CONTENIDO FORMATEADO
         # =====================================================
+        st.markdown("---\n### 🎨 Paso 4: Contenido listo para usar")
+        fmt = st.radio("📋 Formato", ["📊 Email/Infografía", "💼 LinkedIn", "🌐 Web/HTML", "📝 Texto Plano"], horizontal=True, key="tab1_out_fmt")
         
-        st.markdown("---")
-        st.markdown("### 🎨 Paso 5: Crear Infografía Visual")
-        st.markdown("*Genera una imagen profesional lista para usar, sin APIs externas ni costes adicionales*")
-        
-        # Importación local para evitar errores si falta la librería
+        def gen_fmt(d, f):
+            s, pts, acts = d.get("summary",""), d.get("key_points",[]), d.get("recommended_actions",[])
+            if f=="📊 Email/Infografía": return f"🔹 {s}\n\n📌 Puntos:\n" + "\n".join(f"• {p}" for p in pts) + "\n\n🎯 Acciones:\n" + "\n".join(f"→ {a}" for a in acts)
+            elif f=="💼 LinkedIn": return f"{s[:150]}...\n\n🧵 Insights:\n" + "\n\n".join(f"{i+1}/ {p}" for i,p in enumerate(pts[:3])) + "\n\n💡 ¿Qué opinas?\n👇 Comenta.\n\n#B2B #Marketing #KaiBot"
+            elif f=="🌐 Web/HTML": return f"<article><h1>{s}</h1><h2>Puntos</h2><ul>{''.join(f'<li>{p}</li>' for p in pts)}</ul><h2>Acciones</h2><ol>{''.join(f'<li>{a}</li>' for a in acts)}</ol></article>"
+            return f"RESUMEN:\n{s}\n\nPUNTOS:\n" + "\n".join(f"{i}. {p}" for i,p in enumerate(pts,1)) + "\n\nACCIONES:\n" + "\n".join(f"{i}. {a}" for i,a in enumerate(acts,1))
+            
+        content = gen_fmt(final_data, fmt)
+        st.code(content, language="text" if fmt!="🌐 Web/HTML" else "html")
+        ext = "html" if fmt=="🌐 Web/HTML" else "txt"
+        st.download_button("⬇️ Descargar", content, file_name=f"kaibot_output_{datetime.now().strftime('%Y%m%d_%H%M')}.{ext}", mime="text/html" if ext=="html" else "text/plain", key="tab1_dl_fmt")
+
+        # =====================================================
+        # PASO 5: INFOGRAFÍA (PILLOW INDEPENDIENTE)
+        # =====================================================
+        st.markdown("---\n### 🖼️ Paso 5: Generar Infografía")
         try:
             from PIL import Image, ImageDraw, ImageFont
             import textwrap
-            import requests
             from io import BytesIO
-            PILLOW_AVAILABLE = True
+            PIL_OK = True
         except ImportError:
-            PILLOW_AVAILABLE = False
-            st.error("📦 Falta la librería `Pillow`. Ejecuta `pip install Pillow` en tu terminal.")
-
-        if PILLOW_AVAILABLE:
+            PIL_OK = False
+            st.error("📦 Falta `Pillow`. Ejecuta `pip install Pillow` para activar esta función.")
             
-            # 🎨 Función para crear la infografía
-            def create_kaiBot_infographic(data: dict, style: str = "professional") -> Image.Image:
-                """Genera una infografía visual usando Pillow con branding KaiBot"""
-                
-                # Configuración de colores y dimensiones
-                config = {
-                    "professional": {"bg": "#FFFFFF", "header_bg": "#0066CC", "text": "#1E293B", "accent": "#10B981", "light_bg": "#F8FAFC"},
-                    "dark": {"bg": "#1E293B", "header_bg": "#0F172A", "text": "#E2E8F0", "accent": "#3B82F6", "light_bg": "#334155"},
-                    "clean": {"bg": "#FFFFFF", "header_bg": "#F8FAFC", "text": "#64748B", "accent": "#0066CC", "light_bg": "#F1F5F9"}
-                }[style]
-                
-                width, height = 1080, 1920  # Formato vertical móvil/email
-                img = Image.new('RGB', (width, height), color=config["bg"])
-                draw = ImageDraw.Draw(img)
-                
-                # Fuentes (Usamos default por compatibilidad. Para producción, cargar un .ttf real mejora mucho el resultado)
-                try:
-                    font_title = ImageFont.truetype("arial.ttf", 60)
-                    font_subtitle = ImageFont.truetype("arial.ttf", 36)
-                    font_body = ImageFont.truetype("arial.ttf", 32)
-                    font_small = ImageFont.truetype("arial.ttf", 24)
-                except:
-                    font_title = ImageFont.load_default()
-                    font_subtitle = font_title
-                    font_body = font_title
-                    font_small = font_title
-                
-                # Helper para dibujar texto con wrapping
-                def draw_wrapped_text(draw, text, position, font, max_width, line_height, color):
-                    x, y = position
-                    words = text.split()
-                    lines = []
-                    current_line = []
-                    
-                    for word in words:
-                        test_line = " ".join(current_line + [word])
-                        try:
-                            bbox = draw.textbbox((0, 0), test_line, font=font)
-                            w = bbox[2] - bbox[0]
-                        except:
-                            w = draw.textlength(test_line, font=font)
-                            
-                        if w <= max_width:
-                            current_line.append(word)
-                        else:
-                            lines.append(" ".join(current_line))
-                            current_line = [word]
-                    if current_line:
-                        lines.append(" ".join(current_line))
-                    
-                    for line in lines:
-                        try:
-                            bbox = draw.textbbox((0, 0), line, font=font)
-                            lh = bbox[3] - bbox[1]
-                        except:
-                            lh = 40 # Fallback height
-                        
-                        draw.text((x, y), line, font=font, fill=color)
-                        y += lh
-                        if y > height - 200: break # Evitar desbordamiento
-                    
-                    return y
-
-                # 1. HEADER
-                header_h = 400
-                draw.rectangle([0, 0, width, header_h], fill=config["header_bg"])
-                draw.text((80, 100), "KAIBOT | ANÁLISIS IA", font=font_subtitle, fill="#FFFFFF")
-                
-                # Logo placeholder (círculo con iniciales si no hay imagen)
-                logo_pos = (80, 200)
-                draw.ellipse([logo_pos[0], logo_pos[1], logo_pos[0]+80, logo_pos[1]+80], fill="#FFFFFF")
-                draw.text((95, 215), "KB", font=font_subtitle, fill=config["header_bg"])
-                
-                # 2. RESUMEN
-                summary = data.get("summary", "Sin resumen disponible")[:300]
-                y = header_h + 60
-                
-                draw.text((80, y), "📝 RESUMEN EJECUTIVO", font=font_subtitle, fill=config["accent"])
-                y = draw_wrapped_text(draw, summary, (80, y + 50), font_body, width - 160, 48, config["text"])
-                
-                # 3. PUNTOS CLAVE
-                y += 60
-                draw.text((80, y), "🔍 PUNTOS CLAVE", font=font_subtitle, fill=config["accent"])
-                y += 60
-                
-                points = data.get("key_points", [])[:4]
-                for i, p in enumerate(points):
-                    clean_p = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)[:200]
-                    bullet = "✅" if "validado" in p.lower() else "⚠️"
-                    
-                    # Caja de fondo para cada punto
-                    draw.rectangle([60, y - 10, width - 60, y + 120], fill=config["light_bg"], outline=config["accent"], width=4)
-                    draw.text((90, y), f"{bullet} {clean_p}", font=font_body, fill=config["text"])
-                    y += 130
-                
-                # 4. ACCIONES
-                y += 40
-                draw.text((80, y), "🎯 ACCIONES RECOMENDADAS", font=font_subtitle, fill=config["accent"])
-                y += 60
-                
-                actions = data.get("recommended_actions", [])[:3]
-                for a in actions:
-                    clean_a = a[:200]
-                    draw.text((90, y), f"• {clean_a}", font=font_body, fill=config["text"])
-                    y += 80
-                
-                # 5. FOOTER
-                footer_h = 300
-                footer_y = height - footer_h
-                draw.rectangle([0, footer_y, width, height], fill=config["header_bg"])
-                
-                sources = data.get("sources", [])
-                source_text = f"🔗 {len(sources)} fuentes verificadas" if sources else "Sin fuentes"
-                draw.text((80, footer_y + 50), source_text, font=font_body, fill="#FFFFFF")
-                
-                import datetime
-                today = datetime.datetime.now().strftime("%d/%m/%Y")
-                draw.text((80, footer_y + 120), f"Generado con KaiBot IA | {today}", font=font_small, fill="#94A3B8")
-                
-                return img
-
-            # UI Controles
-            col_style, col_generate = st.columns([2, 2])
-            
-            with col_style:
-                style_choice = st.selectbox(
-                    "🎨 Estilo visual",
-                    ["professional", "dark", "clean"],
-                    format_func=lambda x: {"professional": "🏢 Profesional (KaiBot)", "dark": "🌑 Dark Mode", "clean": "☁️ Minimalista"}[x],
-                    key="tab1_infographic_style"
-                )
-            
-            with col_generate:
-                generate_btn = st.button("🖼️ Generar Infografía", type="primary", use_container_width=True)
-            
-            if generate_btn:
-                with st.spinner("🎨 Generando infografía..."):
+        if PIL_OK:
+            st_info = st.selectbox("🎨 Estilo", ["professional", "dark", "clean"], format_func=lambda x: {"professional":"🏢 Profesional", "dark":"🌑 Dark", "clean":"☁️ Minimalista"}[x], key="tab1_inf_style")
+            if st.button("🖼️ Generar Infografía", type="primary", use_container_width=True, key="tab1_gen_inf"):
+                with st.spinner("🎨 Generando..."):
                     try:
-                        img = create_kaiBot_infographic(final_data, style_choice)
+                        W, H = 1080, 1920
+                        colors = {"professional": ("#FFFFFF","#0066CC","#1E293B","#10B981","#F8FAFC"), "dark": ("#1E293B","#0F172A","#E2E8F0","#3B82F6","#334155"), "clean": ("#FFFFFF","#F8FAFC","#64748B","#0066CC","#F1F5F9")}[st_info]
+                        bg, hdr, txt, acc, light = colors
+                        img = Image.new('RGB', (W, H), color=bg)
+                        draw = ImageDraw.Draw(img)
+                        try: fT = ImageFont.truetype("arial.ttf", 60); fS = ImageFont.truetype("arial.ttf", 36); fB = ImageFont.truetype("arial.ttf", 32)
+                        except: fT = fS = fB = ImageFont.load_default()
                         
-                        # Guardar en buffer para mostrar/descargar
-                        buffer = BytesIO()
-                        img.save(buffer, format="PNG")
-                        buffer.seek(0)
+                        def wrap(draw, text, y, font, mw, color, lh=44):
+                            words, lines = text.split(), []
+                            line = []
+                            for w in words:
+                                test = " ".join(line+[w])
+                                try: tw = draw.textbbox((0,0), test, font=font)[2]
+                                except: tw = draw.textlength(test, font=font)
+                                if tw <= mw: line.append(w)
+                                else: lines.append(" ".join(line)); line = [w]
+                            if line: lines.append(" ".join(line))
+                            for l in lines: draw.text((80, y), l, font=font, fill=color); y += lh
+                            return y
+                            
+                        draw.rectangle([0,0,W,400], fill=hdr)
+                        draw.text((80,100), "KAIBOT | ANÁLISIS IA", font=fS, fill="#FFF")
+                        draw.ellipse([80,200,160,280], fill="#FFF")
+                        draw.text((95,215), "KB", font=fS, fill=hdr)
                         
-                        st.success("✅ Infografía generada correctamente")
-                        st.image(buffer, caption="Vista previa de la infografía", use_container_width=True)
+                        y = wrap(draw, final_data.get("summary","")[:300], 450, fB, W-160, txt)
+                        y = wrap(draw, "🔍 PUNTOS CLAVE", y+60, fS, W-160, acc)
+                        for p in final_data.get("key_points",[])[:4]:
+                            cp = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)[:200]
+                            draw.rectangle([60,y-10,W-60,y+100], fill=light, outline=acc, width=4)
+                            draw.text((90, y), f"{'✅' if 'validado' in p.lower() else '⚠️'} {cp}", font=fB, fill=txt)
+                            y += 120
+                            
+                        y = wrap(draw, "🎯 ACCIONES", y+40, fS, W-160, acc)
+                        for a in final_data.get("recommended_actions",[])[:3]:
+                            y = wrap(draw, f"• {a[:180]}", y+20, fB, W-160, txt)
+                            
+                        draw.rectangle([0,H-300,W,H], fill=hdr)
+                        draw.text((80,H-250), f"🔗 {len(final_data.get('sources',[]))} fuentes verificadas", font=fB, fill="#FFF")
+                        draw.text((80,H-200), f"Generado con KaiBot IA | {datetime.now().strftime('%d/%m/%Y')}", font=ImageFont.load_default(), fill="#94A3B8")
                         
-                        # Botón de descarga
-                        filename = f"kaibot_infografia_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.png"
-                        st.download_button(
-                            label="⬇️ Descargar Infografía (PNG)",
-                            data=buffer,
-                            file_name=filename,
-                            mime="image/png",
-                            use_container_width=True,
-                            key="tab1_download_infographic_png"
-                        )
-                        
+                        buf = BytesIO()
+                        img.save(buf, format="PNG")
+                        buf.seek(0)
+                        st.success("✅ Infografía generada")
+                        st.image(buf, caption="Vista previa", use_container_width=True)
+                        st.download_button("⬇️ Descargar PNG", buf, file_name=f"kaibot_inf_{datetime.now().strftime('%Y%m%d_%H%M')}.png", mime="image/png", key="tab1_dl_png")
                     except Exception as e:
-                        st.error(f"❌ Error generando la imagen: {str(e)}")
-            
-            # 💡 Tips rápidos
-            with st.expander("💡 Consejos de uso", expanded=False):
-                st.markdown("""
-                - **Email Marketing**: Esta infografía vertical (1080px) está optimizada para lectura en móvil.
-                - **LinkedIn**: Puedes recortarla a cuadrada (1080x1080) si lo prefieres, el contenido se adapta.
-                - **Branding**: Los colores coinciden con la identidad de KaiBot para mantener consistencia.
-                """)
-            
-            # 📥 Opción Gamma (Anecdótica)
-            st.markdown("---")
-            st.caption("💡 ¿Prefieres editarla visualmente? [Exportar JSON para Gamma.app](https://gamma.app)")
+                        st.error(f"❌ Error generando imagen: {e}")
+            st.caption("💡 ¿Prefieres editar visualmente? Exporta el JSON e impórtalo en [Gamma.app](https://gamma.app)")
 
-        else:
-            st.info("ℹ️ Instala `Pillow` para activar esta función: `pip install Pillow`")
-
+        # =====================================================
+        # GUARDAR / DESCARGAR JSON
+        # =====================================================
+        st.markdown("---\n### 💾 Guardar contenido")
+        with st.expander("📋 Metadatos & JSON", expanded=True):
+            cm1, cm2 = st.columns(2)
+            with cm1:
+                c_tipo = st.text_input("🏷️ Tipo", value="Análisis IA" if not is_fallback else "Análisis Fallback", key="tab1_tipo_meta")
+                c_obj = st.selectbox("🎯 Objetivo", ["Marketing B2B", "Social Media", "Blog Post", "Informe Interno", "Presentación"], index=0, key="tab1_obj_meta")
+            with cm2:
+                c_src = st.checkbox("✅ Fuentes verificadas", value=not is_fallback and bool(final_data.get("sources")), disabled=is_fallback, key="tab1_src_meta")
+                c_notas = st.text_area("📝 Notas", value=f"Modo: {query_mode}", height=60, key="tab1_notas_meta")
+                
+            if "edited_response" not in st.session_state: st.session_state.edited_response = json.dumps(final_data, indent=2, ensure_ascii=False)
+            edited = st.text_area("JSON editable", value=st.session_state.edited_response, height=300, key="tab1_json_ed")
+            try: ed_data = json.loads(edited); jv = True
+            except: st.error("❌ JSON inválido"); jv = False; ed_data = final_data
+            
+            fname = generate_smart_filename(ed_data)
+            st.info(f"📝 Archivo: `{fname}`")
+            cs, cd = st.columns(2)
+            with cs:
+                if st.button("💾 Guardar en Cloud", type="primary", use_container_width=True, disabled=not jv, key="tab1_save_btn"):
+                    try:
+                        save_analysis_with_metadata(client, bucket_name, BUCKET_FOLDERS["validados"], fname, ed_data, {"tipo": c_tipo, "objetivo": c_obj, "fuentes_fiables": c_src, "notas": c_notas})
+                        st.success(f"✅ Guardado: {fname}"); st.balloons()
+                    except Exception as e: st.error(f"❌ Error: {e}")
+            with cd:
+                st.download_button("⬇️ Descargar JSON", json.dumps(ed_data, indent=2, ensure_ascii=False), file_name=fname, mime="application/json", use_container_width=True, key="tab1_dl_json")
 
 # =====================================================
 # TAB 2 - MIS ARCHIVOS (Sin cambios, funciona perfecto)
