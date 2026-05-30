@@ -303,9 +303,13 @@ def section_exploracion():
     st.dataframe(df.dtypes.to_frame(name='Tipo'), use_container_width=True)
     
     st.subheader("📈 Distribuciones y Tendencia")
-    num_cols = df.select_dtypes('number').columns.tolist()
-    if 'bankrupt' in num_cols: num_cols = [c for c in num_cols if c != 'bankrupt']
+    # ✅ CORRECCIÓN: Excluir 'year' y 'bankrupt' para evitar duplicados en groupby/reset_index
+    num_cols = [c for c in df.select_dtypes('number').columns if c not in {'year', 'bankrupt'}]
     
+    if not num_cols:
+        st.warning("No hay columnas numéricas disponibles para gráficos.")
+        return
+
     tab_plots = st.tabs(["Histogramas", "Tendencia Temporal", "Correlaciones"])
     with tab_plots[0]:
         col = st.selectbox("Columna:", num_cols)
@@ -313,12 +317,14 @@ def section_exploracion():
         st.plotly_chart(fig, use_container_width=True)
     with tab_plots[1]:
         if 'year' in df.columns:
+            # Ahora 'year' no está en num_cols, reset_index() funciona sin conflictos
             time_mean = df.groupby('year')[num_cols].mean().reset_index().melt(id_vars='year')
             st.plotly_chart(px.line(time_mean, x='year', y='value', color='variable', markers=True), use_container_width=True)
+        else:
+            st.info("Se requiere columna 'year' para análisis temporal.")
     with tab_plots[2]:
-        if num_cols:
-            st.dataframe(df[num_cols].corr().style.background_gradient(cmap='RdBu_r'), use_container_width=True)
-            
+        st.dataframe(df[num_cols].corr().style.background_gradient(cmap='RdBu_r'), use_container_width=True)
+        
     st.subheader("🤖 Sugerencias de Qwen")
     for s in generate_qwen_suggestions(df): st.info(s)
 
