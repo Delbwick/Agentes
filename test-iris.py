@@ -528,4 +528,60 @@ def section_interpretacion():
     **Factores clave de riesgo identificados:**
     {chr(10).join([f"• `{row['Feature']}` (peso: {row['Importance']:.3f})" for _, row in imp_df.head(5).iterrows()])}
     
-    **Cobertura de detección:** `{best[1]['metrics']['Recall']:.1%}` de bancos
+    **Cobertura de detección:** `{best[1]['metrics']['Recall']:.1%}` de bancos en quiebra correctamente identificados.  
+    **Falsas alarmas:** `{1-best[1]['metrics']['Precision']:.1%}` de bancos sanos marcados como riesgo.  
+    **Recomendación operativa:** Implementar alertas tempranas cuando `{imp_df.iloc[0]['Feature']}` supere umbral crítico, priorizando Recall sobre Precision para mitigar riesgo sistémico.
+    """)
+    
+    # Gráfico de importancia
+    fig = px.bar(imp_df.head(10), x='Importance', y='Feature', orientation='h', 
+                title="Top 10 Variables Predictivas", labels={'Importance': 'Importancia', 'Feature': 'Variable'})
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Exportación de reporte
+    if st.button("📥 Exportar Reporte Académico (JSON)"):
+        report = {
+            'metadata': {
+                'dataset': 'us_failures.csv',
+                'n_banks': st.session_state.data_raw['bank_id'].nunique(),
+                'period': f"{st.session_state.data_raw['year'].min():.0f}-{st.session_state.data_raw['year'].max():.0f}",
+                'date': datetime.now().isoformat()
+            },
+            'best_model': best[0],
+            'metrics': best[1]['metrics'],
+            'top_features': imp_df.head(10).to_dict(orient='records'),
+            'recommendation': f"Priorizar Recall ({best[1]['metrics']['Recall']:.1%}) para mitigar riesgo sistémico"
+        }
+        st.download_button("⬇️ Descargar reporte", 
+                          json.dumps(report, indent=2, default=str), 
+                          "reporte_quiebras_bancarias.json", 
+                          "application/json")
+
+# ============================================================================
+# 🚀 MAIN APP
+# ============================================================================
+def main():
+    st.title("🏦 Predicción de Quiebras Bancarias - US Failures Dataset")
+    st.caption("8,262 bancos NYSE/NASDAQ (1999-2018) | Target: alive/failed | Prioridad: Minimizar falsos negativos")
+    
+    # Sidebar de navegación (rúbrica)
+    section = st.sidebar.radio("📑 Navegación por Rúbrica:", [
+        "🔍 1. Exploración (25%)", 
+        "🛠️ 2. Preprocesamiento (10%)", 
+        "🧠 3. Modelo (25%)", 
+        "📊 4. Evaluación (20%)", 
+        "🔮 5. Interpretación (20%)"
+    ])
+    
+    st.sidebar.markdown("---")
+    st.sidebar.caption("💾 Estado persistente: datos y modelos se mantienen al cambiar de sección.")
+    
+    # Enrutamiento
+    if "1. Exploración" in section: section_exploracion()
+    elif "2. Preprocesamiento" in section: section_preprocesamiento()
+    elif "3. Modelo" in section: section_modelado()
+    elif "4. Evaluación" in section: section_evaluacion()
+    elif "5. Interpretación" in section: section_interpretacion()
+
+if __name__ == "__main__":
+    main()
