@@ -199,93 +199,35 @@ def section_exploracion():
 
 def section_preprocesamiento():
     st.header("🛠️ 2. Preprocesamiento (10%)")
-    st.markdown("""
-    **Qué se hace:** 
-    1. Mapeo explícito de la variable objetivo: `"Bankruptcy" → 1`, `"Operating Normally" → 0`
-    2. Imputación de faltantes (mediana/moda)
-    3. Escalado estándar de variables numéricas
-    4. Codificación One-Hot para categóricas
-    5. División estratificada Train/Test (80/20)
-    
-    **Por qué se hace:** Los modelos requieren datos numéricos homogéneos. El mapeo del target garantiza coherencia semántica. La división estratificada preserva la proporción real de quiebras.
-    """)
-    
-    if st.session_state.data_raw is None: 
-        st.warning("⚠️ Carga datos primero en la pestaña 1."); return
+    st.markdown("**Qué se hace:** Imputación, codificación, escalado y división estratificada. **Por qué:** Los algoritmos requieren homogeneidad numérica. **Impacto:** Mejora convergencia y evita data leakage.")
+    if st.session_state.data_raw is None: st.warning("Carga datos primero."); return
     
     df = st.session_state.data_raw.copy()
-    
-    # 🔍 Identificar columna objetivo (puede variar según el archivo real)
-    target_candidates = [c for c in df.columns if 'bank' in c.lower() or 'status' in c.lower() or 'class' in c.lower()]
-    tgt_col = target_candidates[0] if target_candidates else st.selectbox("Selecciona la columna objetivo:", df.columns)
-    st.session_state.target_col = tgt_col
-    
-    # ✅ 1. Transformación explícita del target (Bankruptcy → 1, Operating Normally → 0)
-    if df[tgt_col].dtype == 'object' or df[tgt_col].dtype.name == 'category':
-        df[tgt_col] = df[tgt_col].map({
-            'Bankruptcy': 1, 'bankruptcy': 1, 'Bancarrota': 1,
-            'Operating Normally': 0, 'operating normally': 0, 'Normal': 0
-        }).fillna(df[tgt_col])  # Fallback por si hay variaciones de texto
-    # Forzar a entero numérico
-    df[tgt_col] = pd.to_numeric(df[tgt_col], errors='coerce').astype('Int64').dropna()
-    
-    if df[tgt_col].nunique() != 2:
-        st.error(f"❌ La columna '{tgt_col}' no es binaria. Valores únicos: {df[tgt_col].unique()}")
-        return
-        
-    st.success(f"✅ Target mapeado: `{df[tgt_col].value_counts().to_dict()}`")
-    
-    # ⚙️ 2. Separación X / y (¡NUNCA aplicar preprocesador a y!)
-    X = df.drop([tgt_col], axis=1)
-    y = df[tgt_col]
-    
-    num_cols = X.select_dtypes(include='number').columns.tolist()
-    cat_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
-    
-    # Pipeline seguro
-    transformers = []
-    if num_cols:
-        transformers.append(('num', Pipeline([
-            ('imputer', SimpleImputer(strategy='median')),
-            ('scaler', StandardScaler())
-        ]), num_cols))
-    if cat_cols:
-        transformers.append(('cat', Pipeline([
-            ('imputer', SimpleImputer(strategy='most_frequent')),
-            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-        ]), cat_cols))
+    tgt_opts = [c for c in df.columns if df[c].nunique() <= 5]
+    idx = tgt_opts.index('bankruptcy') if 'bankruptcy' in tgt_opts else 0
+    st.session_state.target_col = st.selectbox("Target:", tgt_opts, index=idx)
+    imp = st.selectbox("Imputación:", ['median', 'mode', 'drop'])
     
     if st.button("🔄 Ejecutar Preprocesamiento", type="primary"):
         with st.spinner("Procesando..."):
             try:
-                preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')
-                X_proc = preprocessor.fit_transform(X)
-                
-                # Nombres de features procesadas
-                feat_names = num_cols.copy()
-                if cat_cols:
-                    ohe = preprocessor.named_transformers_['cat'].named_steps['onehot']
-                    feat_names += list(ohe.get_feature_names_out(cat_cols))
-                
-                # División estratificada segura
-                if y.value_counts().min() >= 2:
-                    X_train, X_test, y_train, y_test = train_test_split(X_proc, y, test_size=0.2, random_state=42, stratify=y)
+                prep = BankruptcyPreprocessor(df, st.session_state.target_col)
+                X, y, preproc, feats = prep.fit_transform(impute=imp)
+                y_val = y.value_counts()
+                if y_val.min() >= 2 and len(y) >= 10:
+                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
                 else:
-                    X_train, X_test, y_train, y_test = train_test_split(X_proc, y, test_size=0.2, random_state=42)
+                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
                 
                 st.session_state.X_train, st.session_state.X_test = X_train, X_test
                 st.session_state.y_train, st.session_state.y_test = y_train, y_test
-                st.session_state.preprocessor, st.session_state.feature_names = preprocessor, feat_names
-                st.session_state.data_processed = pd.concat([pd.DataFrame(X_proc, columns=feat_names), y.reset_index(drop=True)], axis=1)
-                
-                st.success("✅ Preprocesamiento completado. Datos listos para modelado.")
+                st.session_state.preprocessor, st.session_state.feature_names = preproc, feats
+                st.success("✅ Preprocesamiento exitoso.")
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Error: {e}")
-                
     if st.session_state.X_train is not None:
         st.success(f"📦 Train: `{len(st.session_state.X_train)}` | Test: `{len(st.session_state.X_test)}` | Features: `{len(st.session_state.feature_names)}`")
-        st.dataframe(st.session_state.data_processed.head())
 
 def section_modelado():
     st.header("🧠 3. Desarrollo del Modelo (25%)")
