@@ -3,7 +3,7 @@
 """
 🏦 PREDICCIÓN DE QUIEBRAS BANCARIAS EN EE.UU. (PSU Big Data Financiero)
 ✅ Single-file Streamlit App | ✅ Compatible con GitHub/Streamlit Cloud
-✅ Exportable a Jupyter Notebook | ✅ Alineado 100% con Rúbrica Universitaria
+✅ Corregido para CSV reales sin cabecera (us_failures.csv)
 """
 
 # ============================================================================
@@ -43,14 +43,14 @@ def init_session_state():
     defaults = {
         'data_raw': None, 'data_processed': None, 'X_train': None, 'X_test': None,
         'y_train': None, 'y_test': None, 'feature_names': [], 'preprocessor': None,
-        'target_col': 'bankruptcy', 'models': {}, 'evaluation_results': {}, 'is_synthetic': True
+        'target_col': 'status', 'models': {}, 'evaluation_results': {}, 'is_synthetic': True
     }
     for k, v in defaults.items():
         if k not in st.session_state: st.session_state[k] = v
 init_session_state()
 
 # ============================================================================
-# 🎲 GENERADOR DE DATOS SINTÉTICOS (Mimica estructura real: 8.262 bancos)
+# 🎲 GENERADOR DE DATOS SINTÉTICOS
 # ============================================================================
 @st.cache_data
 def generate_synthetic_data(n_banks: int = 1500, years: int = 10) -> pd.DataFrame:
@@ -65,43 +65,64 @@ def generate_synthetic_data(n_banks: int = 1500, years: int = 10) -> pd.DataFram
             roe = np.random.normal(0.07, 0.11)
             tier1 = np.random.beta(4, 1.5) * 0.12 + 0.06
             npl = np.random.beta(1, 15) * 0.08
-            # Lógica causal de quiebra
             prob = (0.5 * (1 - equity/assets) + 0.3 * (npl > 0.04) + 0.2 * (roa < 0) + np.random.normal(0, 0.08))
             status = 1 if prob > np.percentile([0]*920 + [1]*80, 92) else 0
             data.append({
                 'bank_id': f'BK_{bank_id:05d}', 'year': year, 'total_assets': assets,
                 'total_liabilities': liabilities, 'equity_ratio': equity/assets,
                 'roa': roa, 'roe': roe, 'tier1_capital': tier1, 'npl_ratio': npl,
-                'bankruptcy': 'Bankruptcy' if status == 1 else 'Operating Normally'
+                'status': 'failed' if status == 1 else 'alive'
             })
     df = pd.DataFrame(data)
-    # Missing controlados
     num_cols = df.select_dtypes(include='number').columns
     df[num_cols] = df[num_cols].mask(np.random.random(df[num_cols].shape) < 0.02)
     return df
 
 # ============================================================================
-# 📥 CARGA DE DATOS EXTERNOS
+# 📥 CARGA DE DATOS EXTERNOS (CORREGIDO PARA US_FAILURES.CSV)
 # ============================================================================
 def load_csv(file) -> pd.DataFrame:
-    if file.name.endswith('.csv'):
+    try:
+        # Intento 1: Leer asumiendo cabecera
         for enc in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
-            try: return pd.read_csv(file, encoding=enc)
+            try: 
+                df = pd.read_csv(file, encoding=enc)
+                break
             except UnicodeDecodeError: continue
-        raise ValueError("Encoding no detectado")
-    elif file.name.endswith(('.xlsx', '.xls')): return pd.read_excel(file)
-    raise ValueError("Formato no soportado")
+        else: raise ValueError("Encoding no detectado")
+
+        # ✅ DETECCIÓN DE CSV SIN CABECERA (Como us_failures.csv)
+        # Si la columna 0 parece un ID ("C_...") o la col 1 es "alive/failed", es datos puros
+        col0 = str(df.columns[0]).lower()
+        col1 = str(df.columns[1]).lower()
+        
+        is_headerless = ('c_' in col0) or ('alive' in col1) or ('failed' in col1) or (col1 in ['bankruptcy', 'operating normally'])
+        
+        if is_headerless:
+            # Recargar sin cabecera
+            file.seek(0)
+            df = pd.read_csv(file, encoding=enc, header=None)
+            # Asignar nombres por defecto
+            df.columns = ['bank_id', 'status', 'year'] + [f'var_{i}' for i in range(4, len(df.columns) + 1)]
+            
+        # Convertir columnas numéricas (excepto ID y Status)
+        for col in df.columns[2:]:
+            if col != 'status':
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                
+        return df
+    except Exception as e:
+        raise ValueError(f"Error al leer CSV: {str(e)}")
 
 # ============================================================================
-# 🖥️ SECCIONES ACADÉMICAS (ALINEADAS CON RÚBRICA)
+# 🖥️ SECCIONES ACADÉMICAS
 # ============================================================================
 def section_exploracion():
     st.header("🔍 1. Exploración de Datos (25%)")
     st.markdown("""
-    **Qué se hace:** Carga inicial, inspección estructural, análisis de distribuciones y correlaciones.  
-    **Por qué se hace:** Familiarizarse con los datos disponibles y validar supuestos estadísticos antes de modelar.  
-    **Problema que resuelve:** Evita modelado sobre datos no estacionarios, detecta desbalance de clases y previene *data leakage*.  
-    **Impacto en el modelo:** Un EDA riguroso fundamenta la selección de métricas (priorizar Recall) y justifica transformaciones posteriores.
+    **Qué se hace:** Carga, inspección estructural, análisis de distribuciones y correlaciones.  
+    **Por qué se hace:** Fundamenta decisiones de preprocesamiento y evita suposiciones erróneas sobre escalas o tipos de dato.  
+    **Impacto en el modelo:** Un EDA riguroso reduce data leakage y justifica transformaciones de escala y codificación del target.
     """)
     
     c1, c2 = st.columns([2, 1])
@@ -110,24 +131,48 @@ def section_exploracion():
     with c2:
         if mode == "📁 Subir CSV Real":
             f = st.file_uploader("Archivo CSV/Excel", type=['csv','xlsx','xls'])
-            if f: st.session_state.data_raw = load_csv(f); st.session_state.is_synthetic = False
+            if f: 
+                try:
+                    st.session_state.data_raw = load_csv(f)
+                    st.session_state.is_synthetic = False
+                    st.success(f"✅ Cargado: {st.session_state.data_raw.shape[0]} filas, {st.session_state.data_raw.shape[1]} columnas")
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
         else:
-            st.session_state.data_raw = generate_synthetic_data(); st.session_state.is_synthetic = True
+            st.session_state.data_raw = generate_synthetic_data()
+            st.session_state.is_synthetic = True
 
     if st.session_state.data_raw is None: return
     df = st.session_state.data_raw
-    st.success(f"✅ `{df.shape[0]}` filas × `{df.shape[1]} columnas` | `{df.memory_usage(deep=True).sum()/1024**2:.2f} MB`")
     
     st.subheader("📊 Estructura")
     c1, c2, c3 = st.columns(3)
     c1.metric("Bancos únicos", df['bank_id'].nunique() if 'bank_id' in df.columns else "N/A")
     c2.metric("Años cubiertos", df['year'].nunique() if 'year' in df.columns else "N/A")
-    tgt_col = [c for c in df.columns if 'bankrupt' in c.lower() or 'status' in c.lower()]
+    
+    # ✅ DETECCIÓN DE TARGET ROBUSTA
+    tgt_col = None
+    candidates = [c for c in df.columns if c.lower() in ['status', 'bankruptcy', 'class', 'target', 'estado']]
+    if candidates: tgt_col = candidates[0]
+    else:
+        # Fallback: buscar columna con 'alive'/'failed'
+        for c in df.columns:
+            if df[c].dtype == 'object':
+                vals = df[c].astype(str).str.lower().unique()
+                if any('alive' in v or 'failed' in v for v in vals):
+                    tgt_col = c; break
+    
     if tgt_col:
-        c3.metric("Quiebras (%)", f"{(df[tgt_col[0]] == 'Bankruptcy').mean()*100:.2f}%")
+        counts = df[tgt_col].value_counts()
+        fail_pct = (counts.get('failed', 0) / len(df)) * 100
+        c3.metric(f"Quiebras ({tgt_col})", f"{fail_pct:.2f}%")
+    else:
+        st.warning("⚠️ No se detectó columna objetivo automática. Usa la pestaña 2 para seleccionarla.")
         
     st.subheader("📈 Visualizaciones")
-    num_cols = [c for c in df.select_dtypes('number').columns if c not in {'year', 'bank_id'}]
+    num_cols = [c for c in df.select_dtypes('number').columns if c not in {'year', 'bank_id'} and not c.startswith('var_')]
+    if not num_cols: num_cols = df.select_dtypes('number').columns[:5]
+    
     t1, t2, t3 = st.tabs(["Distribuciones", "Tendencia Temporal", "Correlaciones"])
     with t1:
         col = st.selectbox("Variable numérica:", num_cols)
@@ -144,65 +189,70 @@ def section_preprocesamiento():
     st.header("🛠️ 2. Preprocesamiento (10%)")
     st.markdown("""
     **Qué se hace:** 
-    1. Mapeo explícito del target: `"Bankruptcy" → 1`, `"Operating Normally" → 0`
+    1. Mapeo explícito del target: `"failed" → 1`, `"alive" → 0` (o variantes como Bankruptcy/Operating)
     2. Imputación de faltantes (mediana para numéricas, moda para categóricas)
     3. Escalado estándar y codificación One-Hot
     4. División estratificada Train/Test (80/20)
     
-    **Por qué se hace:** Los algoritmos requieren datos numéricos homogéneos. El mapeo garantiza coherencia semántica.  
-    **Problema que resuelve:** Mitiga sesgos por escalas dispares, previene *data leakage* y preserva la proporción real de quiebras.  
-    **Impacto en el modelo:** Mejora convergencia numérica, estabilidad de coeficientes y comparabilidad entre algoritmos.
+    **Por qué se hace:** Los algoritmos requieren datos numéricos homogéneos y un target binario numérico.  
+    **Problema que resuelve:** Mitiga sesgos por escalas dispares y preserva la proporción real de quiebras.
     """)
     if st.session_state.data_raw is None: st.warning("⚠️ Carga datos primero."); return
     
     df = st.session_state.data_raw.copy()
     
-    # 🔍 DETECCIÓN SEGURA DE TARGET (Evita bank_id, assets, etc.)
-    target_candidates = [c for c in df.columns if c.lower() in ['bankruptcy', 'status', 'class', 'target', 'estado', 'quiebra']]
-    if not target_candidates:
-        low_card = [c for c in df.columns if df[c].nunique() <= 3 and df[c].dtype == 'object']
-        target_candidates = low_card
-    tgt_col = target_candidates[0] if target_candidates else st.selectbox("Selecciona columna objetivo:", df.columns)
-    st.session_state.target_col = tgt_col
+    # ✅ DETECCIÓN DE COLUMNA TARGET CON MENSAJE
+    tgt_opts = [c for c in df.columns if df[c].nunique() <= 5 and df[c].dtype in ['object', 'category', 'int64', 'float64']]
+    # Priorizar columnas llamadas 'status' o similares
+    priority = [c for c in tgt_opts if 'status' in c.lower() or 'bankrupt' in c.lower()]
+    tgt_opts = priority + [c for c in tgt_opts if c not in priority]
     
-    # ✅ MAPEO ROBUSTO A BINARIO (0/1)
-    def map_target(val):
-        v = str(val).strip().lower()
-        if v in ['bankruptcy', 'bancarrota', '1', 'yes', 'true']: return 1
-        if v in ['operating normally', 'normal', '0', 'no', 'false']: return 0
-        return pd.NA
-    df[tgt_col] = df[tgt_col].apply(map_target).astype('Int64')
-    df = df.dropna(subset=[tgt_col])
+    idx = 0
+    for i, c in enumerate(tgt_opts):
+        if c.lower() in ['status', 'bankruptcy', 'class']: idx = i; break
+            
+    st.session_state.target_col = st.selectbox("Selecciona columna objetivo:", tgt_opts, index=idx)
+    imp = st.selectbox("Imputación:", ['median', 'mode', 'drop'], key="imp_strat")
     
-    if df[tgt_col].nunique() != 2:
-        st.error(f"❌ La columna '{tgt_col}' no es binaria tras el mapeo. Valores: {df[tgt_col].unique()}")
-        return
-    st.success(f"✅ Target mapeado: `{df[tgt_col].value_counts().to_dict()}`")
-    
-    # ⚙️ SEPARACIÓN X / y (¡El target NUNCA pasa por ColumnTransformer!)
-    X = df.drop([tgt_col], axis=1)
-    y = df[tgt_col]
-    num_cols = X.select_dtypes(include='number').columns.tolist()
-    cat_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
-    
-    # Pipeline seguro
-    transformers = []
-    if num_cols:
-        transformers.append(('num', Pipeline([('imputer', SimpleImputer(strategy='median')), ('scaler', StandardScaler())]), num_cols))
-    if cat_cols:
-        transformers.append(('cat', Pipeline([('imputer', SimpleImputer(strategy='most_frequent')), ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))]), cat_cols))
-        
     if st.button("🔄 Ejecutar Preprocesamiento", type="primary"):
         with st.spinner("Procesando..."):
             try:
-                preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')
-                X_proc = preprocessor.fit_transform(X)
+                # 1. Mapeo de Target
+                tgt = st.session_state.target_col
+                def map_target(val):
+                    v = str(val).strip().lower()
+                    if 'failed' in v or 'bankrupt' in v: return 1
+                    if 'alive' in v or 'operating' in v or 'normal' in v: return 0
+                    try: return int(val)
+                    except: return pd.NA
+                df[tgt] = df[tgt].apply(map_target)
+                df = df.dropna(subset=[tgt])
+                
+                if df[tgt].nunique() != 2:
+                    st.error(f"❌ '{tgt}' no es binaria. Valores: {df[tgt].unique()}")
+                    return
+
+                # 2. Separación X/y
+                X = df.drop([tgt], axis=1)
+                y = df[tgt]
+                num_cols = X.select_dtypes(include='number').columns.tolist()
+                cat_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+                
+                # 3. Pipeline
+                transformers = []
+                if num_cols:
+                    transformers.append(('num', Pipeline([('imputer', SimpleImputer(strategy='median')), ('scaler', StandardScaler())]), num_cols))
+                if cat_cols:
+                    transformers.append(('cat', Pipeline([('imputer', SimpleImputer(strategy='most_frequent')), ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))]), cat_cols))
+                
+                preprocessor = ColumnTransformer(transformers=transformers, remainder='drop') if transformers else None
+                X_proc = preprocessor.fit_transform(X) if preprocessor else X.values
                 
                 feat_names = num_cols.copy()
-                if cat_cols:
-                    ohe = preprocessor.named_transformers_['cat'].named_steps['onehot']
-                    feat_names += list(ohe.get_feature_names_out(cat_cols))
+                if cat_cols and preprocessor:
+                    feat_names += list(preprocessor.named_transformers_['cat'].named_steps['onehot'].get_feature_names_out(cat_cols))
                     
+                # 4. Split
                 if y.value_counts().min() >= 2:
                     X_train, X_test, y_train, y_test = train_test_split(X_proc, y, test_size=0.2, random_state=42, stratify=y)
                 else:
@@ -226,8 +276,8 @@ def section_modelado():
     st.markdown("""
     **Qué se hace:** Entrenamiento de 4 algoritmos con `class_weight='balanced'`.  
     **Por qué se hace:** Contrastar sesgo-varianza y validar robustez frente a patrones de riesgo complejos.  
-    **Problema que resuelve:** LogReg ofrece interpretabilidad regulatoria; DT captura reglas umbral; RF/GB reducen varianza y capturan no linealidades.  
-    **Impacto en el modelo:** Permite seleccionar el mejor trade-off entre interpretabilidad y rendimiento, priorizando Recall para minimizar falsos negativos.
+    **Problema que resuelve:** LogReg ofrece interpretabilidad; RF/GB reducen varianza y capturan no linealidades.  
+    **Impacto en el modelo:** Permite seleccionar el mejor trade-off entre interpretabilidad y rendimiento, priorizando Recall.
     """)
     if st.session_state.X_train is None: st.warning("⚠️ Ejecuta preprocesamiento primero."); return
     
@@ -259,9 +309,9 @@ def section_evaluacion():
     st.header("📊 4. Evaluación del Modelo (20%)")
     st.markdown("""
     **Qué se hace:** Cálculo de Accuracy, Precision, Recall, F1, ROC-AUC. Generación de Matriz de Confusión y Curva ROC.  
-    **Por qué se hace:** En quiebras, **Accuracy es engañosa**. **Recall es la métrica crítica**: un falso negativo implica no detectar una entidad insolvente, con riesgo sistémico.  
-    **Problema que resuelve:** Cuantifica capacidad predictiva con métricas que reflejan costes operativos reales y permite ajustar umbrales.  
-    **Impacto en el modelo:** Valida generalización fuera de muestra y justifica la selección del modelo óptimo para despliegue en supervisión bancaria.
+    **Por qué se hace:** En quiebras, **Recall es la métrica crítica**: un falso negativo implica no detectar una entidad insolvente.  
+    **Problema que resuelve:** Cuantifica capacidad predictiva con métricas que reflejan costes operativos reales.  
+    **Impacto en el modelo:** Valida generalización fuera de muestra y justifica la selección del modelo óptimo.
     """)
     if not st.session_state.models: st.warning("⚠️ Entrena al menos un modelo primero."); return
     
@@ -323,7 +373,7 @@ def section_interpretacion():
     **🔍 Factores clave de riesgo:** `{imp_df.iloc[0]['Feature']}`, `{imp_df.iloc[1]['Feature']}`, `{imp_df.iloc[2]['Feature']}`  
     **💡 Cobertura de detección:** `{best[1]['metrics']['Recall']:.1%}` de quiebras reales identificadas.  
     **⚠️ Falsas alarmas:** `{1-best[1]['metrics']['Precision']:.1%}`.  
-    **📉 Conclusión Académica:** El pipeline cumple estándares regulatorios. La priorización de Recall sobre Accuracy mitiga riesgo sistémico. Limitaciones: datos históricos estáticos y ausencia de variables macroeconómicas. Mejoras futuras: validación temporal out-of-time, integración de SHAP para explicabilidad local, y monitoreo de drift en producción.
+    **📉 Conclusión Académica:** El pipeline cumple estándares regulatorios. La priorización de Recall sobre Accuracy mitiga riesgo sistémico. Limitaciones: datos históricos estáticos y ausencia de variables macroeconómicas. Mejoras futuras: validación temporal out-of-time e integración de SHAP.
     """)
     
     if st.button("📥 Exportar Reporte JSON"):
