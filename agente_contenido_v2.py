@@ -381,7 +381,7 @@ with st.sidebar:
 # TABS PRINCIPALES
 # =====================================================
 
-tab1, tab2, tab3 = st.tabs(["🎯 Generar Contenido", "📁 Mis Archivos", "⚙️ Configuración Avanzada"])
+tab1, tab2, tab3,tab4 = st.tabs(["🎯 Generar Contenido", "📁 Mis Archivos", "⚙️ Configuración Avanzada","📡 Monitor de Contenidos"])
 
 
 
