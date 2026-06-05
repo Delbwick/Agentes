@@ -886,6 +886,338 @@ with tab3:
             except Exception as e: st.error(f"❌ Error: {str(e)}")
 
 # =====================================================
+# TAB 4 - MONITOR DE CONTENIDOS (SUGERENCIAS 24H)
+# =====================================================
+
+with tab4:
+    st.markdown("## 📡 Monitor de Contenidos")
+    st.markdown("*Fuentes inteligentes que revisan cada 24h y sugieren contenido relevante*")
+    
+    # =====================================================
+    # INICIALIZACIÓN
+    # =====================================================
+    if "content_sources" not in st.session_state:
+        st.session_state.content_sources = []
+    if "last_check" not in st.session_state:
+        st.session_state.last_check = None
+    if "content_suggestions" not in st.session_state:
+        st.session_state.content_suggestions = []
+    
+    # =====================================================
+    # GESTIÓN DE FUENTES
+    # =====================================================
+    st.markdown("### 🔗 Gestión de Fuentes")
+    
+    col_add, col_list = st.columns([2, 3])
+    
+    with col_add:
+        st.markdown("**➕ Añadir nueva fuente**")
+        source_type = st.selectbox("Tipo de fuente", 
+                                   ["📰 RSS Feed", "🌐 Página Web", "💼 LinkedIn Company", "🐦 Twitter/X", "📊 Informe/Estudio", "📧 Newsletter"],
+                                   key="tab4_source_type")
+        
+        source_url = st.text_input("URL / Identificador", 
+                                   placeholder="https://... o @username", 
+                                   key="tab4_source_url")
+        
+        source_category = st.selectbox("Categoría", 
+                                       ["Competencia", "Tendencias Sector", "Clientes Potenciales", "Medios/Press", "Influencers", "Otros"],
+                                       key="tab4_source_cat")
+        
+        source_priority = st.select_slider("Prioridad", options=["Baja", "Media", "Alta", "Crítica"], value="Media", key="tab4_source_prio")
+        
+        if st.button("➕ Añadir Fuente", type="primary", use_container_width=True, key="tab4_add_source_btn"):
+            if source_url.strip():
+                new_source = {
+                    "id": datetime.now().timestamp(),
+                    "type": source_type,
+                    "url": source_url.strip(),
+                    "category": source_category,
+                    "priority": source_priority,
+                    "added": datetime.now().isoformat(),
+                    "last_checked": None,
+                    "status": "active"
+                }
+                st.session_state.content_sources.append(new_source)
+                st.success(f"✅ Fuente añadida: {source_url[:50]}...")
+                st.rerun()
+            else:
+                st.error("❌ Introduce una URL válida")
+    
+    with col_list:
+        st.markdown(f"**📋 Fuentes activas ({len(st.session_state.content_sources)})**")
+        
+        if st.session_state.content_sources:
+            for i, src in enumerate(st.session_state.content_sources):
+                with st.container():
+                    col1, col2, col3 = st.columns([4, 1, 1])
+                    with col1:
+                        st.markdown(f"**{src['type']}** - {src['category']}")
+                        st.caption(f"{src['url'][:60]}...")
+                        st.markdown(f"Prioridad: {src['priority']} | Añadida: {src['added'][:10]}")
+                    with col2:
+                        if st.button("🗑️", key=f"tab4_del_src_{i}", help="Eliminar fuente"):
+                            st.session_state.content_sources.pop(i)
+                            st.rerun()
+                    with col3:
+                        status_icon = "🟢" if src.get("status") == "active" else "🔴"
+                        st.markdown(status_icon)
+                    st.markdown("---")
+        else:
+            st.info("💡 Añade fuentes para comenzar el monitoreo")
+    
+    # =====================================================
+    # REVISIÓN AUTOMÁTICA (CADA 24H)
+    # =====================================================
+    st.markdown("---")
+    st.markdown("### 🔄 Revisión de Contenidos")
+    
+    col_check, col_info = st.columns([2, 3])
+    
+    with col_check:
+        if st.button("🔍 Revisar fuentes ahora", type="primary", use_container_width=True, key="tab4_manual_check"):
+            with st.spinner(" Analizando fuentes..."):
+                suggestions = []
+                
+                for src in st.session_state.content_sources:
+                    if src.get("status") != "active":
+                        continue
+                    
+                    try:
+                        # 🔧 Simulación de análisis (en producción usarías scraping/RSS)
+                        # Aquí usamos Perplexity para analizar la fuente
+                        pplx = OpenAI(api_key=st.session_state.perplexity_key, base_url="https://api.perplexity.ai")
+                        
+                        prompt = f"""Analiza esta fuente y extrae:
+                        1. Últimas noticias/tendencias relevantes
+                        2. Oportunidades de contenido detectadas
+                        3. Temas candentes o controvertidos
+                        4. Posibles ángulos para crear contenido
+
+                        Fuente: {src['url']}
+                        Tipo: {src['type']}
+                        Categoría: {src['category']}
+
+                        Responde en JSON:
+                        {{
+                            "trends": ["tendencia 1", "tendencia 2"],
+                            "opportunities": ["oportunidad 1", "oportunidad 2"],
+                            "hot_topics": ["tema 1", "tema 2"],
+                            "content_angles": ["ángulo 1", "ángulo 2"],
+                            "urgency": "baja/media/alta"
+                        }}"""
+                        
+                        response = pplx.chat.completions.create(
+                            model="sonar",
+                            messages=[{"role": "user", "content": prompt}]
+                        )
+                        
+                        # Parsear respuesta
+                        content = response.choices[0].message.content
+                        try:
+                            analysis = json.loads(content)
+                        except:
+                            analysis = {
+                                "trends": ["Análisis no disponible"],
+                                "opportunities": ["Revisar manualmente"],
+                                "hot_topics": [],
+                                "content_angles": [],
+                                "urgency": "media"
+                            }
+                        
+                        # Crear sugerencia
+                        suggestion = {
+                            "source_id": src["id"],
+                            "source_url": src["url"],
+                            "source_type": src["type"],
+                            "category": src["category"],
+                            "priority": src["priority"],
+                            "trends": analysis.get("trends", []),
+                            "opportunities": analysis.get("opportunities", []),
+                            "hot_topics": analysis.get("hot_topics", []),
+                            "content_angles": analysis.get("content_angles", []),
+                            "urgency": analysis.get("urgency", "media"),
+                            "detected_at": datetime.now().isoformat(),
+                            "status": "new"
+                        }
+                        
+                        suggestions.append(suggestion)
+                        
+                        # Actualizar última revisión
+                        src["last_checked"] = datetime.now().isoformat()
+                        
+                    except Exception as e:
+                        st.warning(f"⚠️ Error analizando {src['url'][:40]}...: {str(e)[:50]}")
+                
+                # Guardar sugerencias
+                st.session_state.content_suggestions = suggestions
+                st.session_state.last_check = datetime.now()
+                
+                st.success(f"✅ Revisión completada: {len(suggestions)} sugerencias generadas")
+                st.rerun()
+    
+    with col_info:
+        if st.session_state.last_check:
+            next_check = st.session_state.last_check + timedelta(hours=24)
+            time_remaining = next_check - datetime.now()
+            
+            st.info(f"""
+            **Última revisión:** {st.session_state.last_check.strftime('%d/%m/%Y %H:%M')}
+            
+            **Próxima revisión automática:** {next_check.strftime('%d/%m/%Y %H:%M')}
+            
+            **Tiempo restante:** {time_remaining.seconds // 3600}h {(time_remaining.seconds % 3600) // 60}m
+            """)
+        else:
+            st.info(" Sin revisiones programadas. Haz clic en 'Revisar fuentes ahora' para comenzar.")
+    
+    # =====================================================
+    # SUGERENCIAS DE CONTENIDO
+    # =====================================================
+    if st.session_state.content_suggestions:
+        st.markdown("---")
+        st.markdown(f"### 💡 Sugerencias de Contenido ({len(st.session_state.content_suggestions)})")
+        
+        # Filtros
+        col_filter1, col_filter2 = st.columns(2)
+        with col_filter1:
+            filter_category = st.multiselect("Filtrar por categoría", 
+                                            list(set(s["category"] for s in st.session_state.content_suggestions)),
+                                            key="tab4_filter_cat")
+        with col_filter2:
+            filter_urgency = st.selectbox("Prioridad", ["Todas", "Alta", "Media", "Baja"], key="tab4_filter_urg")
+        
+        # Filtrar sugerencias
+        filtered = st.session_state.content_suggestions
+        if filter_category:
+            filtered = [s for s in filtered if s["category"] in filter_category]
+        if filter_urgency != "Todas":
+            filtered = [s for s in filtered if s["urgency"] == filter_urgency.lower()]
+        
+        # Mostrar sugerencias
+        for i, sug in enumerate(filtered):
+            with st.expander(f"{'🔴' if sug['urgency']=='alta' else '🟡' if sug['urgency']=='media' else '🟢'} {sug['source_type']} - {sug['category']}", expanded=(sug['urgency']=='alta')):
+                
+                col_s1, col_s2 = st.columns([3, 1])
+                
+                with col_s1:
+                    st.markdown(f"**Fuente:** [{sug['source_url'][:80]}...]({sug['source_url']})")
+                    st.caption(f"Detectado: {sug['detected_at'][:16]} | Prioridad: {sug['priority']}")
+                
+                with col_s2:
+                    if st.button("✍️ Crear contenido", key=f"tab4_create_{i}", type="primary"):
+                        # Preparar datos para Tab 1
+                        st.session_state.tab1_query_mode = " Personalizada"
+                        st.session_state.tab1_custom_query = f"""
+                        Basándome en esta fuente: {sug['source_url']}
+                        
+                        Tendencias detectadas: {', '.join(sug['trends'][:3])}
+                        
+                        Oportunidades: {', '.join(sug['opportunities'][:2])}
+                        
+                        Genera un análisis completo sobre: {sug['hot_topics'][0] if sug['hot_topics'] else sug['trends'][0]}
+                        """
+                        st.session_state.tab1_from_monitor = True
+                        st.switch_tab("tab1")  # O st.tabs si usas índice
+                        st.success("📋 Datos copiados al Tab 1. Genera el contenido ahora.")
+                
+                st.markdown("---")
+                
+                # Tendencias
+                if sug.get("trends"):
+                    st.markdown("**📈 Tendencias detectadas:**")
+                    for t in sug["trends"]:
+                        st.markdown(f"• {t}")
+                
+                # Oportunidades
+                if sug.get("opportunities"):
+                    st.markdown("**🎯 Oportunidades de contenido:**")
+                    for o in sug["opportunities"]:
+                        st.markdown(f"✓ {o}")
+                
+                # Temas candentes
+                if sug.get("hot_topics"):
+                    st.markdown("**🔥 Temas candentes:**")
+                    st.markdown(", ".join(sug["hot_topics"]))
+                
+                # Ángulos de contenido
+                if sug.get("content_angles"):
+                    st.markdown("**💡 Ángulos sugeridos:**")
+                    for a in sug["content_angles"]:
+                        st.markdown(f"→ {a}")
+                
+                # Acciones
+                col_act1, col_act2, col_act3 = st.columns(3)
+                with col_act1:
+                    if st.button("📋 Copiar sugerencia", key=f"tab4_copy_{i}"):
+                        st.code(f"Fuente: {sug['source_url']}\nTema: {sug['hot_topics'][0] if sug['hot_topics'] else sug['trends'][0]}\nÁngulo: {sug['content_angles'][0] if sug['content_angles'] else 'Crear contenido sobre tendencias'}", language="text")
+                with col_act2:
+                    if st.button("⭐ Marcar como vista", key=f"tab4_mark_{i}"):
+                        sug["status"] = "reviewed"
+                        st.rerun()
+                with col_act3:
+                    if st.button("🗑️ Descartar", key=f"tab4_discard_{i}"):
+                        st.session_state.content_suggestions.remove(sug)
+                        st.rerun()
+    
+    # =====================================================
+    # CONFIGURACIÓN AVANZADA
+    # =====================================================
+    st.markdown("---")
+    with st.expander("⚙️ Configuración del Monitor"):
+        st.markdown("**🔄 Frecuencia de revisión**")
+        check_freq = st.selectbox("Cada cuánto revisar", ["6 horas", "12 horas", "24 horas", "48 horas"], index=2, key="tab4_freq")
+        
+        st.markdown("**📊 Notificaciones**")
+        notify_email = st.text_input("Email para notificaciones (opcional)", placeholder="tu@email.com", key="tab4_notify_email")
+        notify_slack = st.text_input("Webhook Slack (opcional)", placeholder="https://hooks.slack.com/...", key="tab4_notify_slack")
+        
+        st.markdown("**💾 Guardar configuración**")
+        if st.button("💾 Guardar preferencias", key="tab4_save_config"):
+            st.session_state.monitor_config = {
+                "frequency": check_freq,
+                "notify_email": notify_email,
+                "notify_slack": notify_slack
+            }
+            st.success("✅ Configuración guardada")
+        
+        st.info("💡 **Nota:** Las revisiones automáticas requieren que la app esté activa. En Streamlit Cloud, considera usar GitHub Actions o un cron job externo para revisiones automáticas cada 24h.")
+    
+    # =====================================================
+    # IMPORTAR/EXPORTAR FUENTES
+    # =====================================================
+    st.markdown("---")
+    col_imp, col_exp = st.columns(2)
+    
+    with col_imp:
+        st.markdown("**📥 Importar fuentes**")
+        uploaded = st.file_uploader("Subir JSON de fuentes", type=["json"], key="tab4_import")
+        if uploaded:
+            try:
+                data = json.load(uploaded)
+                st.session_state.content_sources.extend(data.get("sources", []))
+                st.success(f"✅ {len(data.get('sources', []))} fuentes importadas")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
+    
+    with col_exp:
+        st.markdown("**📤 Exportar fuentes**")
+        if st.button("⬇️ Descargar configuración", key="tab4_export"):
+            export_data = {
+                "sources": st.session_state.content_sources,
+                "exported_at": datetime.now().isoformat(),
+                "version": "1.0"
+            }
+            st.download_button(
+                "⬇️ Descargar JSON",
+                json.dumps(export_data, indent=2, ensure_ascii=False),
+                file_name=f"kaibot_sources_{datetime.now().strftime('%Y%m%d')}.json",
+                mime="application/json",
+                key="tab4_dl_sources"
+            )
+
+# =====================================================
 # FOOTER KAIBOT
 # =====================================================
 
