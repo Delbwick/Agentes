@@ -803,74 +803,272 @@ FUENTES
                 key="tab1_dl_pro_content"
             )
 
+                # =====================================================
+        # PASO 5: INFOGRAFÍA PROFESIONAL (HTML/CSS)
         # =====================================================
-        # PASO 5: INFOGRAFÍA (PILLOW)
-        # =====================================================
-        st.markdown("---\n### 🖼️ Paso 5: Generar Infografía Visual")
-        try:
-            from PIL import Image, ImageDraw, ImageFont
-            from io import BytesIO
-            PIL_OK = True
-        except ImportError:
-            PIL_OK = False
-            st.error("📦 Falta `Pillow`. Ejecuta `pip install Pillow`.")
-            
-        if PIL_OK:
-            st_info = st.selectbox("🎨 Estilo", ["professional", "dark", "clean"], format_func=lambda x: {"professional":"🏢 Profesional", "dark":"🌑 Dark", "clean":"☁️ Minimalista"}[x], key="tab1_inf_style")
-            if st.button("🖼️ Generar Infografía", type="primary", use_container_width=True, key="tab1_gen_inf"):
-                with st.spinner("🎨 Generando..."):
-                    try:
-                        W, H = 1080, 1920
-                        colors = {"professional": ("#FFFFFF","#0066CC","#1E293B","#10B981","#F8FAFC"), "dark": ("#1E293B","#0F172A","#E2E8F0","#3B82F6","#334155"), "clean": ("#FFFFFF","#F8FAFC","#64748B","#0066CC","#F1F5F9")}[st_info]
-                        bg, hdr, txt, acc, light = colors
-                        img = Image.new('RGB', (W, H), color=bg)
-                        draw = ImageDraw.Draw(img)
-                        try: fT = ImageFont.truetype("arial.ttf", 60); fS = ImageFont.truetype("arial.ttf", 36); fB = ImageFont.truetype("arial.ttf", 32)
-                        except: fT = fS = fB = ImageFont.load_default()
+        st.markdown("---\n### ️ Paso 5: Generar Infografía Profesional")
+        
+        # Opciones de estilo
+        col_style, col_layout = st.columns(2)
+        with col_style:
+            inf_style = st.selectbox(
+                "🎨 Estilo visual",
+                ["KaiBot Corporativo", "Modern Gradient", "Minimal Clean"],
+                key="tab1_inf_style"
+            )
+        with col_layout:
+            inf_layout = st.selectbox(
+                "📐 Layout",
+                ["Vertical (Móvil/Email)", "Horizontal (Presentación)"],
+                key="tab1_inf_layout"
+            )
+        
+        if st.button("🖼️ Generar Infografía Visual", type="primary", use_container_width=True, key="tab1_gen_infographic"):
+            with st.spinner("🎨 Diseñando infografía..."):
+                try:
+                    # Datos
+                    summary = final_data.get("summary", "")
+                    points = final_data.get("key_points", [])
+                    actions = final_data.get("recommended_actions", [])
+                    sources = final_data.get("sources", [])
+                    confidence = final_data.get("confidence_level", "medio")
+                    
+                    # Limpiar puntos
+                    clean_points = []
+                    for p in points[:4]:
+                        p = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE).strip()
+                        if p: clean_points.append(p)
+                    
+                    # Configuración de estilos
+                    themes = {
+                        "KaiBot Corporativo": {
+                            "primary": "#0066CC", "secondary": "#0052A3", "accent": "#10B981",
+                            "bg": "#F8FAFC", "card_bg": "#FFFFFF", "text": "#1E293B", "text_light": "#64748B",
+                            "header_grad": "linear-gradient(135deg, #0066CC 0%, #003d7a 100%)",
+                            "font": "'Inter', -apple-system, BlinkMacSystemFont, sans-serif"
+                        },
+                        "Modern Gradient": {
+                            "primary": "#6366F1", "secondary": "#8B5CF6", "accent": "#F59E0B",
+                            "bg": "#F3F4F6", "card_bg": "#FFFFFF", "text": "#111827", "text_light": "#6B7280",
+                            "header_grad": "linear-gradient(135deg, #6366F1 0%, #EC4899 100%)",
+                            "font": "'Inter', sans-serif"
+                        },
+                        "Minimal Clean": {
+                            "primary": "#1E293B", "secondary": "#334155", "accent": "#0EA5E9",
+                            "bg": "#FFFFFF", "card_bg": "#F8FAFC", "text": "#0F172A", "text_light": "#475569",
+                            "header_grad": "linear-gradient(135deg, #1E293B 0%, #334155 100%)",
+                            "font": "system-ui, -apple-system, sans-serif"
+                        }
+                    }
+                    theme = themes[inf_style]
+                    is_horizontal = inf_layout == "Horizontal (Presentación)"
+                    
+                    # Generar HTML profesional
+                    html_content = f"""
+                    <!DOCTYPE html>
+                    <html lang="es">
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>KaiBot Infografía</title>
+                        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+                        <style>
+                            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+                            body {{ 
+                                font-family: {theme['font']}; 
+                                background: {theme['bg']}; 
+                                color: {theme['text']};
+                                line-height: 1.5;
+                            }}
+                            .infographic {{
+                                max-width: {1200 if is_horizontal else 800}px;
+                                margin: 0 auto;
+                                background: white;
+                                border-radius: 16px;
+                                overflow: hidden;
+                                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                            }}
+                            .header {{
+                                background: {theme['header_grad']};
+                                color: white;
+                                padding: 40px;
+                                position: relative;
+                            }}
+                            .header::after {{
+                                content: '';
+                                position: absolute;
+                                bottom: -20px;
+                                left: 0;
+                                right: 0;
+                                height: 40px;
+                                background: white;
+                                border-radius: 20px 20px 0 0;
+                            }}
+                            .logo {{ font-size: 14px; font-weight: 600; opacity: 0.9; margin-bottom: 10px; }}
+                            .title {{ font-size: 28px; font-weight: 700; margin-bottom: 15px; line-height: 1.3; }}
+                            .subtitle {{ font-size: 16px; opacity: 0.9; line-height: 1.5; }}
+                            .content {{ padding: 30px 40px 40px; }}
+                            .section {{ margin-bottom: 35px; }}
+                            .section-title {{
+                                font-size: 20px;
+                                font-weight: 700;
+                                margin-bottom: 20px;
+                                color: {theme['primary']};
+                                display: flex;
+                                align-items: center;
+                                gap: 10px;
+                            }}
+                            .section-title::before {{
+                                content: '';
+                                width: 4px;
+                                height: 24px;
+                                background: {theme['accent']};
+                                border-radius: 2px;
+                            }}
+                            .points-grid {{
+                                display: grid;
+                                grid-template-columns: repeat({2 if is_horizontal else 1}, 1fr);
+                                gap: 15px;
+                            }}
+                            .point-card {{
+                                background: {theme['card_bg']};
+                                border: 1px solid #E2E8F0;
+                                border-radius: 12px;
+                                padding: 20px;
+                                position: relative;
+                                transition: transform 0.2s;
+                            }}
+                            .point-card:hover {{ transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.05); }}
+                            .point-icon {{
+                                position: absolute;
+                                top: -10px;
+                                left: 20px;
+                                background: {theme['accent']};
+                                color: white;
+                                width: 24px;
+                                height: 24px;
+                                border-radius: 50%;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                font-size: 12px;
+                                font-weight: 700;
+                            }}
+                            .point-text {{ font-size: 15px; line-height: 1.6; margin-top: 5px; }}
+                            .actions-list {{ list-style: none; }}
+                            .actions-list li {{
+                                padding: 15px 20px;
+                                margin-bottom: 10px;
+                                background: {theme['card_bg']};
+                                border-left: 4px solid {theme['accent']};
+                                border-radius: 0 8px 8px 0;
+                                font-size: 15px;
+                            }}
+                            .sources {{
+                                background: #F8FAFC;
+                                border-radius: 12px;
+                                padding: 20px;
+                                margin-top: 30px;
+                            }}
+                            .sources-title {{ font-size: 14px; font-weight: 600; color: {theme['text_light']}; margin-bottom: 10px; }}
+                            .sources-list {{ font-size: 13px; color: {theme['text_light']}; }}
+                            .sources-list a {{ color: {theme['primary']}; text-decoration: none; }}
+                            .footer {{
+                                background: {theme['text']};
+                                color: white;
+                                padding: 20px 40px;
+                                text-align: center;
+                                font-size: 13px;
+                                opacity: 0.9;
+                            }}
+                            .badge {{
+                                display: inline-block;
+                                background: {theme['accent']};
+                                color: white;
+                                padding: 4px 12px;
+                                border-radius: 20px;
+                                font-size: 12px;
+                                font-weight: 600;
+                                margin-left: 10px;
+                            }}
+                            @media print {{
+                                .infographic {{ box-shadow: none; }}
+                                body {{ background: white; }}
+                            }}
+                        </style>
+                    </head>
+                    <body>
+                        <div class="infographic">
+                            <div class="header">
+                                <div class="logo"> KAIBOT | ANÁLISIS IA VALIDADO</div>
+                                <div class="title">{summary[:100]}{'...' if len(summary) > 100 else ''}</div>
+                                <div class="subtitle">Confianza: {confidence.upper()} {chr(128994) if confidence == 'alto' else chr(128992) if confidence == 'medio' else chr(128308)} | {datetime.now().strftime('%d/%m/%Y')}</div>
+                            </div>
+                            <div class="content">
+                                <div class="section">
+                                    <div class="section-title">🔍 Puntos Clave</div>
+                                    <div class="points-grid">
+                                        {''.join([f'<div class="point-card"><div class="point-icon">{i+1}</div><div class="point-text">{p}</div></div>' for i, p in enumerate(clean_points)])}
+                                    </div>
+                                </div>
+                                <div class="section">
+                                    <div class="section-title">🎯 Acciones Recomendadas</div>
+                                    <ul class="actions-list">
+                                        {''.join([f'<li>{a}</li>' for a in actions[:3]])}
+                                    </ul>
+                                </div>
+                                {f'''
+                                <div class="sources">
+                                    <div class="sources-title">🔗 Fuentes Verificadas ({len(sources)})</div>
+                                    <div class="sources-list">
+                                        {'<br>'.join([f'{i+1}. <a href="{s}" target="_blank">{s.split("://")[1][:50]}...</a>' if s.startswith("http") else f'{i+1}. {s}' for i, s in enumerate(sources[:5])])}
+                                    </div>
+                                </div>
+                                ''' if sources else ''}
+                            </div>
+                            <div class="footer">
+                                Generado con KaiBot IA • Especialistas en Marketing Digital B2B • kaibot.es
+                            </div>
+                        </div>
+                    </body>
+                    </html>
+                    """
+                    
+                    # Mostrar preview y opciones
+                    st.success("✅ Infografía generada")
+                    
+                    # Preview en iframe
+                    st.components.v1.html(html_content, height=800 if is_horizontal else 1000, scrolling=True)
+                    
+                    # Botones de descarga
+                    col_html, col_pdf = st.columns(2)
+                    
+                    with col_html:
+                        st.download_button(
+                            "⬇️ Descargar HTML (Editable)",
+                            html_content,
+                            file_name=f"kaibot_infografia_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
+                            mime="text/html",
+                            use_container_width=True,
+                            key="tab1_dl_html"
+                        )
+                        st.caption(" Abre el HTML en navegador → Imprimir → Guardar como PDF")
+                    
+                    with col_pdf:
+                        st.info(" Para PDF: Abre el HTML → Ctrl+P → 'Guardar como PDF' → Tamaño A4")
                         
-                        def wrap(draw, text, y, font, mw, color, lh=44):
-                            words, lines = text.split(), []
-                            line = []
-                            for w in words:
-                                test = " ".join(line+[w])
-                                try: tw = draw.textbbox((0,0), test, font=font)[2]
-                                except: tw = draw.textlength(test, font=font)
-                                if tw <= mw: line.append(w)
-                                else: lines.append(" ".join(line)); line = [w]
-                            if line: lines.append(" ".join(line))
-                            for l in lines: draw.text((80, y), l, font=font, fill=color); y += lh
-                            return y
-                            
-                        draw.rectangle([0,0,W,400], fill=hdr)
-                        draw.text((80,100), "KAIBOT | ANÁLISIS IA", font=fS, fill="#FFF")
-                        draw.ellipse([80,200,160,280], fill="#FFF")
-                        draw.text((95,215), "KB", font=fS, fill=hdr)
+                    # Instrucciones
+                    with st.expander("💡 Cómo usar esta infografía"):
+                        st.markdown("""
+                        1. **Descarga el HTML** y ábrelo en Chrome/Edge
+                        2. **Personaliza**: Edita el HTML directamente si necesitas ajustar textos
+                        3. **Exporta a PDF**: Ctrl+P (Cmd+P en Mac) → Destino: "Guardar como PDF" → Tamaño: A4
+                        4. **Para redes**: Haz captura de pantalla del HTML o usa herramientas como "GoFullPage" (extensión Chrome)
+                        5. **Para email**: Puedes insertar el contenido directamente en emails HTML
+                        """)
                         
-                        y = wrap(draw, final_data.get("summary","")[:300], 450, fB, W-160, txt)
-                        y = wrap(draw, "🔍 PUNTOS CLAVE", y+60, fS, W-160, acc)
-                        for p in final_data.get("key_points",[])[:4]:
-                            cp = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)[:200]
-                            draw.rectangle([60,y-10,W-60,y+100], fill=light, outline=acc, width=4)
-                            draw.text((90, y), f"{'✅' if 'validado' in p.lower() else '⚠️'} {cp}", font=fB, fill=txt)
-                            y += 120
-                            
-                        y = wrap(draw, "🎯 ACCIONES", y+40, fS, W-160, acc)
-                        for a in final_data.get("recommended_actions",[])[:3]:
-                            y = wrap(draw, f"• {a[:180]}", y+20, fB, W-160, txt)
-                            
-                        draw.rectangle([0,H-300,W,H], fill=hdr)
-                        draw.text((80,H-250), f"🔗 {len(final_data.get('sources',[]))} fuentes verificadas", font=fB, fill="#FFF")
-                        draw.text((80,H-200), f"Generado con KaiBot IA | {datetime.now().strftime('%d/%m/%Y')}", font=ImageFont.load_default(), fill="#94A3B8")
-                        
-                        buf = BytesIO()
-                        img.save(buf, format="PNG")
-                        buf.seek(0)
-                        st.success("✅ Infografía generada")
-                        st.image(buf, caption="Vista previa", use_container_width=True)
-                        st.download_button("⬇️ Descargar PNG", buf, file_name=f"kaibot_inf_{datetime.now().strftime('%Y%m%d_%H%M')}.png", mime="image/png", key="tab1_dl_png")
-                    except Exception as e:
-                        st.error(f"❌ Error generando imagen: {e}")
-            st.caption("💡 ¿Prefieres editar visualmente? Exporta el JSON e impórtalo en [Gamma.app](https://gamma.app)")
+                except Exception as e:
+                    st.error(f"❌ Error generando infografía: {e}")
 
         # =====================================================
         # GUARDAR / DESCARGAR JSON
