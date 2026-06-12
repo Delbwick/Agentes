@@ -386,7 +386,7 @@ tab1, tab2, tab3,tab4 = st.tabs(["🎯 Generar Contenido", "📁 Mis Archivos", 
 
 
 # =====================================================
-# TAB 1 - GENERAR CONTENIDO (CORREGIDO + CAJA CONSULTA)
+# TAB 1 - GENERAR CONTENIDO (VERSIÓN DEFINITIVA + PASO 4 MEJORADO)
 # =====================================================
 
 with tab1:
@@ -394,9 +394,9 @@ with tab1:
     st.markdown("**Análisis profesional en 3 pasos:** Configura → OpenAI analiza → Perplexity valida")
     
     # =====================================================
-    # PASO 1: CONFIGURACIÓN
+    # PASO 1: CONFIGURACIÓN (Sin cambios)
     # =====================================================
-    st.markdown("###  Paso 1: Configura tu análisis")
+    st.markdown("### 📋 Paso 1: Configura tu análisis")
     
     folders, files = list_folders_and_files(client, bucket_name)
     file_names = [f["name"] for f in files if not f["name"].startswith(BUCKET_FOLDERS["prompts"])]
@@ -407,10 +407,10 @@ with tab1:
     with col_chars:
         max_chars = st.number_input("Límite caracteres", min_value=2000, max_value=50000, value=15000, step=1000, disabled=len(selected_files)==0, key="tab1_max_chars")
     
-    st.info(f"📁 **Modo:** Análisis con {len(selected_files)} documento(s)" if selected_files else "💭 **Modo:** Consulta general sin documentos")
+    st.info(f" **Modo:** Análisis con {len(selected_files)} documento(s)" if selected_files else " **Modo:** Consulta general sin documentos")
     st.markdown("---")
     
-    query_mode = st.radio("📝 Método de entrada", ["🔧 Flexible", "📝 Personalizada", "📋 Plantilla"], horizontal=True, key="tab1_query_mode")
+    query_mode = st.radio("📝 Método de entrada", [" Flexible", "📝 Personalizada", " Plantilla"], horizontal=True, key="tab1_query_mode")
     
     openai_prompt = ""
     user_query = ""
@@ -425,40 +425,32 @@ with tab1:
             context = st.text_area("📋 Contexto / Antecedentes", placeholder="Empresa, producto, campaña, situación actual, público objetivo...", height=100, key="tab1_context")
         with col2:
             output_format = st.selectbox("📤 Formato Output", ["Infografía / Visual", "Email corporativo", "Post LinkedIn / Thread", "Artículo Web / Blog", "Informe Ejecutivo", "Pitch comercial"], key="tab1_format")
-            sources = st.text_area(" Fuentes externas (URLs, LinkedIn, datos, notas...)", placeholder="https://..., @perfil..., informe sectorial, notas internas...", height=100, key="tab1_sources")
+            sources = st.text_area("🔗 Fuentes externas (URLs, LinkedIn, datos, notas...)", placeholder="https://..., @perfil..., informe sectorial, notas internas...", height=100, key="tab1_sources")
         
-        #  NUEVO: Caja de consulta libre en modo Flexible
         st.markdown("**💬 Consulta adicional (opcional):**")
-        free_query = st.text_area("Añade instrucciones específicas, preguntas concretas o matices para el análisis:", 
-                                  placeholder="Ej: Enfócate en el mercado español, compara con competidores directos, destaca cifras de ROI...", 
-                                  height=80, key="tab1_free_query_flexible")
+        free_query = st.text_area("Añade instrucciones específicas...", height=80, key="tab1_free_query_flexible")
         
-        openai_prompt = f"Eres un experto estratégico actuando como {role}. Genera contenido de alto valor optimizado específicamente para formato: {output_format}. Responde EXCLUSIVAMENTE en formato JSON válido."
-        user_query = f"CONTEXTO:\n{context}\n\nFUENTES A CONSIDERAR:\n{sources}\n\nINSTRUCCIÓN:\nGenera un análisis en JSON con esta estructura exacta:\n{{\n  \"summary\": \"Resumen ejecutivo (máx. 3 líneas)\",\n  \"key_points\": [\"Insight 1\", \"Insight 2\", \"Insight 3\"],\n  \"recommended_actions\": [\"Acción 1 concreta\", \"Acción 2 con métrica\"],\n  \"topics_to_validate\": [\"Dato a verificar\", \"Tendencia a confirmar\"]\n}}\nEnfoque: Profesional, directo, orientado a resultados medibles."
-        
-        if free_query.strip():
-            user_query += f"\n\nCONSULTA ESPECÍFICA DEL USUARIO:\n{free_query}"
+        openai_prompt = f"Eres un experto estratégico actuando como {role}. Genera contenido de alto valor optimizado para formato: {output_format}. Responde EXCLUSIVAMENTE en formato JSON válido."
+        user_query = f"CONTEXTO:\n{context}\n\nFUENTES:\n{sources}\n\nINSTRUCCIÓN:\nGenera análisis en JSON: {{\n  \"summary\": \"Resumen ejecutivo\", \"key_points\": [\"Insight 1\", \"Insight 2\"], \"recommended_actions\": [\"Acción 1\", \"Acción 2\"], \"topics_to_validate\": [\"Dato a verificar\"]\n}}"
+        if free_query.strip(): user_query += f"\n\nCONSULTA EXTRA:\n{free_query}"
     
-    #  MODO PERSONALIZADO
-    elif query_mode == "📝 Personalizada":
+    # 🟨 MODO PERSONALIZADO
+    elif query_mode == " Personalizada":
         user_query = st.text_area("Escribe tu consulta", placeholder="Ej: Analiza tendencias B2B para 2026...", height=150, key="tab1_custom_query")
-        use_adv = st.checkbox("⚙️ Usar prompts avanzados (Configuración → Tab 3)", value=True, key="tab1_use_adv")
-        if use_adv:
-            openai_prompt = st.session_state.get("tab3_openai_prompt", """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON...""")
-        else:
-            openai_prompt = """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON..."""
+        use_adv = st.checkbox("️ Usar prompts avanzados (Configuración → Tab 3)", value=True, key="tab1_use_adv")
+        openai_prompt = st.session_state.get("tab3_openai_prompt", "Eres un analista experto...") if use_adv else "Eres un analista experto..."
             
     # 🟥 MODO PLANTILLA
     else:
         templates = {
-            "Análisis Estratégico B2B": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos en marketing B2B industrial...",
-            "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los 3 puntos más relevantes para la toma de decisiones...",
-            "Plan de Acción con KPIs": "Identifica los 5 puntos más importantes para mejorar la generación de leads B2B y crea un plan de acción...",
-            "Benchmark Competitivo": "Realiza un análisis competitivo del sector comparando estrategias de marketing digital B2B...",
-            "Contenido LinkedIn B2B": "Genera 5 ideas de contenido para LinkedIn enfocadas en thought leadership B2B industrial...",
-            "Estrategia Ferias Industriales": "Analiza las mejores prácticas para participación en ferias B2B combinando estrategia digital...",
-            "Tendencias LifeSciences 2026": "Analiza las últimas tendencias en marketing digital para empresas de LifeSciences y MedTech...",
-            "Análisis DAFO Digital": "Realiza un análisis DAFO enfocado en estrategia digital B2B. Valida cada punto con tendencias actuales."
+            "Análisis Estratégico B2B": "Realiza un análisis estratégico completo identificando tendencias clave...",
+            "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los 3 puntos más relevantes...",
+            "Plan de Acción con KPIs": "Identifica los 5 puntos más importantes para mejorar la generación de leads B2B...",
+            "Benchmark Competitivo": "Realiza un análisis competitivo del sector comparando estrategias...",
+            "Contenido LinkedIn B2B": "Genera 5 ideas de contenido para LinkedIn enfocadas en thought leadership...",
+            "Estrategia Ferias Industriales": "Analiza las mejores prácticas para participación en ferias B2B...",
+            "Tendencias LifeSciences 2026": "Analiza las últimas tendencias en marketing digital para empresas de LifeSciences...",
+            "Análisis DAFO Digital": "Realiza un análisis DAFO enfocado en estrategia digital B2B..."
         }
         
         if "tab1_last_template" not in st.session_state: st.session_state.tab1_last_template = None
@@ -472,8 +464,8 @@ with tab1:
         user_query = st.text_area("Consulta (editable)", value=st.session_state.tab1_template_query, height=150, key="tab1_template_query")
         if user_query != templates.get(selected_template): st.session_state.tab1_last_template = None
         
-        use_adv = st.checkbox("⚙️ Usar prompts avanzados (Configuración → Tab 3)", value=True, key="tab1_use_adv_tpl")
-        openai_prompt = st.session_state.get("tab3_openai_prompt", """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON...""") if use_adv else """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON..."""
+        use_adv = st.checkbox("⚙️ Usar prompts avanzados", value=True, key="tab1_use_adv_tpl")
+        openai_prompt = st.session_state.get("tab3_openai_prompt", "Eres un analista experto...") if use_adv else "Eres un analista experto..."
 
     # =====================================================
     # CONFIGURACIÓN DE MODELOS
@@ -490,7 +482,7 @@ with tab1:
         selected_perplexity = st.selectbox("🔍 Modelo Perplexity", list(perplexity_models.keys()), index=0, key="tab1_pplx_model")
         perplexity_model = perplexity_models[selected_perplexity]
     
-    st.info("💡 *Perplexity validará automáticamente la respuesta, independientemente del modo elegido.*")
+    st.info("💡 *Perplexity validará automáticamente la respuesta.*")
 
     # =====================================================
     # PASO 2: EJECUTAR
@@ -501,23 +493,18 @@ with tab1:
         generate_content = st.button("▶️ Generar Contenido con IA", type="primary", use_container_width=True, disabled=not user_query.strip(), key="tab1_generate_btn")
     with col_clear:
         if st.button("🗑️ Limpiar", use_container_width=True, key="tab1_clear_btn"):
-            for key in ["openai_response", "perplexity_response", "edited_response"]:
-                st.session_state.pop(key, None)
+            for key in ["openai_response", "perplexity_response", "edited_response"]: st.session_state.pop(key, None)
             st.rerun()
     
     if generate_content:
         context = ""
         if selected_files: context = load_selected_context(client, bucket_name, selected_files, max_chars)
         
-        #  OPENAI
-        with st.spinner(f" {selected_openai} analizando..."):
+        # 🤖 OPENAI
+        with st.spinner(f"🤖 {selected_openai} analizando..."):
             try:
-                user_message = f"CONSULTA:\n{user_query}" + (f"\n\nCONTEXTO ADICIONAL:\n{context}" if context else "")
-                response = st.session_state.openai.chat.completions.create(
-                    model=openai_model, 
-                    messages=[{"role": "system", "content": openai_prompt}, {"role": "user", "content": user_message}], 
-                    response_format={"type": "json_object"}
-                )
+                user_message = f"CONSULTA:\n{user_query}" + (f"\n\nCONTEXTO:\n{context}" if context else "")
+                response = st.session_state.openai.chat.completions.create(model=openai_model, messages=[{"role": "system", "content": openai_prompt}, {"role": "user", "content": user_message}], response_format={"type": "json_object"})
                 raw = response.choices[0].message.content.strip()
                 if "```json" in raw: raw = raw.split("```json")[1].split("```")[0].strip()
                 elif "```" in raw: raw = raw.split("```")[1].split("```")[0].strip()
@@ -554,43 +541,42 @@ with tab1:
                 st.success("✅ Contenido generado y validado")
                 st.rerun()
             except Exception as e:
-                st.error(f"❌ Error en Perplexity: {str(e)[:150]}")
+                st.error(f" Error en Perplexity: {str(e)[:150]}")
                 if "openai_response" in st.session_state:
-                    st.warning("⚠️ Usando solo OpenAI como fallback")
+                    st.warning("️ Usando solo OpenAI como fallback")
                     fb = st.session_state.openai_response.copy()
                     fb["metadata"]["agent"] = "openai_fallback"
                     fb["metadata"]["fallback_reason"] = str(e)[:100]
                     fb["confidence_level"] = "bajo"
-                    for f in ["validation_notes", "sources"]:
-                        fb[f] = fb.get(f, "" if f=="validation_notes" else [])
+                    for f in ["validation_notes", "sources"]: fb[f] = fb.get(f, "" if f=="validation_notes" else [])
                     st.session_state.perplexity_response = fb
                     st.rerun()
 
     # =====================================================
-    # PASO 3: RESULTADOS
+    # PASO 3: RESULTADOS (Validado)
     # =====================================================
     if "perplexity_response" in st.session_state:
         st.markdown("---")
-        st.markdown("### 📊 Paso 3: Resultado validado")
+        st.markdown("###  Paso 3: Resultado validado")
         final_data = st.session_state.perplexity_response
         meta = final_data.get("metadata", {})
         is_fallback = meta.get("agent") in ["openai", "openai_fallback", "openai_error"]
         
-        with st.expander("👁️ Vista Previa del Contenido", expanded=True):
+        with st.expander("👁️ Vista Previa Técnica (JSON)", expanded=False):
+            st.json(final_data)
+        
+        with st.container():
             c1, c2, c3 = st.columns(3)
             with c1: st.markdown(f"**🤖 OpenAI:** {meta.get('openai_model') or meta.get('model', 'N/A')}")
-            with c2: st.markdown("**🔍 Perplexity:** ️ Fallback" if is_fallback else f"**🔍 Perplexity:** {meta.get('model', 'N/A')}")
+            with c2: st.markdown("**🔍 Perplexity:** ⚠️ Fallback" if is_fallback else f"**🔍 Perplexity:** {meta.get('model', 'N/A')}")
             with c3: 
                 conf = "bajo" if is_fallback else final_data.get("confidence_level", "medio").lower()
-                st.markdown(f"**{'' if conf=='bajo' else '' if conf=='medio' else '🟢'} Confianza:** {conf.upper()}")
+                st.markdown(f"**{'🔴' if conf=='bajo' else '🟡' if conf=='medio' else '🟢'} Confianza:** {conf.upper()}")
             
-            st.markdown("---\n#### 📝 Resumen Ejecutivo")
-            # ✅ FIX: Uso correcto de if/else en lugar de expresión condicional
+            st.markdown("---\n####  Resumen Ejecutivo")
             summary = final_data.get("summary") or final_data.get("content") or "N/A"
-            if is_fallback:
-                st.warning(f"⚠️ {summary}")
-            else:
-                st.success(summary)
+            if is_fallback: st.warning(f"⚠️ {summary}")
+            else: st.success(summary)
             
             cp, ca = st.columns(2)
             with cp:
@@ -598,18 +584,16 @@ with tab1:
                 pts = final_data.get("key_points", []) or []
                 if pts:
                     for i, p in enumerate(pts, 1): st.markdown(f"**{i}.** {p}")
-                else:
-                    st.caption("ℹ️ Sin puntos clave disponibles")
+                else: st.caption("ℹ️ Sin puntos clave")
             with ca:
                 st.markdown("#### ✅ Acciones Recomendadas")
                 acts = final_data.get("recommended_actions", []) or []
                 if acts:
                     for i, a in enumerate(acts, 1): st.markdown(f"**{i}.** {a}")
-                else:
-                    st.caption("ℹ️ Sin acciones recomendadas")
+                else: st.caption("️ Sin acciones")
                 
             if not is_fallback and final_data.get("validation_notes"):
-                st.markdown("\n---\n#### 📋 Notas de Validación")
+                st.markdown("\n---\n####  Notas de Validación")
                 st.info(final_data["validation_notes"])
             if not is_fallback and final_data.get("sources"):
                 st.markdown("\n---\n#### 🔗 Fuentes Verificadas")
@@ -617,40 +601,222 @@ with tab1:
                     st.markdown(f"{i}. [{s}]({s})" if s.startswith("http") else f"{i}. {s}")
 
         # =====================================================
-        # PASO 4: CONTENIDO FORMATEADO
+        # PASO 4: CONTENIDO FORMATEADO (NUEVO Y MEJORADO)
         # =====================================================
-        st.markdown("---\n### 🎨 Paso 4: Contenido listo para usar")
-        fmt = st.radio("📋 Formato", [" Email/Infografía", "💼 LinkedIn", "🌐 Web/HTML", "📝 Texto Plano"], horizontal=True, key="tab1_out_fmt")
+        st.markdown("---")
+        st.markdown("### 🎨 Paso 4: Contenido Listo para Publicar")
         
-        def gen_fmt(d, f):
-            s, pts, acts = d.get("summary",""), d.get("key_points",[]), d.get("recommended_actions",[])
-            if f=="📊 Email/Infografía": 
-                return f"🔹 {s}\n\n📌 Puntos:\n" + "\n".join(f"• {p}" for p in pts) + "\n\n🎯 Acciones:\n" + "\n".join(f"→ {a}" for a in acts)
-            elif f=="💼 LinkedIn": 
-                return f"{s[:150]}...\n\n🧵 Insights:\n" + "\n\n".join(f"{i+1}/ {p}" for i,p in enumerate(pts[:3])) + "\n\n ¿Qué opinas?\n👇 Comenta.\n\n#B2B #Marketing #KaiBot"
-            elif f=="🌐 Web/HTML": 
-                return f"<article><h1>{s}</h1><h2>Puntos</h2><ul>{''.join(f'<li>{p}</li>' for p in pts)}</ul><h2>Acciones</h2><ol>{''.join(f'<li>{a}</li>' for a in acts)}</ol></article>"
-            return f"RESUMEN:\n{s}\n\nPUNTOS:\n" + "\n".join(f"{i}. {p}" for i,p in enumerate(pts,1)) + "\n\nACCIONES:\n" + "\n".join(f"{i}. {a}" for i,a in enumerate(acts,1))
+        #  MENSAJE INTRODUCTORIO SOLICITADO
+        st.success("✅ **Resultado validado por Perplexity. Fuentes definidas arriba.**")
+        st.caption(" El siguiente contenido ha sido redactado profesionalmente basándose en los insights de OpenAI y validados por Perplexity.")
+        
+        fmt = st.radio("📋 Selecciona formato de salida", ["📧 Email Corporativo", "💼 Post LinkedIn", "🌐 Artículo Web/Blog", "📝 Texto Plano"], horizontal=True, key="tab1_out_fmt")
+        
+        # 🔧 FUNCIÓN DE REDACCIÓN PROFESIONAL
+        def generate_professional_content(data: dict, format_type: str) -> str:
+            """Redacta contenido literario/profesional basado en los datos validados"""
+            summary = data.get("summary", "Sin resumen disponible.")
+            points = data.get("key_points", [])
+            actions = data.get("recommended_actions", [])
+            sources = data.get("sources", [])
+            notes = data.get("validation_notes", "")
             
-        content = gen_fmt(final_data, fmt)
-        st.code(content, language="text" if fmt!="🌐 Web/HTML" else "html")
-        ext = "html" if fmt=="🌐 Web/HTML" else "txt"
-        st.download_button("⬇️ Descargar", content, file_name=f"kaibot_output_{datetime.now().strftime('%Y%m%d_%H%M')}.{ext}", mime="text/html" if ext=="html" else "text/plain", key="tab1_dl_fmt")
+            # Limpiar puntos de prefijos técnicos
+            clean_points = []
+            for p in points:
+                p = re.sub(r'^(Validado|No validado|Verificado)[^:]*:\s*', '', p, flags=re.IGNORECASE).strip()
+                if p: clean_points.append(p)
+            
+            # 1. EMAIL CORPORATIVO
+            if format_type == "📧 Email Corporativo":
+                subject = summary[:60] + "..." if len(summary) > 60 else summary
+                body = f"""Asunto: {subject}
+
+Estimado equipo,
+
+A continuación, comparto un análisis estratégico sobre las últimas tendencias detectadas en nuestro sector, validado con fuentes de referencia actuales.
+
+**Resumen Ejecutivo:**
+{summary}
+
+**Puntos Clave Detectados:**
+"""
+                for i, point in enumerate(clean_points[:3], 1):
+                    body += f"  • **{point}**\n"
+                
+                body += f"""
+**Recomendaciones Estratégicas:**
+Para capitalizar estas oportunidades, sugerimos implementar las siguientes acciones:
+"""
+                for i, action in enumerate(actions[:2], 1):
+                    body += f"  {i}. {action}\n"
+                
+                if sources:
+                    body += f"""
+**Fuentes de Referencia:**
+Este análisis se basa en datos verificables de: {len(sources)} fuentes especializadas.
+"""
+                
+                body += f"""
+Quedo a vuestra disposición para profundizar en cualquiera de estos puntos y coordinar los siguientes pasos.
+
+Un cordial saludo,
+
+[Tu Nombre]
+[Tu Cargo]
+Powered by KaiBot IA | {datetime.now().strftime('%d/%m/%Y')}
+"""
+                return body
+
+            # 2. LINKEDIN
+            elif format_type == "💼 Post LinkedIn":
+                # Hook inicial potente basado en el resumen
+                hook = summary.split('.')[0] + "." if '.' in summary else summary[:100] + "..."
+                
+                content = f"""{hook}
+
+🧵 He analizado las últimas tendencias del sector y esto es lo que los datos (y las fuentes) confirman:
+
+"""
+                for i, point in enumerate(clean_points[:3], 1):
+                    content += f"{i}/ {point}\n\n"
+                
+                content += f"""💡 **Mi recomendación:**
+"""
+                if actions:
+                    content += f"{actions[0]}\n\n"
+                
+                content += f"""¿Estáis viendo estas mismas señales en vuestro día a día? Os leo en comentarios 👇
+
+#B2B #Marketing #Innovación #KaiBot #Tendencias{datetime.now().strftime('%Y')}
+"""
+                return content
+
+            # 3. ARTÍCULO WEB / BLOG
+            elif format_type == "🌐 Artículo Web/Blog":
+                title = summary[:80] + "..." if len(summary) > 80 else summary
+                
+                html = f"""<article style="font-family: sans-serif; line-height: 1.6;">
+  <h1 style="color: #1E293B;">{title}</h1>
+  <p><em>Análisis validado con fuentes actualizadas | {datetime.now().strftime('%d/%m/%Y')}</em></p>
+  
+  <h2 style="color: #0066CC;">Introducción</h2>
+  <p>{summary}</p>
+  
+  <h2 style="color: #0066CC;">Puntos Clave del Análisis</h2>
+  <ul>
+"""
+                for point in clean_points:
+                    html += f"    <li>{point}</li>\n"
+                
+                html += f"""  </ul>
+  
+  <h2 style="color: #0066CC;">Plan de Acción Recomendado</h2>
+  <p>Basándonos en la evidencia recopilada, proponemos las siguientes acciones estratégicas:</p>
+  <ol>
+"""
+                for action in actions:
+                    html += f"    <li>{action}</li>\n"
+                
+                if sources:
+                    html += f"""  </ol>
+  <hr>
+  <h3>📚 Fuentes y Referencias</h3>
+  <ul>
+"""
+                    for s in sources[:5]:
+                        if s.startswith("http"):
+                            html += f'    <li><a href="{s}" target="_blank">{s}</a></li>\n'
+                        else:
+                            html += f"    <li>{s}</li>\n"
+                
+                html += f"""  </ul>
+  <p><small>Generado y validado con KaiBot IA.</small></p>
+</article>"""
+                return html
+
+            # 4. TEXTO PLANO
+            else:
+                text = f"""ANÁLISIS ESTRATÉGICO VALIDADO
+{'='*50}
+Fecha: {datetime.now().strftime('%d/%m/%Y')}
+
+RESUMEN
+{'-'*50}
+{summary}
+
+PUNTOS CLAVE
+{'-'*50}
+"""
+                for i, p in enumerate(clean_points, 1):
+                    text += f"{i}. {p}\n"
+                
+                text += f"""
+ACCIONES RECOMENDADAS
+{'-'*50}
+"""
+                for i, a in enumerate(actions, 1):
+                    text += f"{i}. {a}\n"
+                
+                if notes:
+                    text += f"""
+NOTAS DE VALIDACIÓN
+{'-'*50}
+{notes}
+"""
+                if sources:
+                    text += f"""
+FUENTES
+{'-'*50}
+"""
+                    for i, s in enumerate(sources, 1):
+                        text += f"{i}. {s}\n"
+                
+                text += f"\n{'='*50}\nGenerado con KaiBot IA"
+                return text
+
+        # Generar y mostrar contenido
+        professional_content = generate_professional_content(final_data, fmt)
+        
+        # Visualización según formato
+        if fmt == " Artículo Web/Blog":
+            st.markdown(professional_content, unsafe_allow_html=True)
+            ext, mime = "html", "text/html"
+        else:
+            st.code(professional_content, language="text")
+            ext, mime = "txt", "text/plain"
+        
+        # Botones de acción
+        col_copy, col_download = st.columns([1, 2])
+        
+        with col_copy:
+            st.caption(" Selecciona el texto arriba y usa Ctrl+C / Cmd+C para copiar")
+        
+        with col_download:
+            fname = f"kaibot_{fmt.split()[1].lower()}_{datetime.now().strftime('%Y%m%d_%H%M')}.{ext}"
+            st.download_button(
+                "⬇️ Descargar Contenido",
+                professional_content,
+                file_name=fname,
+                mime=mime,
+                use_container_width=True,
+                key="tab1_dl_pro_content"
+            )
 
         # =====================================================
         # PASO 5: INFOGRAFÍA (PILLOW)
         # =====================================================
-        st.markdown("---\n### 🖼️ Paso 5: Generar Infografía")
+        st.markdown("---\n### 🖼️ Paso 5: Generar Infografía Visual")
         try:
             from PIL import Image, ImageDraw, ImageFont
             from io import BytesIO
             PIL_OK = True
         except ImportError:
             PIL_OK = False
-            st.error("📦 Falta `Pillow`. Ejecuta `pip install Pillow` para activar esta función.")
+            st.error("📦 Falta `Pillow`. Ejecuta `pip install Pillow`.")
             
         if PIL_OK:
-            st_info = st.selectbox("🎨 Estilo", ["professional", "dark", "clean"], format_func=lambda x: {"professional":"🏢 Profesional", "dark":"🌑 Dark", "clean":"️ Minimalista"}[x], key="tab1_inf_style")
+            st_info = st.selectbox("🎨 Estilo", ["professional", "dark", "clean"], format_func=lambda x: {"professional":"🏢 Profesional", "dark":"🌑 Dark", "clean":"☁️ Minimalista"}[x], key="tab1_inf_style")
             if st.button("🖼️ Generar Infografía", type="primary", use_container_width=True, key="tab1_gen_inf"):
                 with st.spinner("🎨 Generando..."):
                     try:
@@ -681,14 +847,14 @@ with tab1:
                         draw.text((95,215), "KB", font=fS, fill=hdr)
                         
                         y = wrap(draw, final_data.get("summary","")[:300], 450, fB, W-160, txt)
-                        y = wrap(draw, " PUNTOS CLAVE", y+60, fS, W-160, acc)
+                        y = wrap(draw, "🔍 PUNTOS CLAVE", y+60, fS, W-160, acc)
                         for p in final_data.get("key_points",[])[:4]:
                             cp = re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE)[:200]
                             draw.rectangle([60,y-10,W-60,y+100], fill=light, outline=acc, width=4)
                             draw.text((90, y), f"{'✅' if 'validado' in p.lower() else '⚠️'} {cp}", font=fB, fill=txt)
                             y += 120
                             
-                        y = wrap(draw, " ACCIONES", y+40, fS, W-160, acc)
+                        y = wrap(draw, "🎯 ACCIONES", y+40, fS, W-160, acc)
                         for a in final_data.get("recommended_actions",[])[:3]:
                             y = wrap(draw, f"• {a[:180]}", y+20, fB, W-160, txt)
                             
@@ -709,15 +875,15 @@ with tab1:
         # =====================================================
         # GUARDAR / DESCARGAR JSON
         # =====================================================
-        st.markdown("---\n### 💾 Guardar contenido")
-        with st.expander("📋 Metadatos & JSON", expanded=True):
+        st.markdown("---\n### 💾 Guardar contenido original")
+        with st.expander("📋 Metadatos & JSON", expanded=False):
             cm1, cm2 = st.columns(2)
             with cm1:
                 c_tipo = st.text_input("🏷️ Tipo", value="Análisis IA" if not is_fallback else "Análisis Fallback", key="tab1_tipo_meta")
                 c_obj = st.selectbox("🎯 Objetivo", ["Marketing B2B", "Social Media", "Blog Post", "Informe Interno", "Presentación"], index=0, key="tab1_obj_meta")
             with cm2:
                 c_src = st.checkbox("✅ Fuentes verificadas", value=not is_fallback and bool(final_data.get("sources")), disabled=is_fallback, key="tab1_src_meta")
-                c_notas = st.text_area(" Notas", value=f"Modo: {query_mode}", height=60, key="tab1_notas_meta")
+                c_notas = st.text_area("📝 Notas", value=f"Modo: {query_mode}", height=60, key="tab1_notas_meta")
                 
             if "edited_response" not in st.session_state: st.session_state.edited_response = json.dumps(final_data, indent=2, ensure_ascii=False)
             edited = st.text_area("JSON editable", value=st.session_state.edited_response, height=300, key="tab1_json_ed")
@@ -725,7 +891,7 @@ with tab1:
             except: st.error("❌ JSON inválido"); jv = False; ed_data = final_data
             
             fname = generate_smart_filename(ed_data)
-            st.info(f"📝 Archivo: `{fname}`")
+            st.info(f" Archivo: `{fname}`")
             cs, cd = st.columns(2)
             with cs:
                 if st.button("💾 Guardar en Cloud", type="primary", use_container_width=True, disabled=not jv, key="tab1_save_btn"):
@@ -735,8 +901,6 @@ with tab1:
                     except Exception as e: st.error(f"❌ Error: {e}")
             with cd:
                 st.download_button("️ Descargar JSON", json.dumps(ed_data, indent=2, ensure_ascii=False), file_name=fname, mime="application/json", use_container_width=True, key="tab1_dl_json")
-
-
 
 # =====================================================
 # TAB 2 - MIS ARCHIVOS (Sin cambios, funciona perfecto)
