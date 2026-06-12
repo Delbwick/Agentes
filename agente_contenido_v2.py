@@ -1678,7 +1678,7 @@ Reglas: Sé específico (tecnologías, empresas, metodologías), prioriza lo acc
                     
                     st.markdown("---")
                     
-                    if st.button("✍️ Crear contenido", key=f"create_{sug['id']}", type="primary", use_container_width=True):
+                    if st.button("✍️ Crear contenido (NO ACTIVO DE MOMENTO)", key=f"create_{sug['id']}", type="primary", use_container_width=True):
                         # Pasar al Tab 1 con query pre-cargada
                         st.session_state.tab1_query_mode = "📝 Personalizada"
                         st.session_state.tab1_custom_query = sug["suggestion"]["tab1_query"]
