@@ -1,17 +1,12 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión LOCAL con Selenium (funciona en tu máquina o VM de GCP)
+Versión Streamlit Cloud + Browserless (Chrome remoto)
 """
 
-# ============================================================================
-# IMPORTS
-# ============================================================================
 import os
 import re
 import json
 import time
-import pickle
-import subprocess
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime
@@ -22,8 +17,6 @@ import requests
 from openai import OpenAI
 
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -32,7 +25,6 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 # ============================================================================
 # CONFIGURACIÓN
 # ============================================================================
-COOKIES_FILE = Path("linkedin_cookies.pkl")
 CACHE_DIR = Path("cv_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
@@ -43,7 +35,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS
 st.markdown("""
 <style>
     .stButton>button { width: 100%; }
@@ -67,175 +58,87 @@ st.markdown("""
 
 
 # ============================================================================
-# UTILIDADES CHROMIUM
-# ============================================================================
-def _find_chrome_binary() -> str | None:
-    """Busca Chrome/Chromium en el sistema de forma exhaustiva."""
-    import platform
-    import subprocess
-    
-    system = platform.system()
-    
-    # Rutas estándar por sistema operativo
-    if system == "Darwin":  # macOS
-        candidates = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            str(Path.home() / "Applications" / "Google Chrome.app" / "Contents" / "MacOS" / "Google Chrome"),
-        ]
-    elif system == "Windows":
-        candidates = []
-        for env_var in ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"]:
-            base = os.environ.get(env_var, "")
-            if base:
-                candidates.extend([
-                    os.path.join(base, "Google", "Chrome", "Application", "chrome.exe"),
-                    os.path.join(base, "Chromium", "Application", "chrome.exe"),
-                ])
-    else:  # Linux
-        candidates = [
-            "/usr/bin/google-chrome",
-            "/usr/bin/google-chrome-stable",
-            "/usr/bin/chromium",
-            "/usr/bin/chromium-browser",
-            "/snap/bin/chromium",
-            "/opt/google/chrome/chrome",
-        ]
-    
-    # Buscar en rutas estándar
-    for path in candidates:
-        if os.path.exists(path):
-            print(f"✅ Chrome encontrado en: {path}")
-            return path
-    
-    # Fallback: buscar con comandos del sistema
-    commands = []
-    if system == "Darwin":
-        commands = ["mdfind -name 'Google Chrome.app' | head -1"]
-    elif system == "Windows":
-        commands = ["where chrome", "where google-chrome"]
-    else:  # Linux
-        commands = ["which google-chrome", "which chromium", "which chromium-browser"]
-    
-    for cmd in commands:
-        try:
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                path = result.stdout.strip().split('\n')[0]
-                if os.path.exists(path):
-                    print(f"✅ Chrome encontrado con '{cmd}': {path}")
-                    return path
-        except Exception as e:
-            print(f"Error ejecutando '{cmd}': {e}")
-    
-    print("❌ Chrome no encontrado en ninguna ubicación estándar")
-    return None
-
-
-# ============================================================================
-# CLASE: LINKEDIN SCRAPER (Selenium)
+# CLASE: LINKEDIN SCRAPER (conexión a Browserless remoto)
 # ============================================================================
 class LinkedInCVScraper:
-    """Scraper de CVs de LinkedIn con Selenium."""
+    """Scraper que se conecta a un Chrome remoto (Browserless o similar)."""
 
-    def __init__(self, headless: bool = False):
-        self.headless = headless
+    def __init__(self, browserless_url: str):
+        """
+        Args:
+            browserless_url: URL WebSocket de Browserless.
+                Ejemplo: "wss://chrome.browserless.io?token=TU_TOKEN"
+        """
+        self.browserless_url = browserless_url
         self.driver = None
         self.wait = None
 
     def start(self) -> tuple[bool, str]:
-        """Inicia Chrome con tu perfil real (reutiliza sesión)."""
+        """Conecta al Chrome remoto."""
         try:
-            opts = Options()
-
-            # Binario Chrome
-            binary = _find_chrome_binary()
-            if binary:
-                opts.binary_location = binary
-            else:
-                return False, "❌ Chrome no encontrado. Instálalo primero."
-
-            # Perfil de usuario (reutiliza cookies de tu Chrome real)
-            user_home = Path.home()
-            if os.name == "nt":  # Windows
-                profile_path = user_home / "AppData" / "Local" / "Google" / "Chrome" / "User Data"
-            elif os.name == "posix":
-                if os.path.exists(user_home / "Library" / "Application Support" / "Google" / "Chrome"):
-                    profile_path = user_home / "Library" / "Application Support" / "Google" / "Chrome"
-                else:
-                    profile_path = user_home / ".config" / "google-chrome"
-            else:
-                profile_path = None
-
-            # IMPORTANTE: usar perfil separado para no interferir con tu Chrome
-            profile_path = Path("chrome_profile")
-            profile_path.mkdir(exist_ok=True)
-            opts.add_argument(f"--user-data-dir={profile_path.absolute()}")
-
-            if self.headless:
-                opts.add_argument("--headless=new")
-
-            opts.add_argument("--no-sandbox")
-            opts.add_argument("--disable-dev-shm-usage")
-            opts.add_argument("--disable-gpu")
-            opts.add_argument("--window-size=1920,1080")
-            opts.add_argument("--disable-blink-features=AutomationControlled")
-            opts.add_argument("--disable-extensions")
-            opts.add_argument(
+            options = webdriver.ChromeOptions()
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option("useAutomationExtension", False)
+            options.add_argument("--window-size=1920,1080")
+            options.add_argument(
                 "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
-            opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-            opts.add_experimental_option("useAutomationExtension", False)
 
-            self.driver = webdriver.Chrome(options=opts)
-            self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-                "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            })
+            # Conexión remota vía WebSocket
+            self.driver = webdriver.Remote(
+                command_executor=self.browserless_url,
+                options=options
+            )
             self.wait = WebDriverWait(self.driver, 20)
-            return True, "✅ Chrome iniciado"
+            return True, "✅ Conectado a Chrome remoto"
         except Exception as e:
-            return False, f"❌ Error: {str(e)[:300]}"
+            return False, f"❌ Error conectando: {str(e)[:200]}"
 
-    def check_login(self) -> bool:
-        """Verifica si hay sesión activa, si no, pide login manual."""
-        self.driver.get("https://www.linkedin.com/feed/")
-        time.sleep(4)
-        url = self.driver.current_url.lower()
-        if "login" in url or "uas-login" in url:
-            return False
-        return True
+    def set_cookies_from_text(self, cookies_text: str) -> bool:
+        """Carga cookies desde JSON."""
+        try:
+            cookies = json.loads(cookies_text)
+            if isinstance(cookies, list):
+                self._cookies = cookies
+                return True
+        except json.JSONDecodeError:
+            pass
+        return False
 
-    def save_cookies(self):
-        with open(COOKIES_FILE, "wb") as f:
-            pickle.dump(self.driver.get_cookies(), f)
-
-    def load_cookies(self) -> bool:
-        if not COOKIES_FILE.exists():
+    def inject_cookies(self) -> bool:
+        """Inyecta cookies y verifica sesión."""
+        if not hasattr(self, '_cookies') or not self._cookies:
             return False
         try:
-            self.driver.get("https://www.linkedin.com")
+            self.driver.get("https://www.linkedin.com/feed/")
             time.sleep(2)
-            with open(COOKIES_FILE, "rb") as f:
-                cookies = pickle.load(f)
-            for c in cookies:
-                for key in ["expiry", "sameSite"]:
-                    c.pop(key, None)
+            for c in self._cookies:
+                cookie = {
+                    "name": c.get("name"),
+                    "value": c.get("value"),
+                    "domain": c.get("domain", ".linkedin.com"),
+                    "path": c.get("path", "/"),
+                }
+                if "linkedin" not in cookie["domain"]:
+                    continue
                 try:
-                    self.driver.add_cookie(c)
+                    self.driver.add_cookie(cookie)
                 except Exception:
                     pass
             self.driver.refresh()
-            time.sleep(3)
+            time.sleep(4)
             return "feed" in self.driver.current_url.lower()
-        except Exception:
+        except Exception as e:
+            print(f"Error inyectando cookies: {e}")
             return False
+
+    def check_login(self) -> bool:
+        """Verifica si hay sesión activa."""
+        self.driver.get("https://www.linkedin.com/feed/")
+        time.sleep(4)
+        return "feed" in self.driver.current_url.lower()
 
     def search_person(self, full_name: str, institution: str = "") -> str | None:
         """Busca persona y devuelve URL del mejor perfil."""
@@ -253,9 +156,8 @@ class LinkedInCVScraper:
         self.driver.get(search_url)
         time.sleep(5)
 
-        # Detectar captcha
         if "challenge" in self.driver.current_url.lower():
-            raise RuntimeError("⚠️ LinkedIn pide captcha. Cierra y abre de nuevo más tarde.")
+            raise RuntimeError("⚠️ LinkedIn pide captcha")
 
         try:
             results = self.wait.until(
@@ -265,7 +167,6 @@ class LinkedInCVScraper:
                 )
             )
             if results:
-                # Elegir el mejor resultado por coincidencia de nombre
                 best = self._best_result(results, full_name, institution)
                 return best.get_attribute("href").split("?")[0]
             return None
@@ -278,14 +179,13 @@ class LinkedInCVScraper:
         best_score = -1
         best_elem = results[0]
 
-        for elem in results[:5]:  # Solo los 5 primeros
+        for elem in results[:5]:
             try:
                 name_elem = elem.find_element(By.XPATH, ".//span[@aria-hidden='true']")
                 name = name_elem.text.lower()
                 name_words = set(name.split())
                 score = len(target_words & name_words) * 10
 
-                # Bonus por institución en el headline
                 if institution:
                     try:
                         subtitle = elem.find_element(
@@ -333,14 +233,11 @@ class LinkedInCVScraper:
         cv["headline"] = self._safe_text(
             "//div[contains(@class,'text-body-medium') and contains(@class,'break-words')]"
         )
-        cv["ubicacion"] = self._safe_text(
-            "//span[contains(@class,'text-body-small') and contains(@class,'inline-separator')]/.."
-        )
 
         sections_xpaths = {
             "Acerca de": "//section[contains(@id,'about')]",
-            "Experiencia": "//section[contains(@id,'experience') or .//span[text()='Experiencia']]",
-            "Educación": "//section[contains(@id,'education') or .//span[text()='Educación']]",
+            "Experiencia": "//section[contains(@id,'experience') or .//span[text()='Experiencia'] or .//span[text()='Experience']]",
+            "Educación": "//section[contains(@id,'education') or .//span[text()='Educación'] or .//span[text()='Education']]",
             "Publicaciones": "//section[contains(@id,'publications') or .//span[text()='Publicaciones']]",
             "Patentes": "//section[contains(@id,'patents') or .//span[text()='Patentes']]",
             "Proyectos": "//section[contains(@id,'projects') or .//span[text()='Proyectos']]",
@@ -497,49 +394,93 @@ def main():
     with st.sidebar:
         st.markdown("## ⚙️ Configuración")
 
-        # --- LinkedIn ---
-        st.markdown("### 🔐 LinkedIn")
+        # --- Browserless ---
+        st.markdown("### 🌐 Browserless (Chrome remoto)")
+        st.markdown(
+            '<div class="info-box">📌 Regístrate gratis en '
+            '<a href="https://www.browserless.io" target="_blank">browserless.io</a><br>'
+            'Plan gratuito: <b>1000 ejecuciones/mes</b></div>',
+            unsafe_allow_html=True
+        )
 
-        if st.session_state.scraper is None:
-            if st.button("🚀 Iniciar Chrome", use_container_width=True):
-                with st.spinner("Iniciando Chrome..."):
-                    scraper = LinkedInCVScraper(headless=False)  # Visible para login manual
+        # Intentar leer de secrets
+        default_url = ""
+        try:
+            token = st.secrets.get("BROWSERLESS_TOKEN", "")
+            if token:
+                default_url = f"wss://chrome.browserless.io?token={token}"
+        except Exception:
+            pass
+
+        browserless_url = st.text_input(
+            "URL WebSocket de Browserless",
+            value=default_url,
+            placeholder="wss://chrome.browserless.io?token=TU_TOKEN",
+            help="Lo obtienes en tu dashboard de Browserless"
+        )
+
+        if browserless_url:
+            if st.button("🔌 Conectar a Chrome remoto"):
+                with st.spinner("Conectando..."):
+                    scraper = LinkedInCVScraper(browserless_url)
                     ok, msg = scraper.start()
                     if ok:
                         st.session_state.scraper = scraper
+                        st.success(msg)
                         st.rerun()
                     else:
                         st.error(msg)
-        else:
-            st.success("🟢 Chrome activo")
 
-            if st.button("🔄 Verificar sesión LinkedIn"):
+        if st.session_state.scraper:
+            st.success("🟢 Chrome remoto conectado")
+
+            # --- LinkedIn Login ---
+            st.markdown("### 🔐 LinkedIn")
+            st.caption("Pega las cookies de LinkedIn (formato JSON)")
+            st.caption("Exporta con extensión 'EditThisCookie' en tu Chrome local")
+
+            cookies_text = st.text_area(
+                "Cookies LinkedIn (JSON)",
+                height=150,
+                label_visibility="collapsed"
+            )
+
+            if cookies_text and st.button("🔑 Cargar cookies"):
+                with st.spinner("Inyectando cookies..."):
+                    if st.session_state.scraper.set_cookies_from_text(cookies_text):
+                        if st.session_state.scraper.inject_cookies():
+                            st.session_state.linkedin_ok = True
+                            st.success("✅ Sesión LinkedIn activa")
+                        else:
+                            st.error("❌ Cookies inválidas o sesión expirada")
+                    else:
+                        st.error("❌ Formato JSON inválido")
+
+            if st.button("🔄 Verificar sesión"):
                 with st.spinner("Verificando..."):
                     if st.session_state.scraper.check_login():
                         st.session_state.linkedin_ok = True
                         st.success("✅ Sesión activa")
                     else:
                         st.session_state.linkedin_ok = False
-                        st.warning("⚠️ No hay sesión. Pulsa 'Login manual'.")
+                        st.warning("⚠️ Sesión expirada")
 
-            if not st.session_state.linkedin_ok:
-                if st.button("🔑 Login manual en Chrome", use_container_width=True):
-                    st.info("👉 Se abrirá Chrome. Inicia sesión en LinkedIn y vuelve aquí.")
-                    st.session_state.scraper.driver.get("https://www.linkedin.com/login")
-                    st.session_state.scraper.save_cookies()
-
-            if st.session_state.linkedin_ok:
-                if st.button("🚪 Cerrar Chrome", use_container_width=True):
-                    st.session_state.scraper.close()
-                    st.session_state.scraper = None
-                    st.session_state.linkedin_ok = False
-                    st.rerun()
+            if st.button("🚪 Desconectar Chrome"):
+                st.session_state.scraper.close()
+                st.session_state.scraper = None
+                st.session_state.linkedin_ok = False
+                st.rerun()
 
         st.divider()
 
         # --- OpenAI ---
         st.markdown("### 🤖 OpenAI API")
-        default_openai = os.getenv("OPENAI_API_KEY", "")
+        default_openai = ""
+        try:
+            default_openai = st.secrets.get("OPENAI_API_KEY", "")
+        except Exception:
+            pass
+
         api_key = st.text_input(
             "API Key OpenAI",
             type="password",
@@ -569,16 +510,17 @@ def main():
 
         # --- Estado ---
         st.markdown("### 📊 Estado")
+        st.write(f"🌐 Chrome: {'🟢 OK' if st.session_state.scraper else '🟡 No conectado'}")
         st.write(f"🔗 LinkedIn: {'🟢 OK' if st.session_state.linkedin_ok else '🟡 No conectado'}")
         st.write(f"🤖 OpenAI: {'🟢 OK' if st.session_state.openai_ok else '🟡 Pendiente'}")
         st.write(f"👥 CVs extraídos: {len(st.session_state.cvs)}")
         st.write(f"🏭 Análisis hechos: {len(st.session_state.analisis)}")
-        st.write(f"💾 CVs en caché: {len(list(CACHE_DIR.glob('*.json')))}")
 
-        if st.button("🗑️ Limpiar caché"):
-            for f in CACHE_DIR.glob("*.json"):
-                f.unlink()
-            st.success("Caché limpiada")
+        if st.button("🔄 Reiniciar sesión"):
+            if st.session_state.scraper:
+                st.session_state.scraper.close()
+            for k in list(st.session_state.keys()):
+                del st.session_state[k]
             st.rerun()
 
     # ========================================================================
@@ -602,7 +544,6 @@ def main():
             st.error(f"❌ Error: {e}")
             st.stop()
 
-        # Detectar columnas
         col_map = {}
         for col in df.columns:
             cl = str(col).lower()
@@ -686,7 +627,7 @@ def main():
                         st.error(f"❌ {nombre}: {str(e)[:100]}")
 
                 progress.progress((i + 1) / len(seleccion))
-                time.sleep(3)  # Anti-ban
+                time.sleep(3)
 
             st.balloons()
 
