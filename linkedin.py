@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión Streamlit Cloud + Browserless (Chrome remoto)
+Versión Streamlit Cloud + Browserless API REST (sin Selenium)
 """
 
 import os
@@ -14,13 +14,8 @@ from datetime import datetime
 import streamlit as st
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 from openai import OpenAI
-
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 # ============================================================================
 # CONFIGURACIÓN
@@ -58,87 +53,121 @@ st.markdown("""
 
 
 # ============================================================================
-# CLASE: LINKEDIN SCRAPER (conexión a Browserless remoto)
+# CLASE: BROWSERLESS API REST
 # ============================================================================
-class LinkedInCVScraper:
-    """Scraper que se conecta a un Chrome remoto (Browserless o similar)."""
+class BrowserlessAPI:
+    """
+    Cliente de la API REST de Browserless.
+    Documentación: https://docs.browserless.io/
+    """
 
-    def __init__(self, browserless_url: str):
+    def __init__(self, token: str):
+        self.token = token
+        self.base_url = "https://production-sessions.browserless.io"
+        self.credits_used = 0
+
+    def test_connection(self) -> tuple[bool, str]:
+        """Verifica que el token es válido."""
+        try:
+            resp = requests.get(
+                f"{self.base_url}/json/version",
+                params={"token": self.token},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                return True, "✅ Token válido. Conexión establecida."
+            elif resp.status_code == 401:
+                return False, "❌ Token inválido"
+            else:
+                return False, f"❌ Error {resp.status_code}"
+        except Exception as e:
+            return False, f"❌ Error: {str(e)[:100]}"
+
+    def scrape_url(self, url: str, cookies: list = None, wait_for: str = "body", 
+                   wait_until: str = "networkidle2", timeout: int = 30000) -> str | None:
         """
+        Hace scrape de una URL y devuelve el HTML.
+        
         Args:
-            browserless_url: URL WebSocket de Browserless.
-                Ejemplo: "wss://chrome.browserless.io?token=TU_TOKEN"
+            url: URL a scrapear
+            cookies: Lista de cookies en formato [{"name":..., "value":..., "domain":...}]
+            wait_for: Selector CSS a esperar (por defecto "body")
+            wait_until: Evento de carga ("load", "domcontentloaded", "networkidle0", "networkidle2")
+            timeout: Timeout en ms
         """
-        self.browserless_url = browserless_url
-        self.driver = None
-        self.wait = None
+        payload = {
+            "url": url,
+            "waitFor": wait_for,
+            "waitUntil": wait_until,
+            "timeout": timeout,
+            "setExtraHTTPHeaders": {
+                "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+            },
+            "viewport": {"width": 1920, "height": 1080},
+        }
 
-    def start(self) -> tuple[bool, str]:
-        """Conecta al Chrome remoto."""
+        if cookies:
+            payload["cookies"] = cookies
+
         try:
-            options = webdriver.ChromeOptions()
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            options.add_experimental_option("useAutomationExtension", False)
-            options.add_argument("--window-size=1920,1080")
-            options.add_argument(
-                "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            resp = requests.post(
+                f"{self.base_url}/scrape",
+                params={"token": self.token},
+                json=payload,
+                timeout=60
             )
+            self.credits_used += 1
 
-            # Conexión remota vía WebSocket
-            self.driver = webdriver.Remote(
-                command_executor=self.browserless_url,
-                options=options
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("data")
+            else:
+                print(f"Error en scrape: {resp.status_code} - {resp.text[:200]}")
+                return None
+        except Exception as e:
+            print(f"Error en scrape_url: {e}")
+            return None
+
+    def run_puppeteer(self, script_code: str, cookies: list = None) -> dict | None:
+        """
+        Ejecuta código Puppeteer custom en Browserless.
+        Ideal para hacer scroll y extraer contenido dinámico.
+        """
+        payload = {
+            "code": script_code,
+            "context": {},
+        }
+        if cookies:
+            payload["cookies"] = cookies
+
+        try:
+            resp = requests.post(
+                f"{self.base_url}/function",
+                params={"token": self.token},
+                json=payload,
+                timeout=90
             )
-            self.wait = WebDriverWait(self.driver, 20)
-            return True, "✅ Conectado a Chrome remoto"
+            self.credits_used += 1
+
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                print(f"Error en function: {resp.status_code} - {resp.text[:200]}")
+                return None
         except Exception as e:
-            return False, f"❌ Error conectando: {str(e)[:200]}"
+            print(f"Error en run_puppeteer: {e}")
+            return None
 
-    def set_cookies_from_text(self, cookies_text: str) -> bool:
-        """Carga cookies desde JSON."""
-        try:
-            cookies = json.loads(cookies_text)
-            if isinstance(cookies, list):
-                self._cookies = cookies
-                return True
-        except json.JSONDecodeError:
-            pass
-        return False
 
-    def inject_cookies(self) -> bool:
-        """Inyecta cookies y verifica sesión."""
-        if not hasattr(self, '_cookies') or not self._cookies:
-            return False
-        try:
-            self.driver.get("https://www.linkedin.com/feed/")
-            time.sleep(2)
-            for c in self._cookies:
-                cookie = {
-                    "name": c.get("name"),
-                    "value": c.get("value"),
-                    "domain": c.get("domain", ".linkedin.com"),
-                    "path": c.get("path", "/"),
-                }
-                if "linkedin" not in cookie["domain"]:
-                    continue
-                try:
-                    self.driver.add_cookie(cookie)
-                except Exception:
-                    pass
-            self.driver.refresh()
-            time.sleep(4)
-            return "feed" in self.driver.current_url.lower()
-        except Exception as e:
-            print(f"Error inyectando cookies: {e}")
-            return False
+# ============================================================================
+# CLASE: LINKEDIN SCRAPER (usando Browserless API)
+# ============================================================================
+class LinkedInScraper:
+    """Scraper de LinkedIn usando Browserless API REST."""
 
-    def check_login(self) -> bool:
-        """Verifica si hay sesión activa."""
-        self.driver.get("https://www.linkedin.com/feed/")
-        time.sleep(4)
-        return "feed" in self.driver.current_url.lower()
+    def __init__(self, api: BrowserlessAPI, cookies: list):
+        self.api = api
+        self.cookies = cookies
 
     def search_person(self, full_name: str, institution: str = "") -> str | None:
         """Busca persona y devuelve URL del mejor perfil."""
@@ -153,120 +182,191 @@ class LinkedInCVScraper:
             f"https://www.linkedin.com/search/results/people/"
             f"?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER"
         )
-        self.driver.get(search_url)
-        time.sleep(5)
 
-        if "challenge" in self.driver.current_url.lower():
-            raise RuntimeError("⚠️ LinkedIn pide captcha")
+        html = self.api.scrape_url(
+            search_url,
+            cookies=self.cookies,
+            wait_for="ul.reusable-search__result-container",
+            wait_until="networkidle2"
+        )
 
-        try:
-            results = self.wait.until(
-                EC.presence_of_all_elements_located(
-                    (By.XPATH, "//ul[contains(@class,'reusable-search__result-container')]"
-                               "//a[contains(@class,'app-aware-link') and contains(@href,'/in/')]")
-                )
-            )
-            if results:
-                best = self._best_result(results, full_name, institution)
-                return best.get_attribute("href").split("?")[0]
-            return None
-        except TimeoutException:
+        if not html:
             return None
 
-    def _best_result(self, results, target_name: str, institution: str = ""):
-        """Elige el resultado más parecido al nombre buscado."""
-        target_words = set(target_name.lower().split())
+        soup = BeautifulSoup(html, "html.parser")
+
+        # Buscar enlaces a perfiles
+        links = soup.select("a.app-aware-link[href*='/in/']")
+        if not links:
+            return None
+
+        # Elegir el mejor resultado por coincidencia de nombre
+        target_words = set(full_name.lower().split())
+        best_url = None
         best_score = -1
-        best_elem = results[0]
 
-        for elem in results[:5]:
-            try:
-                name_elem = elem.find_element(By.XPATH, ".//span[@aria-hidden='true']")
-                name = name_elem.text.lower()
+        for link in links[:10]:
+            href = link.get("href", "")
+            # Limpiar URL
+            href = href.split("?")[0]
+            if "/in/" not in href:
+                continue
+
+            # Extraer nombre del texto del enlace
+            name_span = link.select_one("span[aria-hidden='true']")
+            if name_span:
+                name = name_span.get_text().lower()
                 name_words = set(name.split())
                 score = len(target_words & name_words) * 10
 
+                # Bonus por institución
                 if institution:
-                    try:
-                        subtitle = elem.find_element(
-                            By.XPATH, ".//div[contains(@class,'entity-result__summary')]"
-                        ).text.lower()
+                    parent = link.find_parent("li")
+                    if parent:
+                        text = parent.get_text().lower()
                         inst_lower = institution.lower()
-                        if any(w in subtitle for w in inst_lower.split() if len(w) > 3):
+                        if any(w in text for w in inst_lower.split() if len(w) > 3):
                             score += 5
-                    except Exception:
-                        pass
 
                 if score > best_score:
                     best_score = score
-                    best_elem = elem
-            except Exception:
-                continue
-        return best_elem
+                    best_url = href
 
-    def _scroll_full_page(self, max_scrolls: int = 20, pause: float = 1.0):
-        last_height = self.driver.execute_script("return document.body.scrollHeight")
-        for _ in range(max_scrolls):
-            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(pause)
-            new_height = self.driver.execute_script("return document.body.scrollHeight")
-            if new_height == last_height:
-                break
-            last_height = new_height
-        self.driver.execute_script("window.scrollTo(0, 0);")
-        time.sleep(0.5)
+        return best_url
 
-    def _safe_text(self, xpath: str, default: str = "") -> str:
-        try:
-            return self.driver.find_element(By.XPATH, xpath).text.strip()
-        except NoSuchElementException:
-            return default
+    def extract_full_cv(self, profile_url: str) -> dict | None:
+        """
+        Extrae CV completo usando Puppeteer script con scroll.
+        Esto es necesario porque LinkedIn carga contenido con lazy-loading.
+        """
+        # Script Puppeteer que hace scroll y extrae todo el contenido
+        puppeteer_code = f"""
+        module.exports = async ({{ page }}) => {{
+            await page.goto('{profile_url}', {{ waitUntil: 'networkidle2', timeout: 30000 }});
+            
+            // Scroll para cargar todo el contenido
+            await page.evaluate(async () => {{
+                await new Promise((resolve) => {{
+                    let totalHeight = 0;
+                    const distance = 300;
+                    const timer = setInterval(() => {{
+                        const scrollHeight = document.body.scrollHeight;
+                        window.scrollBy(0, distance);
+                        totalHeight += distance;
+                        if (totalHeight >= scrollHeight) {{
+                            clearInterval(timer);
+                            resolve();
+                        }}
+                    }}, 100);
+                }});
+            }});
+            
+            // Esperar a que cargue el contenido
+            await new Promise(r => setTimeout(r, 2000));
+            
+            // Volver arriba
+            await page.evaluate(() => window.scrollTo(0, 0));
+            await new Promise(r => setTimeout(r, 500));
+            
+            // Extraer contenido
+            const data = await page.evaluate(() => {{
+                const getText = (sel) => {{
+                    const el = document.querySelector(sel);
+                    return el ? el.innerText.trim() : '';
+                }};
+                
+                const getAll = (sel) => {{
+                    return Array.from(document.querySelectorAll(sel)).map(el => el.innerText.trim());
+                }};
+                
+                return {{
+                    nombre: getText('h1'),
+                    headline: getText('.text-body-medium.break-words'),
+                    ubicacion: getText('.text-body-small.inline'),
+                    about: getText('#about ~ div') || getText('section#about'),
+                    experience: getText('section#experience') || '',
+                    education: getText('section#education') || '',
+                    publications: getText('section#publications') || '',
+                    patents: getText('section#patents') || '',
+                    projects: getText('section#projects') || '',
+                    languages: getText('section#languages') || '',
+                    honors: getText('section#honors') || '',
+                    skills: getAll('.pv-skill-category-entity__name span').join(', '),
+                    fullText: document.querySelector('main') ? document.querySelector('main').innerText : document.body.innerText
+                }};
+            }});
+            
+            return data;
+        }};
+        """
 
-    def extract_full_cv(self, profile_url: str) -> dict:
-        """Extrae CV completo del perfil."""
-        self.driver.get(profile_url)
-        time.sleep(4)
-        self._scroll_full_page()
+        result = self.api.run_puppeteer(puppeteer_code, cookies=self.cookies)
 
-        cv = {"url": profile_url, "sections": {}}
-        cv["nombre"] = self._safe_text("//h1")
-        cv["headline"] = self._safe_text(
-            "//div[contains(@class,'text-body-medium') and contains(@class,'break-words')]"
-        )
+        if not result:
+            # Fallback: scrape simple
+            return self._extract_simple(profile_url)
 
-        sections_xpaths = {
-            "Acerca de": "//section[contains(@id,'about')]",
-            "Experiencia": "//section[contains(@id,'experience') or .//span[text()='Experiencia'] or .//span[text()='Experience']]",
-            "Educación": "//section[contains(@id,'education') or .//span[text()='Educación'] or .//span[text()='Education']]",
-            "Publicaciones": "//section[contains(@id,'publications') or .//span[text()='Publicaciones']]",
-            "Patentes": "//section[contains(@id,'patents') or .//span[text()='Patentes']]",
-            "Proyectos": "//section[contains(@id,'projects') or .//span[text()='Proyectos']]",
-            "Idiomas": "//section[contains(@id,'languages') or .//span[text()='Idiomas']]",
-            "Premios": "//section[contains(@id,'honors') or .//span[text()='Premios']]",
+        # Formatear resultado
+        cv = {
+            "url": profile_url,
+            "nombre": result.get("nombre", ""),
+            "headline": result.get("headline", ""),
+            "ubicacion": result.get("ubicacion", ""),
+            "sections": {},
         }
 
-        for nombre_seccion, xpath in sections_xpaths.items():
-            try:
-                section = self.driver.find_element(By.XPATH, xpath)
-                cv["sections"][nombre_seccion] = section.text.strip()
-            except NoSuchElementException:
-                pass
+        sections = {
+            "Acerca de": result.get("about"),
+            "Experiencia": result.get("experience"),
+            "Educación": result.get("education"),
+            "Publicaciones": result.get("publications"),
+            "Patentes": result.get("patents"),
+            "Proyectos": result.get("projects"),
+            "Idiomas": result.get("languages"),
+            "Premios": result.get("honors"),
+            "Skills": result.get("skills"),
+        }
 
-        if not cv["sections"]:
-            try:
-                cv["texto_completo"] = self.driver.find_element(By.XPATH, "//main").text.strip()
-            except Exception:
-                cv["texto_completo"] = ""
+        for nombre, texto in sections.items():
+            if texto and len(texto) > 10:
+                cv["sections"][nombre] = texto
+
+        if not cv["sections"] and result.get("fullText"):
+            cv["texto_completo"] = result["fullText"]
 
         return cv
 
-    def close(self):
-        if self.driver:
-            try:
-                self.driver.quit()
-            except Exception:
-                pass
-            self.driver = None
+    def _extract_simple(self, profile_url: str) -> dict | None:
+        """Fallback: extracción simple sin scroll."""
+        html = self.api.scrape_url(
+            profile_url,
+            cookies=self.cookies,
+            wait_for="h1",
+            wait_until="networkidle2"
+        )
+
+        if not html:
+            return None
+
+        soup = BeautifulSoup(html, "html.parser")
+        cv = {"url": profile_url, "sections": {}}
+
+        # Nombre
+        h1 = soup.select_one("h1")
+        cv["nombre"] = h1.get_text().strip() if h1 else ""
+
+        # Headline
+        headline = soup.select_one(".text-body-medium.break-words")
+        cv["headline"] = headline.get_text().strip() if headline else ""
+
+        # Texto completo
+        main = soup.select_one("main")
+        if main:
+            cv["texto_completo"] = main.get_text(separator="\n", strip=True)
+        else:
+            cv["texto_completo"] = soup.get_text(separator="\n", strip=True)
+
+        return cv
 
 
 # ============================================================================
@@ -328,6 +428,9 @@ def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
         for seccion, texto in cv.get("sections", {}).items():
             lineas.append(f"\n— {seccion.upper()} —")
             lineas.append(texto)
+        if cv.get("texto_completo"):
+            lineas.append("\n— TEXTO COMPLETO —")
+            lineas.append(cv["texto_completo"])
     lineas.append("\n" + "=" * 60)
     lineas.append("🏭 ANÁLISIS INDUSTRIAL / SPIN-OFFS:")
     lineas.append("=" * 60)
@@ -349,6 +452,47 @@ def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
 # ============================================================================
 # HELPERS
 # ============================================================================
+def parse_cookies_text(cookies_text: str) -> list | None:
+    """Parsea cookies desde JSON o formato Netscape."""
+    # Intentar JSON
+    try:
+        cookies = json.loads(cookies_text)
+        if isinstance(cookies, list):
+            # Normalizar formato
+            normalized = []
+            for c in cookies:
+                normalized.append({
+                    "name": c.get("name"),
+                    "value": c.get("value"),
+                    "domain": c.get("domain", ".linkedin.com"),
+                    "path": c.get("path", "/"),
+                })
+            return normalized
+    except json.JSONDecodeError:
+        pass
+
+    # Formato Netscape
+    try:
+        cookies = []
+        for line in cookies_text.strip().split("\n"):
+            if line.startswith("#") or not line.strip():
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 7:
+                cookies.append({
+                    "name": parts[5],
+                    "value": parts[6],
+                    "domain": parts[0],
+                    "path": parts[2],
+                })
+        if cookies:
+            return cookies
+    except Exception:
+        pass
+
+    return None
+
+
 def _cv_cache_path(nombre: str) -> Path:
     safe = re.sub(r'[^\w\-]', '_', nombre)
     return CACHE_DIR / f"{safe}.json"
@@ -375,6 +519,8 @@ def save_cv_cache(nombre: str, cv: dict):
 # ============================================================================
 def main():
     # Estado
+    if "api" not in st.session_state:
+        st.session_state.api = None
     if "scraper" not in st.session_state:
         st.session_state.scraper = None
     if "df" not in st.session_state:
@@ -387,6 +533,8 @@ def main():
         st.session_state.openai_ok = False
     if "linkedin_ok" not in st.session_state:
         st.session_state.linkedin_ok = False
+    if "cookies" not in st.session_state:
+        st.session_state.cookies = None
 
     # ========================================================================
     # SIDEBAR
@@ -395,81 +543,79 @@ def main():
         st.markdown("## ⚙️ Configuración")
 
         # --- Browserless ---
-        st.markdown("### 🌐 Browserless (Chrome remoto)")
+        st.markdown("### 🌐 Browserless API")
         st.markdown(
-            '<div class="info-box">📌 Regístrate gratis en '
-            '<a href="https://www.browserless.io" target="_blank">browserless.io</a><br>'
-            'Plan gratuito: <b>1000 ejecuciones/mes</b></div>',
+            '<div class="info-box">📌 Tu API REST de Browserless.<br>'
+            'Documentación: <a href="https://docs.browserless.io" target="_blank">docs.browserless.io</a></div>',
             unsafe_allow_html=True
         )
 
-        # Intentar leer de secrets
-        default_url = ""
+        default_token = ""
         try:
-            token = st.secrets.get("BROWSERLESS_TOKEN", "")
-            if token:
-                default_url = f"wss://chrome.browserless.io?token={token}"
+            default_token = st.secrets.get("BROWSERLESS_TOKEN", "")
         except Exception:
             pass
 
-        browserless_url = st.text_input(
-            "URL WebSocket de Browserless",
-            value=default_url,
-            placeholder="wss://chrome.browserless.io?token=TU_TOKEN",
-            help="Lo obtienes en tu dashboard de Browserless"
+        token = st.text_input(
+            "Token Browserless",
+            type="password",
+            value=default_token,
+            help="Tu token de Browserless"
         )
 
-        if browserless_url:
-            if st.button("🔌 Conectar a Chrome remoto"):
-                with st.spinner("Conectando..."):
-                    scraper = LinkedInCVScraper(browserless_url)
-                    ok, msg = scraper.start()
+        if token:
+            if st.button("🔌 Verificar conexión"):
+                with st.spinner("Verificando..."):
+                    api = BrowserlessAPI(token)
+                    ok, msg = api.test_connection()
                     if ok:
-                        st.session_state.scraper = scraper
+                        st.session_state.api = api
                         st.success(msg)
-                        st.rerun()
                     else:
                         st.error(msg)
 
-        if st.session_state.scraper:
-            st.success("🟢 Chrome remoto conectado")
+        if st.session_state.api:
+            st.success("🟢 Browserless conectado")
+        else:
+            st.warning("🟡 Browserless no conectado")
 
-            # --- LinkedIn Login ---
-            st.markdown("### 🔐 LinkedIn")
-            st.caption("Pega las cookies de LinkedIn (formato JSON)")
-            st.caption("Exporta con extensión 'EditThisCookie' en tu Chrome local")
+        st.divider()
 
-            cookies_text = st.text_area(
-                "Cookies LinkedIn (JSON)",
-                height=150,
-                label_visibility="collapsed"
-            )
+        # --- LinkedIn Cookies ---
+        st.markdown("### 🔐 LinkedIn Cookies")
+        st.caption(
+            "Exporta cookies desde tu Chrome local con extensión "
+            "'EditThisCookie' o 'Cookie-Editor'."
+        )
 
-            if cookies_text and st.button("🔑 Cargar cookies"):
-                with st.spinner("Inyectando cookies..."):
-                    if st.session_state.scraper.set_cookies_from_text(cookies_text):
-                        if st.session_state.scraper.inject_cookies():
-                            st.session_state.linkedin_ok = True
-                            st.success("✅ Sesión LinkedIn activa")
-                        else:
-                            st.error("❌ Cookies inválidas o sesión expirada")
-                    else:
-                        st.error("❌ Formato JSON inválido")
+        cookies_text = st.text_area(
+            "Pega las cookies (JSON)",
+            height=150,
+            label_visibility="collapsed",
+            help="Formato: [{\"name\":\"li_at\",\"value\":\"...\",\"domain\":\".linkedin.com\"}]"
+        )
 
-            if st.button("🔄 Verificar sesión"):
-                with st.spinner("Verificando..."):
-                    if st.session_state.scraper.check_login():
-                        st.session_state.linkedin_ok = True
-                        st.success("✅ Sesión activa")
-                    else:
-                        st.session_state.linkedin_ok = False
-                        st.warning("⚠️ Sesión expirada")
+        if cookies_text and st.button("🔑 Cargar cookies"):
+            with st.spinner("Parseando cookies..."):
+                cookies = parse_cookies_text(cookies_text)
+                if cookies:
+                    st.session_state.cookies = cookies
+                    st.session_state.linkedin_ok = True
+                    st.success(f"✅ {len(cookies)} cookies cargadas")
 
-            if st.button("🚪 Desconectar Chrome"):
-                st.session_state.scraper.close()
-                st.session_state.scraper = None
-                st.session_state.linkedin_ok = False
-                st.rerun()
+                    # Crear scraper
+                    if st.session_state.api:
+                        st.session_state.scraper = LinkedInScraper(
+                            st.session_state.api,
+                            cookies
+                        )
+                else:
+                    st.error("❌ No se pudo parsear el formato. Usa JSON.")
+
+        if st.session_state.linkedin_ok:
+            st.success("🟢 LinkedIn listo")
+        else:
+            st.warning("🟡 Cookies no cargadas")
 
         st.divider()
 
@@ -510,15 +656,15 @@ def main():
 
         # --- Estado ---
         st.markdown("### 📊 Estado")
-        st.write(f"🌐 Chrome: {'🟢 OK' if st.session_state.scraper else '🟡 No conectado'}")
+        st.write(f"🌐 Browserless: {'🟢 OK' if st.session_state.api else '🟡 No conectado'}")
         st.write(f"🔗 LinkedIn: {'🟢 OK' if st.session_state.linkedin_ok else '🟡 No conectado'}")
         st.write(f"🤖 OpenAI: {'🟢 OK' if st.session_state.openai_ok else '🟡 Pendiente'}")
         st.write(f"👥 CVs extraídos: {len(st.session_state.cvs)}")
         st.write(f"🏭 Análisis hechos: {len(st.session_state.analisis)}")
+        if st.session_state.api:
+            st.write(f"💳 Créditos usados: {st.session_state.api.credits_used}")
 
         if st.button("🔄 Reiniciar sesión"):
-            if st.session_state.scraper:
-                st.session_state.scraper.close()
             for k in list(st.session_state.keys()):
                 del st.session_state[k]
             st.rerun()
@@ -576,7 +722,7 @@ def main():
         st.markdown("### 2️⃣ Buscar CVs en LinkedIn")
 
         if not st.session_state.linkedin_ok:
-            st.warning("⚠️ Inicia sesión en LinkedIn en la sidebar")
+            st.warning("⚠️ Carga las cookies de LinkedIn en la sidebar")
             seleccion = []
         else:
             seleccion = st.multiselect(
@@ -616,9 +762,12 @@ def main():
                         with status_container:
                             with st.spinner(f"📄 {nombre}..."):
                                 cv = st.session_state.scraper.extract_full_cv(url)
-                                st.session_state.cvs[nombre] = cv
-                                save_cv_cache(nombre, cv)
-                                st.success(f"✅ {nombre}: {cv.get('headline', 'OK')[:80]}")
+                                if cv:
+                                    st.session_state.cvs[nombre] = cv
+                                    save_cv_cache(nombre, cv)
+                                    st.success(f"✅ {nombre}: {cv.get('headline', 'OK')[:80]}")
+                                else:
+                                    st.warning(f"⚠️ {nombre}: no se pudo extraer CV")
                     else:
                         with status_container:
                             st.warning(f"❌ {nombre}: no encontrado")
@@ -627,7 +776,7 @@ def main():
                         st.error(f"❌ {nombre}: {str(e)[:100]}")
 
                 progress.progress((i + 1) / len(seleccion))
-                time.sleep(3)
+                time.sleep(2)
 
             st.balloons()
 
