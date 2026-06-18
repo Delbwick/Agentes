@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión Streamlit Cloud + Browserless API REST (endpoints correctos)
+Versión Streamlit Cloud + Browserless API REST (con Puppeteer para búsquedas)
 """
 
 import os
@@ -53,10 +53,10 @@ st.markdown("""
 
 
 # ============================================================================
-# CLASE: BROWSERLESS API REST (endpoints correctos)
+# CLASE: BROWSERLESS API REST
 # ============================================================================
 class BrowserlessAPI:
-    """Cliente de la API REST de Browserless con endpoints actualizados."""
+    """Cliente de la API REST de Browserless."""
 
     def __init__(self, token: str):
         self.token = token
@@ -64,7 +64,6 @@ class BrowserlessAPI:
         self.credits_used = 0
 
     def test_connection(self) -> tuple[bool, str]:
-        """Verifica que el token es válido."""
         try:
             resp = requests.get(
                 f"{self.base_url}/json/version",
@@ -82,17 +81,11 @@ class BrowserlessAPI:
         except Exception as e:
             return False, f"❌ Error: {str(e)[:100]}"
 
-    def get_content(self, url: str, cookies: list = None, timeout: int = 30000) -> dict:
-        """
-        Endpoint /content: devuelve HTML completo de una página.
-        NO requiere 'elements'. Solo necesita 'url'.
-        """
-        payload = {
-            "url": url,
-        }
+    def get_content(self, url: str, cookies: list = None) -> dict:
+        """Endpoint /content: HTML rápido (sin esperar JS)."""
+        payload = {"url": url}
         if cookies:
             payload["cookies"] = cookies
-
         try:
             resp = requests.post(
                 f"{self.base_url}/content",
@@ -101,40 +94,18 @@ class BrowserlessAPI:
                 timeout=60
             )
             self.credits_used += 1
-
             if resp.status_code == 200:
-                return {
-                    "ok": True,
-                    "html": resp.text,  # /content devuelve HTML directo
-                    "final_url": url,
-                }
+                return {"ok": True, "html": resp.text, "final_url": url}
             else:
-                return {
-                    "ok": False,
-                    "error": f"HTTP {resp.status_code}: {resp.text[:200]}",
-                    "html": "",
-                    "final_url": url,
-                }
+                return {"ok": False, "error": f"HTTP {resp.status_code}", "html": "", "final_url": url}
         except Exception as e:
-            return {
-                "ok": False,
-                "error": str(e),
-                "html": "",
-                "final_url": url,
-            }
+            return {"ok": False, "error": str(e), "html": "", "final_url": url}
 
     def run_puppeteer(self, script_code: str, cookies: list = None) -> dict | None:
-        """
-        Endpoint /function: ejecuta código Puppeteer custom.
-        Ideal para hacer scroll y extraer contenido dinámico.
-        """
-        payload = {
-            "code": script_code,
-            "context": {},
-        }
+        """Endpoint /function: ejecuta Puppeteer custom (renderiza JS completo)."""
+        payload = {"code": script_code, "context": {}}
         if cookies:
             payload["cookies"] = cookies
-
         try:
             resp = requests.post(
                 f"{self.base_url}/function",
@@ -143,7 +114,6 @@ class BrowserlessAPI:
                 timeout=90
             )
             self.credits_used += 1
-
             if resp.status_code == 200:
                 return resp.json()
             else:
@@ -158,7 +128,7 @@ class BrowserlessAPI:
 # CLASE: LINKEDIN SCRAPER
 # ============================================================================
 class LinkedInScraper:
-    """Scraper de LinkedIn usando Browserless API REST."""
+    """Scraper de LinkedIn usando Browserless API."""
 
     def __init__(self, api: BrowserlessAPI, cookies: list):
         self.api = api
@@ -178,12 +148,11 @@ class LinkedInScraper:
 
         response = self.api.get_content(
             "https://www.linkedin.com/feed/",
-            cookies=self.cookies,
-            timeout=20000
+            cookies=self.cookies
         )
 
         if not response["ok"]:
-            result["debug_info"] = f"Error en /content: {response.get('error')}"
+            result["debug_info"] = f"Error: {response.get('error')}"
             return result
 
         html = response["html"]
@@ -191,7 +160,7 @@ class LinkedInScraper:
         result["final_url"] = response.get("final_url", "")
 
         if not html:
-            result["debug_info"] = "HTML vacío devuelto"
+            result["debug_info"] = "HTML vacío"
             return result
 
         soup = BeautifulSoup(html, "html.parser")
@@ -200,36 +169,128 @@ class LinkedInScraper:
         # Detectar página de login
         if "signin" in html.lower()[:2000] or "login" in html.lower()[:2000]:
             result["is_login_page"] = True
-            result["debug_info"] = "⚠️ LinkedIn redirigió a página de login. Cookies inválidas o expiradas."
+            result["debug_info"] = "⚠️ LinkedIn redirigió a login."
             return result
 
         # Detectar challenge/captcha
         if "challenge" in html.lower()[:2000]:
             result["is_challenge"] = True
-            result["debug_info"] = "⚠️ LinkedIn muestra captcha/challenge. IP bloqueada temporalmente."
+            result["debug_info"] = "⚠️ LinkedIn muestra captcha."
             return result
 
-        # Verificar contenido
-        feed_indicator = soup.select_one("div.feed-container, div.scaffold-layout__main")
-        profile_indicator = soup.select_one("h1")
+        # ✅ DETECCIÓN MEJORADA DE SESIÓN ACTIVA
+        # LinkedIn usa estos indicadores en el feed cuando hay sesión:
+        session_indicators = [
+            # URL contiene /feed/ (ya estamos logueados)
+            "/feed/" in result["final_url"].lower(),
+            # Título es "Feed | LinkedIn"
+            "feed" in result["title"].lower(),
+            # HTML tiene más de 1MB (página completa, no login)
+            len(html) > 500000,
+            # Hay elementos de navegación del feed
+            soup.select_one("nav.global-nav"),
+            soup.select_one("div.feed-shared-update-v2"),
+            soup.select_one("header"),
+            # Metadatos de sesión
+            soup.select_one("meta[name='linkedin-knowledge-graph-person-id']"),
+        ]
 
-        if feed_indicator or profile_indicator:
+        # Si al menos 2 indicadores son verdaderos, sesión activa
+        active_count = sum(1 for x in session_indicators if x)
+        
+        if active_count >= 2:
             result["ok"] = True
-            result["debug_info"] = "✅ Sesión LinkedIn activa. Cookies válidas."
+            result["debug_info"] = f"✅ Sesión LinkedIn activa. ({active_count} indicadores detectados)"
         else:
-            # Guardar preview para debug
-            preview = html[:800].replace('\n', ' ')
             result["debug_info"] = (
-                f"⚠️ No se detectó contenido de sesión.\n"
+                f"⚠️ No se detectó sesión activa.\n"
+                f"Indicadores: {active_count}/{len(session_indicators)}\n"
                 f"Título: '{result['title']}'\n"
-                f"Longitud HTML: {result['html_length']} chars\n\n"
-                f"HTML preview:\n{preview}"
+                f"Longitud HTML: {result['html_length']} chars\n"
+                f"URL: {result['final_url']}"
             )
 
         return result
 
     def search_person(self, full_name: str, institution: str = "") -> str | None:
-        """Busca persona y devuelve URL del mejor perfil."""
+        """Busca persona usando Puppeteer (renderiza JS completo)."""
+        query = full_name
+        if institution:
+            inst_clean = re.sub(r'[;|,()\[\]]', ' ', institution)
+            words = [w for w in inst_clean.split() if len(w) > 3]
+            if words:
+                query += " " + " ".join(words[:2])
+
+        # Script Puppeteer para búsqueda
+        puppeteer_code = f"""
+        module.exports = async ({{ page }}) => {{
+            const searchUrl = "https://www.linkedin.com/search/results/people/?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER";
+            
+            await page.goto(searchUrl, {{ waitUntil: 'networkidle2', timeout: 30000 }});
+            
+            // Esperar a que carguen los resultados
+            await page.waitForSelector('ul.reusable-search__result-container, a.app-aware-link[href*="/in/"]', {{ timeout: 10000 }}).catch(() => {{}});
+            
+            // Pequeña espera adicional
+            await new Promise(r => setTimeout(r, 2000));
+            
+            // Extraer resultados
+            const results = await page.evaluate(() => {{
+                const links = Array.from(document.querySelectorAll('a.app-aware-link[href*="/in/"]'));
+                return links.slice(0, 10).map(link => {{
+                    const href = link.getAttribute('href');
+                    const nameSpan = link.querySelector("span[aria-hidden='true']");
+                    const name = nameSpan ? nameSpan.innerText.trim() : '';
+                    const parent = link.closest('li');
+                    const subtitle = parent ? parent.innerText : '';
+                    return {{ href: href.split('?')[0], name, subtitle }};
+                }});
+            }});
+            
+            return {{ results, url: page.url() }};
+        }};
+        """
+
+        result = self.api.run_puppeteer(puppeteer_code, cookies=self.cookies)
+        
+        if not result:
+            # Fallback a /content
+            return self._search_person_fallback(full_name, institution)
+
+        results = result.get("results", [])
+        if not results:
+            print(f"⚠️ No se encontraron resultados para {full_name}")
+            return None
+
+        # Elegir el mejor resultado
+        target_words = set(full_name.lower().split())
+        best_url = None
+        best_score = -1
+
+        for r in results:
+            href = r.get("href", "")
+            if "/in/" not in href:
+                continue
+
+            name = r.get("name", "").lower()
+            name_words = set(name.split())
+            score = len(target_words & name_words) * 10
+
+            # Bonus por institución
+            if institution:
+                subtitle = r.get("subtitle", "").lower()
+                inst_lower = institution.lower()
+                if any(w in subtitle for w in inst_lower.split() if len(w) > 3):
+                    score += 5
+
+            if score > best_score:
+                best_score = score
+                best_url = href
+
+        return best_url
+
+    def _search_person_fallback(self, full_name: str, institution: str = "") -> str | None:
+        """Fallback: búsqueda con /content (sin JS rendering)."""
         query = full_name
         if institution:
             inst_clean = re.sub(r'[;|,()\[\]]', ' ', institution)
@@ -242,46 +303,22 @@ class LinkedInScraper:
             f"?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER"
         )
 
-        response = self.api.get_content(
-            search_url,
-            cookies=self.cookies,
-            timeout=30000
-        )
-
-        if not response["ok"]:
-            print(f"Error en búsqueda: {response.get('error')}")
+        response = self.api.get_content(search_url, cookies=self.cookies)
+        if not response["ok"] or not response["html"]:
             return None
 
-        html = response["html"]
-        if not html:
-            return None
-
-        # Detectar si nos redirigieron a login
-        if "signin" in html.lower()[:1000] or "login" in html.lower()[:1000]:
-            print("⚠️ Sesión expirada durante la búsqueda")
-            return None
-
-        soup = BeautifulSoup(html, "html.parser")
-
-        # Buscar enlaces a perfiles (múltiples selectores)
-        links = (
-            soup.select("a.app-aware-link[href*='/in/']") or
-            soup.select("a[href*='/in/']") or
-            soup.select("a[data-test-app-aware-link]")
-        )
+        soup = BeautifulSoup(response["html"], "html.parser")
+        links = soup.select("a[href*='/in/']")
 
         if not links:
-            print(f"⚠️ No se encontraron enlaces a perfiles. Título: {soup.title.string if soup.title else 'N/A'}")
             return None
 
-        # Elegir el mejor resultado
         target_words = set(full_name.lower().split())
         best_url = None
         best_score = -1
 
         for link in links[:10]:
-            href = link.get("href", "")
-            href = href.split("?")[0]
+            href = link.get("href", "").split("?")[0]
             if "/in/" not in href:
                 continue
 
@@ -310,6 +347,9 @@ class LinkedInScraper:
         puppeteer_code = f"""
         module.exports = async ({{ page }}) => {{
             await page.goto('{profile_url}', {{ waitUntil: 'networkidle2', timeout: 30000 }});
+            
+            // Esperar a que cargue el perfil
+            await page.waitForSelector('h1', {{ timeout: 10000 }}).catch(() => {{}});
             
             // Scroll para cargar contenido lazy-loaded
             await page.evaluate(async () => {{
@@ -393,11 +433,7 @@ class LinkedInScraper:
 
     def _extract_simple(self, profile_url: str) -> dict | None:
         """Fallback: extracción simple con /content."""
-        response = self.api.get_content(
-            profile_url,
-            cookies=self.cookies,
-            timeout=30000
-        )
+        response = self.api.get_content(profile_url, cookies=self.cookies)
 
         if not response["ok"] or not response["html"]:
             return None
@@ -504,7 +540,6 @@ def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
 # HELPERS
 # ============================================================================
 def parse_cookies_text(cookies_text: str) -> list | None:
-    """Parsea cookies desde JSON."""
     try:
         cookies = json.loads(cookies_text)
         if isinstance(cookies, list):
@@ -608,7 +643,7 @@ def main():
 
         # --- LinkedIn Cookies ---
         st.markdown("### 🔐 LinkedIn Cookies")
-        st.caption("Exporta cookies desde tu Chrome local con 'Cookie-Editor' o 'EditThisCookie'.")
+        st.caption("Exporta cookies desde tu Chrome local con 'Cookie-Editor'.")
 
         cookies_text = st.text_area(
             "Pega las cookies (JSON)",
@@ -627,7 +662,7 @@ def main():
                     if li_at:
                         st.success(f"✅ Cookie 'li_at' encontrada (longitud: {len(li_at['value'])})")
                     else:
-                        st.warning("⚠️ Cookie 'li_at' NO encontrada. Es la más importante.")
+                        st.warning("⚠️ Cookie 'li_at' NO encontrada.")
 
                     if st.session_state.api:
                         st.session_state.scraper = LinkedInScraper(
@@ -637,32 +672,30 @@ def main():
                 else:
                     st.error("❌ No se pudo parsear. Usa formato JSON.")
 
-        # --- DIAGNÓSTICO DE SESIÓN ---
+        # --- DIAGNÓSTICO ---
         if st.session_state.scraper:
             st.divider()
             st.markdown("### 🔍 Diagnóstico de sesión LinkedIn")
             
             if st.button("🧪 Testear sesión LinkedIn"):
-                with st.spinner("Probando cookies en LinkedIn..."):
+                with st.spinner("Probando cookies..."):
                     test_result = st.session_state.scraper.test_linkedin_session()
                     
                     if test_result["ok"]:
                         st.session_state.linkedin_ok = True
-                        st.success("✅ Sesión LinkedIn activa. Cookies válidas.")
+                        st.success(test_result["debug_info"])
                     else:
                         st.session_state.linkedin_ok = False
                         if test_result["is_login_page"]:
-                            st.error("❌ LinkedIn redirigió a login. Cookies inválidas o expiradas.")
+                            st.error("❌ Cookies inválidas o expiradas.")
                         elif test_result["is_challenge"]:
-                            st.error("❌ LinkedIn muestra captcha. IP bloqueada temporalmente.")
+                            st.error("❌ LinkedIn muestra captcha.")
                         else:
-                            st.warning("⚠️ No se pudo verificar la sesión.")
+                            st.warning(test_result["debug_info"])
                     
                     with st.expander("🔧 Info de debug"):
                         st.write(f"**URL final:** {test_result['final_url']}")
                         st.write(f"**Título:** {test_result['title']}")
-                        st.write(f"**Login page:** {test_result['is_login_page']}")
-                        st.write(f"**Challenge:** {test_result['is_challenge']}")
                         st.write(f"**Longitud HTML:** {test_result['html_length']} chars")
                         st.markdown(f"**Debug:**\n```\n{test_result['debug_info']}\n```")
 
@@ -776,7 +809,7 @@ def main():
         st.markdown("### 2️⃣ Buscar CVs en LinkedIn")
 
         if not st.session_state.linkedin_ok:
-            st.warning("⚠️ Primero carga las cookies y pulsa '🧪 Testear sesión LinkedIn' en la sidebar")
+            st.warning("⚠️ Primero carga las cookies y pulsa '🧪 Testear sesión LinkedIn'")
             seleccion = []
         else:
             seleccion = st.multiselect(
