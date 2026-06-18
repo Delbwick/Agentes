@@ -16,7 +16,7 @@ pandas>=2.1.0
 numpy>=1.25.0
 plotly>=5.18.0
 scikit-learn>=1.4.0
-selenium
+
 matplotlib>=3.7.0
 
 scikit-learn>=1.4.0
@@ -24,3 +24,5 @@ scikit-learn>=1.4.0
 python-calamine>=0.1.8
 xlsxwriter>=3.1.0
 requests>=2.31.0
+openpyxl
+selenium
