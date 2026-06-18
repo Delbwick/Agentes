@@ -20,4 +20,7 @@ scikit-learn>=1.4.0
 matplotlib>=3.7.0
 
 scikit-learn>=1.4.0
-
+# Para LinkedIn CV Analyzer (spin-off detector)
+python-calamine>=0.1.8
+xlsxwriter>=3.1.0
+requests>=2.31.0
