@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión Streamlit Cloud + Browserless API REST + DIAGNÓSTICO
+Versión Streamlit Cloud + Browserless API REST (endpoints correctos)
 """
 
 import os
@@ -48,26 +48,15 @@ st.markdown("""
         border-radius: 5px;
         margin: 1rem 0;
     }
-    .debug-box {
-        background-color: #f8f9fa;
-        border: 1px solid #dee2e6;
-        padding: 1rem;
-        border-radius: 5px;
-        margin: 1rem 0;
-        font-family: monospace;
-        font-size: 0.85rem;
-        max-height: 400px;
-        overflow-y: auto;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ============================================================================
-# CLASE: BROWSERLESS API REST
+# CLASE: BROWSERLESS API REST (endpoints correctos)
 # ============================================================================
 class BrowserlessAPI:
-    """Cliente de la API REST de Browserless."""
+    """Cliente de la API REST de Browserless con endpoints actualizados."""
 
     def __init__(self, token: str):
         self.token = token
@@ -93,28 +82,20 @@ class BrowserlessAPI:
         except Exception as e:
             return False, f"❌ Error: {str(e)[:100]}"
 
-    def scrape_url(self, url: str, cookies: list = None, wait_for: str = "body", 
-                   wait_until: str = "networkidle2", timeout: int = 30000) -> dict:
+    def get_content(self, url: str, cookies: list = None, timeout: int = 30000) -> dict:
         """
-        Hace scrape de una URL y devuelve dict con HTML y metadatos.
+        Endpoint /content: devuelve HTML completo de una página.
+        NO requiere 'elements'. Solo necesita 'url'.
         """
         payload = {
             "url": url,
-            "waitFor": wait_for,
-            "waitUntil": wait_until,
-            "timeout": timeout,
-            "setExtraHTTPHeaders": {
-                "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-            },
-            "viewport": {"width": 1920, "height": 1080},
         }
-
         if cookies:
             payload["cookies"] = cookies
 
         try:
             resp = requests.post(
-                f"{self.base_url}/scrape",
+                f"{self.base_url}/content",
                 params={"token": self.token},
                 json=payload,
                 timeout=60
@@ -122,28 +103,31 @@ class BrowserlessAPI:
             self.credits_used += 1
 
             if resp.status_code == 200:
-                data = resp.json()
                 return {
                     "ok": True,
-                    "html": data.get("data", ""),
-                    "metadata": data.get("metadata", {}),
-                    "status_code": data.get("metadata", {}).get("statusCode"),
+                    "html": resp.text,  # /content devuelve HTML directo
+                    "final_url": url,
                 }
             else:
                 return {
                     "ok": False,
                     "error": f"HTTP {resp.status_code}: {resp.text[:200]}",
                     "html": "",
+                    "final_url": url,
                 }
         except Exception as e:
             return {
                 "ok": False,
                 "error": str(e),
                 "html": "",
+                "final_url": url,
             }
 
     def run_puppeteer(self, script_code: str, cookies: list = None) -> dict | None:
-        """Ejecuta código Puppeteer custom en Browserless."""
+        """
+        Endpoint /function: ejecuta código Puppeteer custom.
+        Ideal para hacer scroll y extraer contenido dinámico.
+        """
         payload = {
             "code": script_code,
             "context": {},
@@ -163,6 +147,7 @@ class BrowserlessAPI:
             if resp.status_code == 200:
                 return resp.json()
             else:
+                print(f"Error en /function: {resp.status_code} - {resp.text[:200]}")
                 return None
         except Exception as e:
             print(f"Error en run_puppeteer: {e}")
@@ -170,7 +155,7 @@ class BrowserlessAPI:
 
 
 # ============================================================================
-# CLASE: LINKEDIN SCRAPER (con diagnóstico)
+# CLASE: LINKEDIN SCRAPER
 # ============================================================================
 class LinkedInScraper:
     """Scraper de LinkedIn usando Browserless API REST."""
@@ -180,10 +165,7 @@ class LinkedInScraper:
         self.cookies = cookies
 
     def test_linkedin_session(self) -> dict:
-        """
-        DIAGNÓSTICO: Verifica si las cookies funcionan en LinkedIn.
-        Devuelve dict con info detallada del estado.
-        """
+        """DIAGNÓSTICO: Verifica si las cookies funcionan en LinkedIn."""
         result = {
             "ok": False,
             "final_url": "",
@@ -191,56 +173,58 @@ class LinkedInScraper:
             "is_challenge": False,
             "title": "",
             "debug_info": "",
+            "html_length": 0,
         }
 
-        # Hacer scrape del feed de LinkedIn
-        response = self.api.scrape_url(
+        response = self.api.get_content(
             "https://www.linkedin.com/feed/",
             cookies=self.cookies,
-            wait_for="body",
-            wait_until="networkidle2",
             timeout=20000
         )
 
         if not response["ok"]:
-            result["debug_info"] = f"Error en scrape: {response.get('error')}"
+            result["debug_info"] = f"Error en /content: {response.get('error')}"
             return result
 
         html = response["html"]
-        metadata = response.get("metadata", {})
-        result["final_url"] = metadata.get("url", "")
-        result["title"] = metadata.get("title", "")
+        result["html_length"] = len(html)
+        result["final_url"] = response.get("final_url", "")
 
-        # Analizar HTML
         if not html:
             result["debug_info"] = "HTML vacío devuelto"
             return result
 
+        soup = BeautifulSoup(html, "html.parser")
+        result["title"] = soup.title.string if soup.title else ""
+
         # Detectar página de login
-        if "signin" in result["final_url"].lower() or "login" in result["final_url"].lower():
+        if "signin" in html.lower()[:2000] or "login" in html.lower()[:2000]:
             result["is_login_page"] = True
             result["debug_info"] = "⚠️ LinkedIn redirigió a página de login. Cookies inválidas o expiradas."
             return result
 
         # Detectar challenge/captcha
-        if "challenge" in result["final_url"].lower():
+        if "challenge" in html.lower()[:2000]:
             result["is_challenge"] = True
             result["debug_info"] = "⚠️ LinkedIn muestra captcha/challenge. IP bloqueada temporalmente."
             return result
 
         # Verificar contenido
-        soup = BeautifulSoup(html, "html.parser")
-        
-        # Buscar indicadores de sesión activa
-        feed_indicator = soup.select_one("div.feed-container, div.scaffold-layout__main, div.reusable-search__result-container")
+        feed_indicator = soup.select_one("div.feed-container, div.scaffold-layout__main")
         profile_indicator = soup.select_one("h1")
-        
+
         if feed_indicator or profile_indicator:
             result["ok"] = True
             result["debug_info"] = "✅ Sesión LinkedIn activa. Cookies válidas."
         else:
-            # Guardar primeros 500 chars para debug
-            result["debug_info"] = f"⚠️ No se detectó contenido de sesión. Título: '{result['title']}'. URL final: {result['final_url']}\n\nHTML preview:\n{html[:500]}"
+            # Guardar preview para debug
+            preview = html[:800].replace('\n', ' ')
+            result["debug_info"] = (
+                f"⚠️ No se detectó contenido de sesión.\n"
+                f"Título: '{result['title']}'\n"
+                f"Longitud HTML: {result['html_length']} chars\n\n"
+                f"HTML preview:\n{preview}"
+            )
 
         return result
 
@@ -258,11 +242,9 @@ class LinkedInScraper:
             f"?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER"
         )
 
-        response = self.api.scrape_url(
+        response = self.api.get_content(
             search_url,
             cookies=self.cookies,
-            wait_for="body",
-            wait_until="networkidle2",
             timeout=30000
         )
 
@@ -275,13 +257,13 @@ class LinkedInScraper:
             return None
 
         # Detectar si nos redirigieron a login
-        if "signin" in response.get("metadata", {}).get("url", "").lower():
+        if "signin" in html.lower()[:1000] or "login" in html.lower()[:1000]:
             print("⚠️ Sesión expirada durante la búsqueda")
             return None
 
         soup = BeautifulSoup(html, "html.parser")
 
-        # Buscar enlaces a perfiles (múltiples selectores por si LinkedIn cambia)
+        # Buscar enlaces a perfiles (múltiples selectores)
         links = (
             soup.select("a.app-aware-link[href*='/in/']") or
             soup.select("a[href*='/in/']") or
@@ -289,7 +271,6 @@ class LinkedInScraper:
         )
 
         if not links:
-            # Debug: mostrar qué hay en la página
             print(f"⚠️ No se encontraron enlaces a perfiles. Título: {soup.title.string if soup.title else 'N/A'}")
             return None
 
@@ -330,7 +311,7 @@ class LinkedInScraper:
         module.exports = async ({{ page }}) => {{
             await page.goto('{profile_url}', {{ waitUntil: 'networkidle2', timeout: 30000 }});
             
-            // Scroll para cargar contenido
+            // Scroll para cargar contenido lazy-loaded
             await page.evaluate(async () => {{
                 await new Promise((resolve) => {{
                     let totalHeight = 0;
@@ -411,12 +392,11 @@ class LinkedInScraper:
         return cv
 
     def _extract_simple(self, profile_url: str) -> dict | None:
-        """Fallback: extracción simple."""
-        response = self.api.scrape_url(
+        """Fallback: extracción simple con /content."""
+        response = self.api.get_content(
             profile_url,
             cookies=self.cookies,
-            wait_for="body",
-            wait_until="networkidle2"
+            timeout=30000
         )
 
         if not response["ok"] or not response["html"]:
@@ -628,9 +608,7 @@ def main():
 
         # --- LinkedIn Cookies ---
         st.markdown("### 🔐 LinkedIn Cookies")
-        st.caption(
-            "Exporta cookies desde tu Chrome local con 'Cookie-Editor' o 'EditThisCookie'."
-        )
+        st.caption("Exporta cookies desde tu Chrome local con 'Cookie-Editor' o 'EditThisCookie'.")
 
         cookies_text = st.text_area(
             "Pega las cookies (JSON)",
@@ -645,15 +623,12 @@ def main():
                     st.session_state.cookies = cookies
                     st.success(f"✅ {len(cookies)} cookies cargadas")
 
-                    # Verificar cookie crítica li_at
                     li_at = next((c for c in cookies if c["name"] == "li_at"), None)
                     if li_at:
                         st.success(f"✅ Cookie 'li_at' encontrada (longitud: {len(li_at['value'])})")
                     else:
                         st.warning("⚠️ Cookie 'li_at' NO encontrada. Es la más importante.")
-                        st.info("Asegúrate de estar logueado en LinkedIn al exportar las cookies.")
 
-                    # Crear scraper
                     if st.session_state.api:
                         st.session_state.scraper = LinkedInScraper(
                             st.session_state.api,
@@ -683,12 +658,12 @@ def main():
                         else:
                             st.warning("⚠️ No se pudo verificar la sesión.")
                     
-                    # Mostrar info de debug
                     with st.expander("🔧 Info de debug"):
                         st.write(f"**URL final:** {test_result['final_url']}")
                         st.write(f"**Título:** {test_result['title']}")
                         st.write(f"**Login page:** {test_result['is_login_page']}")
                         st.write(f"**Challenge:** {test_result['is_challenge']}")
+                        st.write(f"**Longitud HTML:** {test_result['html_length']} chars")
                         st.markdown(f"**Debug:**\n```\n{test_result['debug_info']}\n```")
 
         if st.session_state.linkedin_ok:
