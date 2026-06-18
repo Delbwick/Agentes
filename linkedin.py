@@ -1,8 +1,12 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión Streamlit Cloud + Browserless API REST (sin Selenium)
+Versión Streamlit Cloud + Browserless API REST
+Token cargado desde st.secrets
 """
 
+# ============================================================================
+# IMPORTS
+# ============================================================================
 import os
 import re
 import json
@@ -30,6 +34,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# CSS
 st.markdown("""
 <style>
     .stButton>button { width: 100%; }
@@ -56,14 +61,12 @@ st.markdown("""
 # CLASE: BROWSERLESS API REST
 # ============================================================================
 class BrowserlessAPI:
-    """
-    Cliente de la API REST de Browserless.
-    Documentación: https://docs.browserless.io/
-    """
+    """Cliente de la API REST de Browserless."""
 
     def __init__(self, token: str):
         self.token = token
-        self.base_url = "https://production-sessions.browserless.io"
+        # URL CORRECTA de Browserless
+        self.base_url = "https://chrome.browserless.io"
         self.credits_used = 0
 
     def test_connection(self) -> tuple[bool, str]:
@@ -78,23 +81,20 @@ class BrowserlessAPI:
                 return True, "✅ Token válido. Conexión establecida."
             elif resp.status_code == 401:
                 return False, "❌ Token inválido"
+            elif resp.status_code == 403:
+                return False, "❌ Token sin permisos"
+            elif resp.status_code == 429:
+                return False, "⚠️ Límite de créditos alcanzado"
             else:
-                return False, f"❌ Error {resp.status_code}"
+                return False, f"❌ Error {resp.status_code}: {resp.text[:100]}"
+        except requests.exceptions.ConnectionError:
+            return False, "❌ No se puede conectar a Browserless"
         except Exception as e:
             return False, f"❌ Error: {str(e)[:100]}"
 
     def scrape_url(self, url: str, cookies: list = None, wait_for: str = "body", 
                    wait_until: str = "networkidle2", timeout: int = 30000) -> str | None:
-        """
-        Hace scrape de una URL y devuelve el HTML.
-        
-        Args:
-            url: URL a scrapear
-            cookies: Lista de cookies en formato [{"name":..., "value":..., "domain":...}]
-            wait_for: Selector CSS a esperar (por defecto "body")
-            wait_until: Evento de carga ("load", "domcontentloaded", "networkidle0", "networkidle2")
-            timeout: Timeout en ms
-        """
+        """Hace scrape de una URL y devuelve el HTML."""
         payload = {
             "url": url,
             "waitFor": wait_for,
@@ -129,10 +129,7 @@ class BrowserlessAPI:
             return None
 
     def run_puppeteer(self, script_code: str, cookies: list = None) -> dict | None:
-        """
-        Ejecuta código Puppeteer custom en Browserless.
-        Ideal para hacer scroll y extraer contenido dinámico.
-        """
+        """Ejecuta código Puppeteer custom en Browserless."""
         payload = {
             "code": script_code,
             "context": {},
@@ -546,22 +543,27 @@ def main():
         st.markdown("### 🌐 Browserless API")
         st.markdown(
             '<div class="info-box">📌 Tu API REST de Browserless.<br>'
-            'Documentación: <a href="https://docs.browserless.io" target="_blank">docs.browserless.io</a></div>',
+            'Token cargado desde <code>st.secrets</code></div>',
             unsafe_allow_html=True
         )
 
-        default_token = ""
+        # Leer token desde secrets
+        token_from_secrets = ""
         try:
-            default_token = st.secrets.get("BROWSERLESS_TOKEN", "")
+            token_from_secrets = st.secrets.get("BROWSERLESS_TOKEN", "")
         except Exception:
             pass
 
-        token = st.text_input(
-            "Token Browserless",
-            type="password",
-            value=default_token,
-            help="Tu token de Browserless"
-        )
+        # Fallback a input manual si no hay secrets
+        if token_from_secrets:
+            token = token_from_secrets
+            st.success("✅ Token cargado desde secrets")
+        else:
+            token = st.text_input(
+                "Token Browserless (manual)",
+                type="password",
+                help="No encontrado en secrets. Introdúcelo manualmente."
+            )
 
         if token:
             if st.button("🔌 Verificar conexión"):
@@ -621,18 +623,23 @@ def main():
 
         # --- OpenAI ---
         st.markdown("### 🤖 OpenAI API")
-        default_openai = ""
+        
+        # Leer desde secrets
+        openai_from_secrets = ""
         try:
-            default_openai = st.secrets.get("OPENAI_API_KEY", "")
+            openai_from_secrets = st.secrets.get("OPENAI_API_KEY", "")
         except Exception:
             pass
 
-        api_key = st.text_input(
-            "API Key OpenAI",
-            type="password",
-            value=default_openai,
-            help="Para analizar CVs con IA"
-        )
+        if openai_from_secrets:
+            api_key = openai_from_secrets
+            st.success("✅ OpenAI key cargada desde secrets")
+        else:
+            api_key = st.text_input(
+                "API Key OpenAI (manual)",
+                type="password",
+                help="No encontrada en secrets. Introdúcela manualmente."
+            )
 
         if api_key:
             if st.button("🔍 Verificar OpenAI"):
