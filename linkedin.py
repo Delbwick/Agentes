@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Adaptado para Streamlit Community Cloud (GitHub)
+Adaptado para Streamlit Community Cloud (sin openpyxl)
 Autor: Asistente IA para Ivan
 """
 
@@ -11,9 +11,7 @@ import os
 import re
 import json
 import time
-import base64
 import pickle
-import shutil
 import subprocess
 from io import BytesIO
 from pathlib import Path
@@ -36,6 +34,9 @@ from openai import OpenAI
 # ============================================================================
 # CONFIGURACIÓN
 # ============================================================================
+CACHE_DIR = Path("cv_cache")
+CACHE_DIR.mkdir(exist_ok=True)
+
 st.set_page_config(
     page_title="🔬 Spin-off Detector",
     page_icon="🚀",
@@ -46,17 +47,8 @@ st.set_page_config(
 # CSS personalizado
 st.markdown("""
 <style>
-    .status-ok { color: #28a745; font-weight: bold; }
-    .status-warn { color: #ffc107; font-weight: bold; }
-    .status-err { color: #dc3545; font-weight: bold; }
     .stButton>button { width: 100%; }
     .big-header { font-size: 2.2rem; font-weight: 700; margin-bottom: 0.5rem; }
-    .step-card {
-        padding: 1rem;
-        border-radius: 10px;
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        margin-bottom: 1rem;
-    }
     .warning-box {
         background-color: #fff3cd;
         border-left: 5px solid #ffc107;
@@ -64,31 +56,39 @@ st.markdown("""
         border-radius: 5px;
         margin: 1rem 0;
     }
+    .info-box {
+        background-color: #d1ecf1;
+        border-left: 5px solid #0c5460;
+        padding: 1rem;
+        border-radius: 5px;
+        margin: 1rem 0;
+    }
+    .metric-card {
+        padding: 1rem;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 10px;
+        text-align: center;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ============================================================================
-# UTILIDADES PARA CHROMIUM EN STREAMLIT CLOUD
+# UTILIDADES CHROMIUM (solo si se usa Selenium)
 # ============================================================================
 def _find_chromium_binary() -> str | None:
-    """Busca el binario de Chromium en el sistema."""
     candidates = [
         "/usr/bin/chromium",
         "/usr/bin/chromium-browser",
         "/snap/bin/chromium",
         "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
     ]
     for path in candidates:
         if os.path.exists(path):
             return path
-    # Buscar con which
     try:
-        result = subprocess.run(
-            ["which", "chromium"],
-            capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["which", "chromium"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             return result.stdout.strip()
     except Exception:
@@ -97,20 +97,12 @@ def _find_chromium_binary() -> str | None:
 
 
 def _find_chromedriver() -> str | None:
-    """Busca chromedriver en el sistema."""
-    candidates = [
-        "/usr/bin/chromedriver",
-        "/usr/lib/chromium/chromedriver",
-        "/snap/bin/chromedriver",
-    ]
+    candidates = ["/usr/bin/chromedriver", "/usr/lib/chromium/chromedriver"]
     for path in candidates:
         if os.path.exists(path):
             return path
     try:
-        result = subprocess.run(
-            ["which", "chromedriver"],
-            capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["which", "chromedriver"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             return result.stdout.strip()
     except Exception:
@@ -119,108 +111,346 @@ def _find_chromedriver() -> str | None:
 
 
 # ============================================================================
-# CLASE: LINKEDIN SCRAPER (adaptado a Streamlit Cloud)
+# CLASE: PROXYCURL API (MÉTODO RECOMENDADO)
+# ============================================================================
+class ProxycurlAPI:
+    """
+    API para obtener perfiles de LinkedIn de forma estable.
+    Documentación: https://nubela.co/proxycurl/docs
+    Plan gratuito: 10 créditos/mes (suficiente para ~5 investigadores).
+    """
+
+    BASE_URL = "https://nubela.co/proxycurl/api/v2/linkedin"
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.headers = {"Authorization": f"Bearer {api_key}"}
+        self.credits_used = 0
+
+    def test_connection(self) -> tuple[bool, str]:
+        """Verifica que la API key es válida usando un perfil conocido."""
+        try:
+            resp = requests.get(
+                self.BASE_URL,
+                headers=self.headers,
+                params={"url": "https://linkedin.com/in/williamhgates"},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                self.credits_used += 1
+                return True, "✅ API válida. Conexión establecida."
+            elif resp.status_code == 401:
+                return False, "❌ API key inválida"
+            elif resp.status_code == 429:
+                return False, "⚠️ Límite de créditos alcanzado este mes"
+            elif resp.status_code == 404:
+                return False, "⚠️ Endpoint no encontrado (revisa plan)"
+            else:
+                return False, f"❌ Error {resp.status_code}: {resp.text[:100]}"
+        except Exception as e:
+            return False, f"❌ Error de conexión: {str(e)[:100]}"
+
+    def get_credits(self) -> int | None:
+        """Consulta los créditos disponibles (si el plan lo permite)."""
+        try:
+            resp = requests.get(
+                "https://nubela.co/proxycurl/api/linkedin/profile/resolve",
+                headers=self.headers,
+                timeout=10
+            )
+            # Este endpoint no da créditos directamente, pero verifica la key
+            return None
+        except Exception:
+            return None
+
+    def search_person(self, full_name: str, institution: str = "") -> str | None:
+        """
+        Busca una persona en LinkedIn y devuelve la URL del mejor perfil.
+        Coste: 6 créditos por búsqueda (según plan).
+        """
+        # Construir query más inteligente
+        query = full_name
+        if institution:
+            # Extraer palabras clave relevantes de la institución
+            inst_clean = re.sub(r'[;|,()\[\]]', ' ', institution)
+            words = [w for w in inst_clean.split() if len(w) > 3]
+            # Añadir las 2 más significativas
+            if words:
+                query += " " + " ".join(words[:2])
+
+        params = {
+            "q": query,
+            "search_type": "people",
+            "page_size": 5,
+        }
+
+        try:
+            resp = requests.get(
+                f"{self.BASE_URL}/person/search",
+                headers=self.headers,
+                params=params,
+                timeout=20
+            )
+            if resp.status_code == 200:
+                self.credits_used += 1
+                data = resp.json()
+                results = data.get("results", [])
+                if results:
+                    best = self._best_match(results, full_name, institution)
+                    return best.get("profile_url") or best.get("link")
+            elif resp.status_code == 404:
+                # Endpoint alternativo
+                return self._search_person_alt(full_name, institution)
+            return None
+        except Exception as e:
+            print(f"Error en búsqueda: {e}")
+            return None
+
+    def _search_person_alt(self, full_name: str, institution: str = "") -> str | None:
+        """Búsqueda alternativa usando el endpoint de resolución."""
+        params = {
+            "q": full_name,
+            "search_type": "people",
+            "page_size": 1,
+        }
+        try:
+            resp = requests.get(
+                "https://nubela.co/proxycurl/api/v2/linkedin/person/search",
+                headers=self.headers,
+                params=params,
+                timeout=20
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                results = data.get("results", [])
+                if results:
+                    return results[0].get("profile_url") or results[0].get("link")
+        except Exception:
+            pass
+        return None
+
+    def _best_match(self, results: list, target_name: str, institution: str = "") -> dict:
+        """Elige el resultado con mayor similitud al nombre objetivo."""
+        target = target_name.lower().strip()
+        best_score = -1
+        best_result = results[0]
+
+        for r in results:
+            name = (r.get("full_name") or r.get("name") or "").lower()
+            # Score basado en coincidencia de palabras
+            target_words = set(target.split())
+            name_words = set(name.split())
+            score = len(target_words & name_words) * 10
+
+            # Bonus si la institución coincide
+            if institution:
+                inst_lower = institution.lower()
+                headline = (r.get("headline") or "").lower()
+                if any(w in headline for w in inst_lower.split() if len(w) > 3):
+                    score += 5
+
+            # Bonus por longitud de coincidencia exacta
+            common = sum(1 for a, b in zip(target, name) if a == b)
+            score += common * 0.1
+
+            if score > best_score:
+                best_score = score
+                best_result = r
+        return best_result
+
+    def get_profile(self, profile_url: str) -> dict | None:
+        """
+        Obtiene el perfil completo de LinkedIn.
+        Coste: 1 crédito.
+        """
+        params = {
+            "url": profile_url,
+            "skills": "include",
+            "instructions": "include",
+            "recommendations": "exclude",
+            "personal_contact_number": "exclude",
+            "personal_email": "exclude",
+            "twitter_profile_id": "exclude",
+            "facebook_profile_id": "exclude",
+            "github_profile_id": "exclude",
+            "use_cache": "if-present",
+            "fallback_to_cache": "on-error",
+        }
+
+        try:
+            resp = requests.get(
+                self.BASE_URL,
+                headers=self.headers,
+                params=params,
+                timeout=30
+            )
+            if resp.status_code == 200:
+                self.credits_used += 1
+                data = resp.json()
+                return self._format_profile(data, profile_url)
+            else:
+                print(f"Error obteniendo perfil: {resp.status_code} - {resp.text[:100]}")
+                return None
+        except Exception as e:
+            print(f"Error en get_profile: {e}")
+            return None
+
+    def _format_profile(self, data: dict, url: str) -> dict:
+        """Convierte la respuesta de Proxycurl al formato interno."""
+        cv = {
+            "url": url,
+            "nombre": data.get("full_name", ""),
+            "headline": data.get("headline", ""),
+            "location": ", ".join(filter(None, [data.get("city"), data.get("country_full_name")])),
+            "sections": {},
+        }
+
+        # About
+        if data.get("summary"):
+            cv["sections"]["Acerca de"] = data["summary"]
+
+        # Experiencia
+        if data.get("experiences"):
+            lines = []
+            for exp in data["experiences"]:
+                title = exp.get("title", "N/A")
+                company = exp.get("company", "N/A")
+                start = exp.get("starts_at") or {}
+                end = exp.get("ends_at") or {}
+                start_str = f"{start.get('month', '?')}/{start.get('year', '?')}"
+                if end:
+                    end_str = f"{end.get('month', '?')}/{end.get('year', '?')}"
+                else:
+                    end_str = "Actualidad"
+                line = f"• {title} @ {company} ({start_str} - {end_str})"
+                if exp.get("description"):
+                    desc = exp["description"][:400].replace("\n", " ")
+                    line += f"\n  {desc}"
+                lines.append(line)
+            cv["sections"]["Experiencia"] = "\n".join(lines)
+
+        # Educación
+        if data.get("education"):
+            lines = []
+            for ed in data["education"]:
+                degree = ed.get("degree_name", "")
+                field = ed.get("field_of_study", "")
+                school = ed.get("school", "")
+                start = (ed.get("starts_at") or {}).get("year", "?")
+                end = (ed.get("ends_at") or {}).get("year", "?")
+                degree_str = f"{degree} {field}".strip()
+                lines.append(f"• {degree_str} @ {school} ({start}-{end})")
+            cv["sections"]["Educación"] = "\n".join(lines)
+
+        # Publicaciones
+        if data.get("publications"):
+            lines = []
+            for pub in data["publications"][:10]:  # Limitar a 10
+                title = pub.get("name") or pub.get("title", "")
+                publisher = pub.get("publisher", "")
+                date = pub.get("published_date") or pub.get("published_at", "")
+                lines.append(f"• {title} ({publisher}, {date})")
+            cv["sections"]["Publicaciones"] = "\n".join(lines)
+
+        # Patentes
+        if data.get("patents"):
+            lines = []
+            for pat in data["patents"][:10]:
+                title = pat.get("title", "")
+                num = pat.get("number", "")
+                lines.append(f"• {title} ({num})")
+            cv["sections"]["Patentes"] = "\n".join(lines)
+
+        # Proyectos
+        if data.get("projects"):
+            lines = []
+            for proj in data["projects"][:10]:
+                title = proj.get("title", "")
+                desc = (proj.get("description") or "")[:200]
+                lines.append(f"• {title}: {desc}")
+            cv["sections"]["Proyectos"] = "\n".join(lines)
+
+        # Idiomas
+        if data.get("languages"):
+            cv["sections"]["Idiomas"] = ", ".join(data["languages"])
+
+        # Skills
+        if data.get("skills"):
+            cv["sections"]["Skills"] = ", ".join(data["skills"][:30])
+
+        # Intereses
+        if data.get("interests"):
+            cv["sections"]["Intereses"] = ", ".join(data["interests"][:20])
+
+        # Cargos (para análisis industrial)
+        cv["cargos_actuales"] = [
+            e for e in data.get("experiences", [])
+            if not e.get("ends_at")
+        ]
+        cv["todos_cargos"] = data.get("experiences", [])
+
+        return cv
+
+    def close(self):
+        """No hay sesión que cerrar en API REST."""
+        pass
+
+
+# ============================================================================
+# CLASE: LINKEDIN SCRAPER (alternativa con Selenium)
 # ============================================================================
 class LinkedInCVScraper:
-    """Scraper de CVs de LinkedIn. Adaptado para entornos cloud efímeros."""
+    """Scraper de CVs con Selenium. Alternativa a Proxycurl."""
 
     def __init__(self, headless: bool = True):
         self.headless = headless
         self.driver = None
         self.wait = None
-        self._cookies = []  # En memoria (no hay filesystem persistente)
+        self._cookies = []
 
     def start(self) -> tuple[bool, str]:
-        """Inicia el driver. Devuelve (ok, mensaje)."""
         try:
             opts = Options()
             if self.headless:
                 opts.add_argument("--headless=new")
-
-            # Binario de Chromium
             binary = _find_chromium_binary()
             if binary:
                 opts.binary_location = binary
             else:
-                return False, "❌ Chromium no encontrado. Añade `chromium` a packages.txt"
+                return False, "❌ Chromium no encontrado"
 
-            # Opciones críticas para cloud
             opts.add_argument("--no-sandbox")
-            opts.add_argument("--disable-dev-shm-usage")  # CRÍTICO en contenedores
+            opts.add_argument("--disable-dev-shm-usage")
             opts.add_argument("--disable-gpu")
-            opts.add_argument("--disable-setuid-sandbox")
-            opts.add_argument("--disable-infobars")
             opts.add_argument("--window-size=1920,1080")
-            opts.add_argument("--single-process")  # Ahorra memoria
+            opts.add_argument("--single-process")
             opts.add_argument("--disable-blink-features=AutomationControlled")
-            opts.add_argument("--disable-extensions")
-            opts.add_argument("--disable-background-networking")
-            opts.add_argument("--disable-default-apps")
-            opts.add_argument("--disable-sync")
-            opts.add_argument("--disable-translate")
-            opts.add_argument("--mute-audio")
-            opts.add_argument("--no-first-run")
             opts.add_argument(
                 "--user-agent=Mozilla/5.0 (X11; Linux x86_64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
+                "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
             )
             opts.add_experimental_option("excludeSwitches", ["enable-automation"])
             opts.add_experimental_option("useAutomationExtension", False)
 
-            # chromedriver
             driver_path = _find_chromedriver()
-            if driver_path:
-                service = Service(driver_path)
-            else:
-                # Fallback: dejar que Selenium lo gestione
-                service = Service()
-
+            service = Service(driver_path) if driver_path else Service()
             self.driver = webdriver.Chrome(service=service, options=opts)
-            self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-                "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            })
             self.wait = WebDriverWait(self.driver, 20)
             return True, "✅ Chromium iniciado"
         except Exception as e:
-            return False, f"❌ Error iniciando Chromium: {str(e)[:200]}"
+            return False, f"❌ Error: {str(e)[:200]}"
 
     def set_cookies_from_text(self, cookies_text: str) -> bool:
-        """Carga cookies desde texto JSON o Netscape exportado."""
         try:
-            # Intentar parsear como JSON
             cookies = json.loads(cookies_text)
             if isinstance(cookies, list):
                 self._cookies = cookies
                 return True
         except json.JSONDecodeError:
             pass
-
-        # Formato Netscape (EditThisCookie, etc.)
-        try:
-            cookies = []
-            for line in cookies_text.strip().split("\n"):
-                if line.startswith("#") or not line.strip():
-                    continue
-                parts = line.split("\t")
-                if len(parts) >= 7:
-                    cookies.append({
-                        "name": parts[5],
-                        "value": parts[6],
-                        "domain": parts[0],
-                        "path": parts[2],
-                        "secure": parts[3].upper() == "TRUE",
-                    })
-            if cookies:
-                self._cookies = cookies
-                return True
-        except Exception:
-            pass
-
         return False
 
     def inject_cookies(self) -> bool:
-        """Inyecta las cookies en el navegador y verifica sesión."""
         if not self._cookies:
             return False
         try:
@@ -233,7 +463,6 @@ class LinkedInCVScraper:
                     "domain": c.get("domain", ".linkedin.com"),
                     "path": c.get("path", "/"),
                 }
-                # LinkedIn requiere que las cookies sean de su dominio
                 if "linkedin" not in cookie["domain"]:
                     continue
                 try:
@@ -242,32 +471,22 @@ class LinkedInCVScraper:
                     pass
             self.driver.refresh()
             time.sleep(4)
-            # Verificar si estamos logueados
-            url = self.driver.current_url.lower()
-            return "feed" in url or "mynetwork" in url or "linkedin.com/in/" in url
-        except Exception as e:
-            print(f"Error inyectando cookies: {e}")
+            return "feed" in self.driver.current_url.lower()
+        except Exception:
             return False
 
     def search_person(self, full_name: str, institution: str = "", orcid: str = "") -> str | None:
-        """Busca persona y devuelve URL del perfil."""
         query = full_name
         if institution:
-            # Limpiar institución para la búsqueda
-            inst_clean = re.sub(r'[;|]', ' ', institution).strip()
-            query += f" {inst_clean}"
-
+            query += f" {re.sub(r'[;|]', ' ', institution).strip()}"
         search_url = (
             f"https://www.linkedin.com/search/results/people/"
             f"?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER"
         )
         self.driver.get(search_url)
         time.sleep(5)
-
-        # Detectar challenge/captcha
         if "challenge" in self.driver.current_url.lower():
-            raise RuntimeError("LinkedIn ha detectado automatización (challenge/captcha)")
-
+            raise RuntimeError("LinkedIn challenge/captcha detectado")
         try:
             first = self.wait.until(
                 EC.presence_of_element_located(
@@ -280,7 +499,6 @@ class LinkedInCVScraper:
             return None
 
     def _scroll_full_page(self, max_scrolls: int = 15, pause: float = 1.0):
-        """Scroll más conservador para ahorrar recursos."""
         last_height = self.driver.execute_script("return document.body.scrollHeight")
         for _ in range(max_scrolls):
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -289,8 +507,6 @@ class LinkedInCVScraper:
             if new_height == last_height:
                 break
             last_height = new_height
-        self.driver.execute_script("window.scrollTo(0, 0);")
-        time.sleep(0.5)
 
     def _safe_text(self, xpath: str, default: str = "") -> str:
         try:
@@ -299,42 +515,33 @@ class LinkedInCVScraper:
             return default
 
     def extract_full_cv(self, profile_url: str) -> dict:
-        """Extrae CV completo del perfil."""
         self.driver.get(profile_url)
         time.sleep(4)
         self._scroll_full_page()
-
         cv = {"url": profile_url, "sections": {}}
         cv["nombre"] = self._safe_text("//h1")
         cv["headline"] = self._safe_text(
             "//div[contains(@class,'text-body-medium') and contains(@class,'break-words')]"
         )
-
         sections_xpaths = {
             "Acerca de": "//section[contains(@id,'about')]",
-            "Experiencia": "//section[contains(@id,'experience') or .//span[text()='Experiencia'] or .//span[text()='Experience']]",
-            "Educación": "//section[contains(@id,'education') or .//span[text()='Educación'] or .//span[text()='Education']]",
-            "Publicaciones": "//section[contains(@id,'publications') or .//span[text()='Publicaciones']]",
-            "Patentes": "//section[contains(@id,'patents') or .//span[text()='Patentes']]",
-            "Proyectos": "//section[contains(@id,'projects') or .//span[text()='Proyectos']]",
-            "Idiomas": "//section[contains(@id,'languages') or .//span[text()='Idiomas']]",
-            "Premios": "//section[contains(@id,'honors') or .//span[text()='Premios']]",
+            "Experiencia": "//section[contains(@id,'experience')]",
+            "Educación": "//section[contains(@id,'education')]",
+            "Publicaciones": "//section[contains(@id,'publications')]",
+            "Patentes": "//section[contains(@id,'patents')]",
+            "Proyectos": "//section[contains(@id,'projects')]",
         }
-
         for nombre_seccion, xpath in sections_xpaths.items():
             try:
                 section = self.driver.find_element(By.XPATH, xpath)
                 cv["sections"][nombre_seccion] = section.text.strip()
             except NoSuchElementException:
                 pass
-
         if not cv["sections"]:
             try:
-                main = self.driver.find_element(By.XPATH, "//main")
-                cv["texto_completo"] = main.text.strip()
+                cv["texto_completo"] = self.driver.find_element(By.XPATH, "//main").text.strip()
             except Exception:
                 cv["texto_completo"] = ""
-
         return cv
 
     def close(self):
@@ -344,123 +551,6 @@ class LinkedInCVScraper:
             except Exception:
                 pass
             self.driver = None
-
-
-# ============================================================================
-# ALTERNATIVA: PROXY API (recomendado para Streamlit Cloud)
-# ============================================================================
-class ProxycurlAPI:
-    """
-    Alternativa más estable que Selenium para Streamlit Cloud.
-    Obtén API key en: https://nubela.co/proxycurl
-    Plan gratuito: 10 créditos/mes (suficiente para probar).
-    """
-
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.base_url = "https://nubela.co/proxycurl/api/v2/linkedin"
-
-    def test_connection(self) -> tuple[bool, str]:
-        try:
-            headers = {"Authorization": f"Bearer {self.api_key}"}
-            resp = requests.get(
-                "https://nubela.co/proxycurl/api/v2/linkedin",
-                headers=headers,
-                params={"url": "https://linkedin.com/in/williamhgates"},
-                timeout=15
-            )
-            if resp.status_code == 200:
-                return True, "✅ API válida"
-            elif resp.status_code == 401:
-                return False, "❌ API key inválida"
-            elif resp.status_code == 429:
-                return False, "⚠️ Límite de créditos alcanzado"
-            else:
-                return False, f"❌ Error {resp.status_code}"
-        except Exception as e:
-            return False, f"❌ {str(e)[:80]}"
-
-    def search_person(self, full_name: str, institution: str = "") -> str | None:
-        """Busca persona y devuelve URL del perfil."""
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        params = {
-            "q": full_name,
-            "search_type": "people",
-            "page_size": 1,
-        }
-        if institution:
-            params["company_domain"] = institution.split()[0].lower()
-
-        try:
-            resp = requests.get(
-                f"{self.base_url}/person/search",
-                headers=headers,
-                params=params,
-                timeout=20
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                results = data.get("results", [])
-                if results:
-                    return results[0].get("profile_url") or results[0].get("link")
-            return None
-        except Exception:
-            return None
-
-    def get_profile(self, profile_url: str) -> dict:
-        """Obtiene perfil completo."""
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        params = {
-            "url": profile_url,
-            "skills": "include",
-            "use_cache": "if-present",
-            "fallback_to_cache": "on-error",
-        }
-        try:
-            resp = requests.get(
-                f"{self.base_url}",
-                headers=headers,
-                params=params,
-                timeout=30
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                # Convertir al formato común
-                cv = {
-                    "url": profile_url,
-                    "nombre": data.get("full_name", ""),
-                    "headline": data.get("headline", ""),
-                    "sections": {},
-                }
-                # Experiencia
-                if data.get("experiences"):
-                    exp_text = []
-                    for exp in data["experiences"]:
-                        exp_text.append(
-                            f"• {exp.get('title', '')} @ {exp.get('company', '')} "
-                            f"({exp.get('starts_at', {}).get('month', '?')}/{exp.get('starts_at', {}).get('year', '?')} - "
-                            f"{exp.get('ends_at', {}).get('month', 'Actual')}/{exp.get('ends_at', {}).get('year', 'Actual')})"
-                        )
-                        if exp.get("description"):
-                            exp_text.append(f"  {exp['description']}")
-                    cv["sections"]["Experiencia"] = "\n".join(exp_text)
-                # Educación
-                if data.get("education"):
-                    edu_text = []
-                    for ed in data["education"]:
-                        edu_text.append(
-                            f"• {ed.get('degree_name', '')} @ {ed.get('school', '')} "
-                            f"({ed.get('starts_at', {}).get('year', '?')}-{ed.get('ends_at', {}).get('year', '?')})"
-                        )
-                    cv["sections"]["Educación"] = "\n".join(edu_text)
-                # About
-                if data.get("summary"):
-                    cv["sections"]["Acerca de"] = data["summary"]
-                return cv
-            return None
-        except Exception as e:
-            print(f"Error obteniendo perfil: {e}")
-            return None
 
 
 # ============================================================================
@@ -498,7 +588,6 @@ CV extraído de LinkedIn:
 ---
 
 Extrae empresas y spin-offs."""
-
         try:
             resp = self.client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -553,6 +642,53 @@ def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
 
 
 # ============================================================================
+# HELPERS
+# ============================================================================
+def _cv_cache_path(nombre: str) -> Path:
+    safe = re.sub(r'[^\w\-]', '_', nombre)
+    return CACHE_DIR / f"{safe}.pkl"
+
+
+def get_cached_cv(nombre: str) -> dict | None:
+    path = _cv_cache_path(nombre)
+    if path.exists():
+        try:
+            with open(path, "rb") as f:
+                return pickle.load(f)
+        except Exception:
+            return None
+    return None
+
+
+def save_cv_cache(nombre: str, cv: dict):
+    with open(_cv_cache_path(nombre), "wb") as f:
+        pickle.dump(cv, f)
+
+
+def read_excel_safe(uploaded_file) -> pd.DataFrame:
+    """Lee Excel intentando varios motores (sin openpyxl obligatorio)."""
+    # Intentar con calamine (rápido y ligero)
+    try:
+        return pd.read_excel(uploaded_file, engine='calamine')
+    except Exception:
+        pass
+    # Fallback a openpyxl si está disponible
+    try:
+        uploaded_file.seek(0)
+        return pd.read_excel(uploaded_file, engine='openpyxl')
+    except Exception:
+        pass
+    # Fallback a xlrd (solo .xls)
+    try:
+        uploaded_file.seek(0)
+        return pd.read_excel(uploaded_file, engine='xlrd')
+    except Exception as e:
+        raise RuntimeError(
+            f"No se pudo leer el Excel. Instala python-calamine o openpyxl. Error: {e}"
+        )
+
+
+# ============================================================================
 # STREAMLIT APP
 # ============================================================================
 def main():
@@ -570,7 +706,9 @@ def main():
     if "linkedin_ok" not in st.session_state:
         st.session_state.linkedin_ok = False
     if "modo_scraper" not in st.session_state:
-        st.session_state.modo_scraper = "proxycurl"  # "selenium" o "proxycurl"
+        st.session_state.modo_scraper = "proxycurl"
+    if "proxycurl_api" not in st.session_state:
+        st.session_state.proxycurl_api = None
 
     # ========================================================================
     # SIDEBAR
@@ -579,12 +717,12 @@ def main():
         st.markdown("## ⚙️ Configuración")
 
         # --- Modo de scraping ---
-        st.markdown("### 🔍 Modo de obtención de CVs")
+        st.markdown("### 🔍 Método de obtención de CVs")
         modo = st.radio(
             "Elige el método:",
             ["🌐 Proxycurl API (recomendado)", "🤖 Selenium + Chromium"],
             index=0,
-            help="Proxycurl es más estable en Streamlit Cloud. Selenium puede ser bloqueado por LinkedIn."
+            help="Proxycurl es más estable en Streamlit Cloud. Selenium requiere Chromium instalado."
         )
         st.session_state.modo_scraper = "proxycurl" if "Proxycurl" in modo else "selenium"
 
@@ -593,9 +731,11 @@ def main():
         # --- Configuración según modo ---
         if st.session_state.modo_scraper == "proxycurl":
             st.markdown("### 🌐 Proxycurl API")
-            st.caption(
-                "Obtén tu API key en [nubela.co/proxycurl](https://nubela.co/proxycurl). "
-                "Plan gratuito: 10 créditos/mes."
+            st.markdown(
+                '<div class="info-box">📌 Obtén tu API key gratuita en '
+                '<a href="https://nubela.co/proxycurl" target="_blank">nubela.co/proxycurl</a><br>'
+                'Plan gratuito: <b>10 créditos/mes</b> (~5 investigadores)</div>',
+                unsafe_allow_html=True
             )
 
             # Intentar leer de secrets
@@ -609,21 +749,30 @@ def main():
                 "API Key Proxycurl",
                 type="password",
                 value=default_key,
-                help="Se guarda solo en esta sesión"
+                help="Se guarda solo en esta sesión. También puedes usar st.secrets"
             )
 
             if proxycurl_key:
-                if st.button("🔍 Verificar API Proxycurl"):
-                    with st.spinner("Verificando..."):
-                        api = ProxycurlAPI(proxycurl_key)
-                        ok, msg = api.test_connection()
-                        if ok:
-                            st.success(msg)
-                            st.session_state.linkedin_ok = True
-                            st.session_state.proxycurl_api = api
-                        else:
-                            st.error(msg)
-                            st.session_state.linkedin_ok = False
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔍 Verificar API"):
+                        with st.spinner("Verificando..."):
+                            api = ProxycurlAPI(proxycurl_key)
+                            ok, msg = api.test_connection()
+                            if ok:
+                                st.success(msg)
+                                st.session_state.linkedin_ok = True
+                                st.session_state.proxycurl_api = api
+                            else:
+                                st.error(msg)
+                                st.session_state.linkedin_ok = False
+                with col2:
+                    if st.session_state.linkedin_ok and st.session_state.proxycurl_api:
+                        st.success("🟢 Conectado")
+                    else:
+                        st.warning("🟡 Pendiente")
+            else:
+                st.info("👉 Introduce tu API key para continuar")
 
         else:  # Selenium
             st.markdown("### 🤖 LinkedIn + Selenium")
@@ -633,7 +782,7 @@ def main():
                 unsafe_allow_html=True
             )
 
-            st.caption("Pega las cookies de LinkedIn (formato JSON o Netscape)")
+            st.caption("Pega las cookies de LinkedIn (formato JSON)")
             cookies_text = st.text_area(
                 "Cookies LinkedIn",
                 height=150,
@@ -672,7 +821,7 @@ def main():
             "API Key OpenAI",
             type="password",
             value=default_openai,
-            help="Para analizar CVs con IA"
+            help="Para analizar CVs con IA (GPT-4o-mini)"
         )
 
         if api_key:
@@ -688,6 +837,11 @@ def main():
                         st.session_state.openai_ok = False
                         st.error(f"❌ {str(e)[:80]}")
 
+        if st.session_state.openai_ok:
+            st.success("🟢 OpenAI listo")
+        else:
+            st.warning("🟡 OpenAI no configurado")
+
         st.divider()
 
         # --- Estado ---
@@ -696,6 +850,11 @@ def main():
         st.write(f"🤖 OpenAI: {'🟢 OK' if st.session_state.openai_ok else '🟡 Pendiente'}")
         st.write(f"👥 CVs extraídos: {len(st.session_state.cvs)}")
         st.write(f"🏭 Análisis hechos: {len(st.session_state.analisis)}")
+
+        if st.session_state.modo_scraper == "proxycurl" and st.session_state.proxycurl_api:
+            st.write(f"💳 Créditos usados: {st.session_state.proxycurl_api.credits_used}")
+
+        st.divider()
 
         if st.button("🔄 Reiniciar sesión"):
             if st.session_state.scraper:
@@ -723,10 +882,10 @@ def main():
 
     if uploaded is not None:
         try:
-            df = pd.read_excel(uploaded)
+            df = read_excel_safe(uploaded)
             st.session_state.df = df
         except Exception as e:
-            st.error(f"Error leyendo Excel: {e}")
+            st.error(f"❌ Error leyendo Excel: {e}")
             st.stop()
 
         # Detectar columnas
@@ -762,12 +921,16 @@ def main():
         # --- STEP 2: Seleccionar y buscar CVs ---
         st.markdown("### 2️⃣ Buscar CVs en LinkedIn")
 
-        seleccion = st.multiselect(
-            "Selecciona investigadores a analizar",
-            df[col_nombre].tolist(),
-            default=df[col_nombre].tolist()[:3],
-            help="Empieza con pocos para probar"
-        )
+        if not st.session_state.linkedin_ok:
+            st.warning("⚠️ Configura LinkedIn en la sidebar primero")
+            seleccion = []
+        else:
+            seleccion = st.multiselect(
+                "Selecciona investigadores a analizar",
+                df[col_nombre].tolist(),
+                default=df[col_nombre].tolist()[:3],
+                help="Empieza con pocos para probar (Proxycurl tiene límite de créditos)"
+            )
 
         if st.button(
             "🔍 Buscar y extraer CVs",
@@ -775,14 +938,19 @@ def main():
             use_container_width=True,
             disabled=len(seleccion) == 0 or not st.session_state.linkedin_ok
         ):
-            if not st.session_state.linkedin_ok:
-                st.error("⚠️ Configura LinkedIn en la sidebar primero")
-                st.stop()
-
             progress = st.progress(0)
             status_container = st.container()
 
             for i, nombre in enumerate(seleccion):
+                # Comprobar caché primero
+                cached = get_cached_cv(nombre)
+                if cached:
+                    st.session_state.cvs[nombre] = cached
+                    with status_container:
+                        st.info(f"⚡ {nombre}: recuperado de caché")
+                    progress.progress((i + 1) / len(seleccion))
+                    continue
+
                 inst = ""
                 if col_inst:
                     inst = str(df[df[col_nombre] == nombre][col_inst].iloc[0])
@@ -797,25 +965,29 @@ def main():
                                 api = st.session_state.proxycurl_api
                                 url = api.search_person(nombre, inst)
                                 if url:
-                                    cv = api.get_profile(url)
-                                    if cv:
-                                        st.session_state.cvs[nombre] = cv
-                                        st.success(f"✅ {nombre}: {cv.get('headline', 'OK')[:80]}")
-                                    else:
-                                        st.warning(f"⚠️ {nombre}: URL encontrada pero perfil vacío")
+                                    with st.spinner(f"📄 Extrayendo CV de {nombre}..."):
+                                        cv = api.get_profile(url)
+                                        if cv:
+                                            st.session_state.cvs[nombre] = cv
+                                            save_cv_cache(nombre, cv)
+                                            st.success(
+                                                f"✅ {nombre}: {cv.get('headline', 'OK')[:80]}"
+                                            )
+                                        else:
+                                            st.warning(f"⚠️ {nombre}: URL encontrada pero perfil vacío")
                                 else:
-                                    st.warning(f"❌ {nombre}: no encontrado")
+                                    st.warning(f"❌ {nombre}: no encontrado en LinkedIn")
                             else:
-                                # Selenium
                                 scraper = st.session_state.scraper
                                 url = scraper.search_person(nombre, inst, orcid)
                                 if url:
                                     cv = scraper.extract_full_cv(url)
                                     st.session_state.cvs[nombre] = cv
+                                    save_cv_cache(nombre, cv)
                                     st.success(f"✅ {nombre}: {cv.get('headline', 'OK')[:80]}")
                                 else:
                                     st.warning(f"❌ {nombre}: no encontrado")
-                                time.sleep(3)  # Anti-ban
+                                time.sleep(3)
                 except Exception as e:
                     with status_container:
                         st.error(f"❌ Error con {nombre}: {str(e)[:100]}")
@@ -844,11 +1016,7 @@ def main():
         elif not st.session_state.cvs:
             st.info("👉 Primero busca los CVs en LinkedIn")
         else:
-            if st.button(
-                "🤖 Analizar con IA",
-                type="primary",
-                use_container_width=True
-            ):
+            if st.button("🤖 Analizar con IA", type="primary", use_container_width=True):
                 analyzer = CVAnalyzer(api_key=st.session_state.openai_key)
                 progress = st.progress(0)
                 status_container = st.container()
@@ -901,20 +1069,27 @@ def main():
                     if cv or analisis:
                         df_out.at[idx, col_industrial] = formatear_para_excel(nombre, cv, analisis)
 
+                # Usar xlsxwriter en lugar de openpyxl
                 buffer = BytesIO()
-                with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                    df_out.to_excel(writer, index=False, sheet_name="Sheet1")
-                    ws = writer.sheets["Sheet1"]
-                    for col in ws.columns:
-                        max_length = 0
-                        col_letter = col[0].column_letter
-                        for cell in col:
-                            try:
-                                val = str(cell.value) if cell.value else ""
-                                max_length = max(max_length, min(len(val), 80))
-                            except Exception:
-                                pass
-                        ws.column_dimensions[col_letter].width = max_length + 2
+                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                    df_out.to_excel(writer, index=False, sheet_name='Sheet1')
+                    workbook = writer.book
+                    worksheet = writer.sheets['Sheet1']
+
+                    # Auto-ajustar anchos de columna
+                    for i, col in enumerate(df_out.columns):
+                        max_len = max(
+                            df_out[col].astype(str).map(len).max() if len(df_out) > 0 else 0,
+                            len(str(col))
+                        )
+                        # Limitar ancho máximo a 80 para celdas muy largas
+                        worksheet.set_column(i, i, min(max_len + 2, 80))
+
+                    # Formato especial para la columna INDUSTRIAL info
+                    if col_industrial in df_out.columns:
+                        text_format = workbook.add_format({'text_wrap': True, 'valign': 'top'})
+                        col_idx = df_out.columns.get_loc(col_industrial)
+                        worksheet.set_column(col_idx, col_idx, 80, text_format)
 
                 buffer.seek(0)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
