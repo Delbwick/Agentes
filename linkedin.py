@@ -70,27 +70,71 @@ st.markdown("""
 # UTILIDADES CHROMIUM
 # ============================================================================
 def _find_chrome_binary() -> str | None:
-    """Busca Chrome/Chromium en el sistema (Mac, Linux, Windows)."""
-    candidates = [
-        # Mac
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        # Linux
-        "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
-        "/usr/bin/chromium",
-        "/usr/bin/chromium-browser",
-        "/snap/bin/chromium",
-    ]
+    """Busca Chrome/Chromium en el sistema de forma exhaustiva."""
+    import platform
+    import subprocess
+    
+    system = platform.system()
+    
+    # Rutas estándar por sistema operativo
+    if system == "Darwin":  # macOS
+        candidates = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            str(Path.home() / "Applications" / "Google Chrome.app" / "Contents" / "MacOS" / "Google Chrome"),
+        ]
+    elif system == "Windows":
+        candidates = []
+        for env_var in ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"]:
+            base = os.environ.get(env_var, "")
+            if base:
+                candidates.extend([
+                    os.path.join(base, "Google", "Chrome", "Application", "chrome.exe"),
+                    os.path.join(base, "Chromium", "Application", "chrome.exe"),
+                ])
+    else:  # Linux
+        candidates = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/snap/bin/chromium",
+            "/opt/google/chrome/chrome",
+        ]
+    
+    # Buscar en rutas estándar
     for path in candidates:
         if os.path.exists(path):
+            print(f"✅ Chrome encontrado en: {path}")
             return path
-    # Windows (búsqueda básica)
-    for env_var in ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"]:
-        base = os.environ.get(env_var, "")
-        if base:
-            path = os.path.join(base, "Google", "Chrome", "Application", "chrome.exe")
-            if os.path.exists(path):
-                return path
+    
+    # Fallback: buscar con comandos del sistema
+    commands = []
+    if system == "Darwin":
+        commands = ["mdfind -name 'Google Chrome.app' | head -1"]
+    elif system == "Windows":
+        commands = ["where chrome", "where google-chrome"]
+    else:  # Linux
+        commands = ["which google-chrome", "which chromium", "which chromium-browser"]
+    
+    for cmd in commands:
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                path = result.stdout.strip().split('\n')[0]
+                if os.path.exists(path):
+                    print(f"✅ Chrome encontrado con '{cmd}': {path}")
+                    return path
+        except Exception as e:
+            print(f"Error ejecutando '{cmd}': {e}")
+    
+    print("❌ Chrome no encontrado en ninguna ubicación estándar")
     return None
 
 
