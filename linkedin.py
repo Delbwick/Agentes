@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión con filtrado, extracción mejorada y análisis IA enfocado en spin-offs/patentes
+Versión final con filtrado relajado + limpieza de texto + análisis IA mejorado
 """
 
 import os
@@ -86,7 +86,7 @@ class BrowserlessAPI:
 
 
 # ============================================================================
-# CLASE: LINKEDIN SCRAPER (CORREGIDO)
+# CLASE: LINKEDIN SCRAPER
 # ============================================================================
 class LinkedInScraper:
     def __init__(self, api: BrowserlessAPI, cookies: list):
@@ -95,12 +95,85 @@ class LinkedInScraper:
         self.debug_info = {}
 
     def test_linkedin_session(self) -> dict:
-        # ... (igual que antes)
-        pass
+        result = {
+            "ok": False,
+            "final_url": "",
+            "is_login_page": False,
+            "is_challenge": False,
+            "title": "",
+            "debug_info": "",
+            "html_length": 0,
+        }
+
+        response = self.api.get_content(
+            "https://www.linkedin.com/feed/",
+            cookies=self.cookies
+        )
+
+        if not response["ok"]:
+            result["debug_info"] = f"Error: {response.get('error')}"
+            return result
+
+        html = response["html"]
+        result["html_length"] = len(html)
+        result["final_url"] = response.get("final_url", "")
+
+        if not html:
+            result["debug_info"] = "HTML vacío"
+            return result
+
+        soup = BeautifulSoup(html, "html.parser")
+        result["title"] = soup.title.string if soup.title else ""
+
+        if "signin" in html.lower()[:2000] or "login" in html.lower()[:2000]:
+            result["is_login_page"] = True
+            result["debug_info"] = "⚠️ LinkedIn redirigió a login."
+            return result
+
+        if "challenge" in html.lower()[:2000]:
+            result["is_challenge"] = True
+            result["debug_info"] = "⚠️ LinkedIn muestra captcha."
+            return result
+
+        session_indicators = [
+            "/feed/" in result["final_url"].lower(),
+            "feed" in result["title"].lower(),
+            len(html) > 500000,
+        ]
+
+        active_count = sum(1 for x in session_indicators if x)
+        
+        if active_count >= 2:
+            result["ok"] = True
+            result["debug_info"] = f"✅ Sesión LinkedIn activa. ({active_count} indicadores)"
+        else:
+            result["debug_info"] = (
+                f"⚠️ No se detectó sesión activa.\n"
+                f"Indicadores: {active_count}/{len(session_indicators)}\n"
+                f"Título: '{result['title']}'\n"
+                f"Longitud HTML: {result['html_length']} chars"
+            )
+
+        return result
 
     def check_critical_cookies(self) -> dict:
-        # ... (igual que antes)
-        pass
+        """Verifica qué cookies críticas están presentes. SIEMPRE devuelve dict."""
+        critical = ["li_at", "JSESSIONID", "bscookie", "liap"]
+        found = {}
+        
+        if not self.cookies:
+            for cookie_name in critical:
+                found[cookie_name] = 0
+            return found
+        
+        for cookie_name in critical:
+            cookie = next((c for c in self.cookies if c.get("name") == cookie_name), None)
+            if cookie:
+                found[cookie_name] = len(cookie.get("value", ""))
+            else:
+                found[cookie_name] = 0
+        
+        return found
 
     def _extract_name_from_link(self, link) -> str:
         """Extrae nombre del enlace."""
@@ -139,16 +212,14 @@ class LinkedInScraper:
         return name
 
     def _extract_headline_from_parent(self, parent) -> str:
-        """Extrae headline/cargo del contexto del resultado."""
+        """Extrae headline/cargo del contexto."""
         if not parent:
             return ""
         
-        # Buscar patrones de headline
         headline_elem = parent.select_one(".entity-result__summary")
         if headline_elem:
             return headline_elem.get_text().strip()[:200]
         
-        # Fallback: texto completo
         text = parent.get_text(separator=" ", strip=True)
         if len(text) > 300:
             text = text[:300]
@@ -156,57 +227,39 @@ class LinkedInScraper:
         return text
 
     def _extract_location(self, parent) -> str:
-        """Extrae ubicación del resultado."""
+        """Extrae ubicación."""
         if not parent:
             return ""
         
-        # Buscar patrón de ubicación (suele estar después de ·)
         text = parent.get_text()
         if "·" in text:
             parts = text.split("·")
             for part in parts:
                 part = part.strip()
-                # Ubicaciones típicas: "Madrid", "Barcelona, España", etc.
                 if len(part) < 50 and any(c in part for c in [",", "España", "Spain", "Cataluña", "Madrid", "Barcelona", "Sevilla", "Valencia"]):
                     return part.strip()
         
         return ""
 
     def _extract_current_position(self, parent) -> str:
-        """Extrae posición/empresa actual del resultado."""
+        """Extrae posición actual."""
         if not parent:
             return ""
         
-        # Buscar patrón de posición actual
         text = parent.get_text()
         
-        # LinkedIn suele mostrar: "Cargo en Empresa · X años"
         match = re.search(r'([^\n·]+?)\s+en\s+([^\n·]+?)(?:\s+·|\s+\d+\s+a)', text)
         if match:
             return f"{match.group(1).strip()} en {match.group(2).strip()}"
         
-        # Fallback: primera línea significativa
         lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) > 10]
         if lines:
             return lines[0][:150]
         
         return ""
 
-    def _name_similarity(self, name1: str, name2: str) -> float:
-        """Calcula similitud entre dos nombres (0-1)."""
-        n1 = set(name1.lower().split())
-        n2 = set(name2.lower().split())
-        
-        if not n1 or not n2:
-            return 0.0
-        
-        intersection = len(n1 & n2)
-        union = len(n1 | n2)
-        
-        return intersection / union if union > 0 else 0.0
-
     def search_person(self, full_name: str, institution: str = "", orcid: str = "", debug_mode: bool = False) -> list:
-        """Busca persona y devuelve lista con info completa (FILTRADO RELAJADO)."""
+        """Busca persona. FILTRADO MUY RELAJADO: muestra casi todo."""
         self.debug_info = {}
         
         query = full_name
@@ -228,6 +281,8 @@ class LinkedInScraper:
         
         if not response["ok"]:
             self.debug_info["error"] = response.get("error")
+            if debug_mode:
+                st.error(f"❌ Error: {response.get('error')}")
             return []
 
         html = response["html"]
@@ -240,6 +295,8 @@ class LinkedInScraper:
 
         if "signin" in html.lower()[:1000] or "login" in html.lower()[:1000]:
             self.debug_info["error"] = "Redirigido a login"
+            if debug_mode:
+                st.error("❌ Sesión expirada")
             return []
 
         soup = BeautifulSoup(html, "html.parser")
@@ -263,17 +320,11 @@ class LinkedInScraper:
                 continue
             seen_urls.add(href)
             
-            # Extraer nombre
             name = self._extract_name_from_link(link)
             
-            # FILTRADO RELAJADO: Solo excluir si el nombre está vacío o es muy corto
-            if not name or len(name) < 3:
+            # FILTRADO MUY RELAJADO: Solo excluir si nombre está vacío
+            if not name or len(name) < 2:
                 continue
-            
-            # Calcular similitud básica
-            name_lower = name.lower()
-            name_words = set(name_lower.split())
-            common_words = target_words & name_words
             
             # Extraer contexto
             parent = link.find_parent("li") or link.find_parent("div", class_=re.compile("entity-result|search-result"))
@@ -281,10 +332,12 @@ class LinkedInScraper:
             location = self._extract_location(parent)
             current_position = self._extract_current_position(parent)
             
-            # Calcular score
+            # Calcular score (informativo, no se usa para filtrar)
+            name_lower = name.lower()
+            name_words = set(name_lower.split())
+            common_words = target_words & name_words
             score = len(common_words) * 10
 
-            # Bonus por institución
             if institution:
                 inst_lower = institution.lower()
                 inst_words = [w for w in inst_lower.split() if len(w) > 3]
@@ -292,23 +345,15 @@ class LinkedInScraper:
                     if word in context.lower():
                         score += 5
 
-            # Bonus por ORCID
             if orcid and orcid in context:
                 score += 20
 
-            # Bonus por tener posición actual
             if current_position:
                 score += 3
 
-            # Bonus por tener ubicación
             if location:
                 score += 2
 
-            # FILTRADO RELAJADO: Incluir todos los que tengan nombre válido
-            # Solo excluir si score < 5 (muy poca relevancia)
-            if score < 5:
-                continue
-            
             profile_links.append({
                 "href": href,
                 "name": name,
@@ -320,8 +365,11 @@ class LinkedInScraper:
 
         self.debug_info["profile_links_found"] = len(profile_links)
 
-        # Ordenar por score
+        # Ordenar por score (los mejores primero)
         profile_links.sort(key=lambda x: x["score"], reverse=True)
+
+        if debug_mode:
+            st.success(f"✅ {len(profile_links)} resultados encontrados")
 
         return profile_links
 
@@ -333,58 +381,82 @@ class LinkedInScraper:
         # Lista de patrones a eliminar
         patterns_to_remove = [
             # Footer de LinkedIn
-            r"Acerca de\s+Accesibilidad\s+Talent Solutions",
-            r"Pautas comunitarias\s+Empleo\s+Marketing Solutions",
-            r"Privacidad y condiciones\s+Opciones de publicidad",
-            r"Sales Solutions\s+Móvil\s+Pequeñas empresas",
-            r"Centro de seguridad\s+LinkedIn Corporation",
-            r"¿Tienes preguntas\?\s+Visita nuestro Centro de ayuda",
+            r"Acerca de\s+Accesibilidad\s+Talent Solutions.*?LinkedIn Corporation.*?20\d{2}",
+            r"Pautas comunitarias.*?Empleo.*?Marketing Solutions",
+            r"Privacidad y condiciones.*?Opciones de publicidad",
+            r"Sales Solutions.*?Móvil.*?Pequeñas empresas",
+            r"Centro de seguridad",
+            r"¿Tienes preguntas\?.*?Centro de ayuda",
             r"Gestiona tu cuenta y la privacidad",
             r"Accede a tu Configuración",
             r"Transparencia de las recomendaciones",
             r"Más información sobre el contenido recomendado",
-            r"Seleccionar idioma",
-            r"العربية.*?한국어",  # Lista de idiomas
+            r"Seleccionar idioma.*?(?:한국어|العربية|हिंदी|日本語|English)",
+            # Lista de idiomas
+            r"(?:العربية|বাংলা|Čeština|Dansk|Deutsch|Ελληνικά|English|Español|Suomi|Français|हिंदी|Magyar|Bahasa Indonesia|Italiano|עברית|日本語|한국어|मराठी|Bahasa Malaysia|Nederlands|Norsk|Polski|Português|Română|Русский|Svenska|Tagalog|ภาษาไทย|Türkçe|Українська|Tiếng Việt|简体中文|繁體中文)",
             # Headers y navegación
             r"Inicio\s+Mi red\s+Empleos\s+Mensajes\s+Notificaciones",
-            r"Para negocios\s+Publicidad",
+            r"Para negocios.*?Publicidad",
             # Elementos de UI
             r"Enviar mensaje\s+Enviar mensaje",
             r"Opciones de publicidad",
-            r"¿Por qué estoy viendo este anuncio\?",
+            r"¿Por qué estoy viendo este anuncio\?.*?Dinos por qué no quieres ver esto",
             r"Gestiona tus preferencias de publicidad",
             r"Ocultar o denunciar este anuncio",
             r"No quiero ver este anuncio en mi feed",
             r"No quiero ver esto",
-            r"Dinos por qué no quieres ver esto",
             r"Tus comentarios nos ayudarán a mejorar",
             r"Me molesta o no me interesa",
             r"He visto el anuncio demasiadas veces",
-            r"Si crees que esta publicación incumple",
-            r"Denunciar este anuncio\s+Enviar",
+            r"Si crees que esta publicación incumple.*?Denunciar este anuncio\s+Enviar",
             r"Información de contacto",
-            # Ruido general
-            r"·\s*1er",
-            r"•\s*2º",
-            r"·\s*2º",
-            r"·\s*1er",
-            r"·\s*3er",
-            # Espacios múltiples
-            r"\n\s*\n\s*\n",
+            r"Más de \d+\s+contactos",
+            # Ruido de ranking
+            r"·\s*\d+(?:er|º|ª)",
+            r"•\s*\d+(?:er|º|ª)",
+            # Anuncios
+            r"¿Por qué estoy viendo este anuncio\?",
+            # Sección de contacto repetida
+            r"Información de contacto\s+\n\s*\d+\s+contactos",
         ]
         
         cleaned_text = text
         for pattern in patterns_to_remove:
             cleaned_text = re.sub(pattern, "", cleaned_text, flags=re.IGNORECASE | re.DOTALL)
         
-        # Limpiar espacios en blanco múltiples
-        cleaned_text = re.sub(r'\n\s*\n', '\n', cleaned_text)
+        # Eliminar líneas vacías múltiples
+        cleaned_text = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned_text)
+        # Eliminar espacios al inicio de líneas
+        cleaned_text = re.sub(r'\n\s+', '\n', cleaned_text)
         cleaned_text = cleaned_text.strip()
+        
+        # Si después de limpiar queda muy poco, devolver el original recortado
+        if len(cleaned_text) < 100 and len(text) > 500:
+            # Intentar extracción más conservadora
+            lines = text.split('\n')
+            useful_lines = []
+            skip_patterns = [
+                r"(acerca de|accesibilidad|talent solutions|pautas comunitarias|empleo|marketing)",
+                r"(privacidad|condiciones|opciones de publicidad|sales solutions|móvil)",
+                r"(pequeñas empresas|centro de seguridad|linkedin corporation)",
+                r"(¿tienes preguntas|centro de ayuda|gestiona tu cuenta)",
+                r"(seleccionar idioma|العربية|বাংলা|čeština|dansk|deutsch)",
+                r"(enviar mensaje|opciones de publicidad|información de contacto)",
+                r"(más de \d+ contactos|denunciar este anuncio)",
+            ]
+            for line in lines:
+                line_clean = line.strip()
+                if not line_clean:
+                    continue
+                if any(re.search(p, line_clean, re.IGNORECASE) for p in skip_patterns):
+                    continue
+                useful_lines.append(line_clean)
+            cleaned_text = '\n'.join(useful_lines)
         
         return cleaned_text
 
     def extract_full_cv(self, profile_url: str, debug_mode: bool = False) -> dict | None:
-        """Extrae CV completo usando múltiples estrategias y LIMPIA el ruido."""
+        """Extrae CV completo con limpieza de ruido."""
         response = self.api.get_content(profile_url, cookies=self.cookies)
 
         if not response["ok"] or not response["html"]:
@@ -410,7 +482,7 @@ class LinkedInScraper:
             else:
                 cv["nombre"] = title.strip()
 
-        # Headline - múltiples selectores
+        # Headline
         headline_selectors = [
             ".text-body-medium.break-words",
             ".text-body-medium",
@@ -439,7 +511,7 @@ class LinkedInScraper:
         else:
             cv["ubicacion"] = ""
 
-        # Secciones - intentar múltiples selectores
+        # Secciones
         section_ids = {
             "Acerca de": ["about", "about-section"],
             "Experiencia": ["experience", "experience-section"],
@@ -455,19 +527,16 @@ class LinkedInScraper:
             for section_id in possible_ids:
                 section = soup.select_one(f"section#{section_id}") or soup.select_one(f"section[id*='{section_id}']")
                 if section:
-                    # LIMPIAR el texto de la sección
                     section_text = section.get_text(separator="\n", strip=True)
                     cv["sections"][nombre_seccion] = self._clean_linkedin_text(section_text)
                     break
 
-        # ESTRATEGIA CLAVE: Extraer TODO el texto del main como fallback
+        # Texto completo del main (limpio)
         main = soup.select_one("main")
         if main:
             full_text = main.get_text(separator="\n", strip=True)
-            # LIMPIAR el texto completo
             cv["texto_completo"] = self._clean_linkedin_text(full_text)
         else:
-            # Fallback: todo el body
             body = soup.select_one("body")
             if body:
                 full_text = body.get_text(separator="\n", strip=True)
@@ -475,12 +544,10 @@ class LinkedInScraper:
             else:
                 cv["texto_completo"] = ""
 
-        # Si no se encontraron secciones, intentar extraer del texto completo
+        # Intentar extraer secciones del texto completo si no se encontraron
         if not cv["sections"] and cv["texto_completo"]:
-            # Intentar identificar secciones por patrones de texto
             text = cv["texto_completo"]
             
-            # Buscar patrones de secciones comunes
             section_patterns = {
                 "Acerca de": r"(?:Acerca de|About)\s*\n(.*?)(?=\n\s*(?:Experiencia|Experience|Educación|Education)|$)",
                 "Experiencia": r"(?:Experiencia|Experience)\s*\n(.*?)(?=\n\s*(?:Educación|Education|Publicaciones|Patentes)|$)",
@@ -493,16 +560,18 @@ class LinkedInScraper:
                 match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
                 if match:
                     section_text = match.group(1).strip()
-                    if len(section_text) > 50:  # Solo si hay contenido significativo
+                    if len(section_text) > 50:
                         cv["sections"][section_name] = self._clean_linkedin_text(section_text)[:3000]
 
         if debug_mode:
             st.info(f"📄 CV extraído: {cv['nombre']}")
             st.write(f"**Headline:** {cv['headline']}")
-            st.write(f"**Secciones encontradas:** {', '.join(cv['sections'].keys())}")
-            st.write(f"**Longitud texto completo:** {len(cv.get('texto_completo', ''))} chars")
+            st.write(f"**Secciones:** {', '.join(cv['sections'].keys())}")
+            st.write(f"**Longitud texto:** {len(cv.get('texto_completo', ''))} chars")
 
         return cv
+
+
 # ============================================================================
 # CLASE: CV ANALYZER (OpenAI) - PROMPT MEJORADO
 # ============================================================================
@@ -555,7 +624,6 @@ Si no hay actividad industrial/patentes/spin-offs:
         self.client = OpenAI(api_key=api_key)
 
     def analizar_cv(self, nombre: str, cv_text: str, datos_excel: dict = None) -> dict:
-        # Construir prompt con contexto adicional del Excel si está disponible
         excel_context = ""
         if datos_excel:
             excel_context = "\n\nDATOS ADICIONALES DEL EXPEDIENTE DEL INVESTIGADOR:\n"
@@ -608,10 +676,8 @@ Cruza la información del CV con los datos del expediente si están disponibles.
 
 
 def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
-    """Formatea el resultado completo para la celda INDUSTRIAL info."""
     lineas = [f"=== {nombre_original} ===", ""]
     
-    # Perfil LinkedIn
     if cv:
         lineas.append("📄 PERFIL LINKEDIN:")
         if cv.get("headline"):
@@ -621,18 +687,15 @@ def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
         if cv.get("url"):
             lineas.append(f"🔗 {cv['url']}")
         
-        # Solo mostrar secciones con contenido real
         for seccion, texto in cv.get("sections", {}).items():
             if texto and len(texto) > 50:
                 lineas.append(f"\n— {seccion.upper()} —")
                 lineas.append(texto[:2000])
     
-    # Análisis IA
     lineas.append("\n" + "=" * 70)
     lineas.append("🔬 ANÁLISIS SPIN-OFFS / PATENTES / ACTIVIDAD INDUSTRIAL:")
     lineas.append("=" * 70)
     
-    # Patentes
     if analisis.get("patentes"):
         lineas.append("\n📜 PATENTES:")
         for pat in analisis["patentes"]:
@@ -648,7 +711,6 @@ def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
     else:
         lineas.append("\n📜 PATENTES: No detectadas")
     
-    # Spin-offs
     if analisis.get("spin_offs"):
         lineas.append("\n🚀 SPIN-OFFS:")
         for spin in analisis["spin_offs"]:
@@ -664,7 +726,6 @@ def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
     else:
         lineas.append("\n🚀 SPIN-OFFS: No detectadas")
     
-    # Empresas
     if analisis.get("empresas"):
         lineas.append("\n🏢 OTRAS EMPRESAS:")
         for emp in analisis["empresas"]:
@@ -678,16 +739,13 @@ def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
             if desc:
                 lineas.append(f"     Actividad: {desc}")
     
-    # Roles múltiples
     if analisis.get("roles_actuales_multiples"):
         lineas.append("\n⚡ MÚLTIPLES ROLES ACTUALES: Sí")
     
-    # Sector
     sector = analisis.get("sector_principal", "")
     if sector:
         lineas.append(f"\n🏭 SECTOR PRINCIPAL: {sector}")
     
-    # Resumen ejecutivo
     if analisis.get("resumen_ejecutivo"):
         lineas.append(f"\n📋 RESUMEN EJECUTIVO:\n{analisis['resumen_ejecutivo']}")
     
@@ -739,26 +797,21 @@ def save_cv_cache(nombre: str, cv: dict):
 
 
 def extraer_datos_excel_para_ia(row, col_map: dict) -> dict:
-    """Extrae datos relevantes del Excel para pasar al LLM como contexto."""
     datos = {}
     
-    # Patentes
     if "patentes" in col_map:
         datos["patentes"] = str(row.get(col_map["patentes"], ""))
     elif "Representative_Patent_Titles" in row.index:
         datos["patentes"] = str(row.get("Representative_Patent_Titles", ""))
     
-    # Publicaciones
     if "publicaciones" in col_map:
         datos["publicaciones"] = str(row.get(col_map["publicaciones"], ""))
     elif "Publication_Articles_Total_Area" in row.index:
         datos["publicaciones"] = str(row.get("Publication_Articles_Total_Area", ""))
     
-    # Institución
     if "institucion" in col_map:
         datos["institucion"] = str(row.get(col_map["institucion"], ""))
     
-    # Score
     if "score" in col_map:
         datos["score"] = str(row.get(col_map["score"], ""))
     elif "Score_10xPatents_plus_Articles" in row.index:
@@ -852,13 +905,19 @@ def main():
                     if st.session_state.api:
                         st.session_state.scraper = LinkedInScraper(st.session_state.api, cookies)
                         
-                        critical = st.session_state.scraper.check_critical_cookies()
-                        st.write("**Cookies críticas:**")
-                        for name, length in critical.items():
-                            if length > 0:
-                                st.success(f"✅ {name}: {length} chars")
-                            else:
-                                st.error(f"❌ {name}: FALTA")
+                        # FIX: Asegurar que check_critical_cookies siempre devuelve dict
+                        try:
+                            critical = st.session_state.scraper.check_critical_cookies()
+                            if critical is None:
+                                critical = {}
+                            st.write("**Cookies críticas:**")
+                            for name, length in critical.items():
+                                if length > 0:
+                                    st.success(f"✅ {name}: {length} chars")
+                                else:
+                                    st.error(f"❌ {name}: FALTA")
+                        except Exception as e:
+                            st.warning(f"No se pudo verificar cookies: {e}")
                 else:
                     st.error("❌ Formato inválido")
 
@@ -1007,9 +1066,9 @@ def main():
                             
                             if results:
                                 st.session_state.search_results[nombre] = results
-                                st.success(f"✅ {nombre}: {len(results)} candidatos (filtrados)")
+                                st.success(f"✅ {nombre}: {len(results)} candidatos")
                             else:
-                                st.warning(f"❌ {nombre}: sin resultados relevantes")
+                                st.warning(f"❌ {nombre}: sin resultados")
                         
                         progress.progress((i + 1) / len(seleccion))
                         time.sleep(2)
@@ -1032,13 +1091,13 @@ def main():
                     st.session_state.selected_profiles[selected_name] = manual_url
                     st.success(f"✅ URL guardada")
 
-            # Mostrar resultados FILTRADOS con info mejorada
+            # Mostrar resultados (SIN FILTRADO AGRESIVO)
             if st.session_state.search_results:
                 st.markdown("### 📋 Selecciona el perfil correcto")
-                st.info("💡 Solo se muestran candidatos con coincidencia real de nombre. Ordenados por relevancia.")
+                st.info("💡 Ordenados por score (relevancia). Los primeros son los más probables.")
                 
                 for nombre, results in st.session_state.search_results.items():
-                    with st.expander(f"👤 {nombre} ({len(results)} candidatos válidos)", expanded=True):
+                    with st.expander(f"👤 {nombre} ({len(results)} candidatos)", expanded=True):
                         inst_excel = str(df[df[col_nombre] == nombre][col_inst].iloc[0]) if col_inst else ""
                         orcid_excel = str(df[df[col_nombre] == nombre][col_orcid].iloc[0]) if col_orcid else ""
                         
@@ -1049,14 +1108,13 @@ def main():
                         st.divider()
                         
                         options = []
-                        for i, r in enumerate(results[:10]):
+                        for i, r in enumerate(results[:15]):
                             name = r.get('name', 'Sin nombre')
                             context = r.get('context', '')[:200]
                             location = r.get('location', '')
                             current_position = r.get('current_position', '')
                             score = r.get('score', 0)
                             
-                            # Label enriquecido
                             label_parts = [f"{i+1}. {name} (score: {score})"]
                             if current_position:
                                 label_parts.append(f"   💼 {current_position[:100]}")
@@ -1118,9 +1176,9 @@ def main():
                                 save_cv_cache(nombre, cv)
                                 secciones = len(cv.get("sections", {}))
                                 texto_len = len(cv.get("texto_completo", ""))
-                                st.success(f"✅ {nombre}: {secciones} secciones, {texto_len} chars texto completo")
+                                st.success(f"✅ {nombre}: {secciones} secciones, {texto_len} chars")
                             else:
-                                st.warning(f"⚠️ {nombre}: no se pudo extraer CV")
+                                st.warning(f"⚠️ {nombre}: no se pudo extraer")
                     
                     progress.progress((i + 1) / len(st.session_state.selected_profiles))
                     time.sleep(2)
@@ -1147,7 +1205,7 @@ def main():
                     
                     st.divider()
 
-        # STEP 3: Analizar con IA MEJORADO
+        # STEP 3: Analizar con IA
         st.markdown("### 3️⃣ Analizar con IA (Patentes + Spin-offs + Actividad Industrial)")
 
         if not st.session_state.openai_ok:
@@ -1161,7 +1219,6 @@ def main():
 
                 for i, (nombre, cv) in enumerate(st.session_state.cvs.items()):
                     with st.spinner(f"🧠 {nombre}..."):
-                        # Preparar texto del CV
                         cv_text_parts = []
                         if cv.get("headline"):
                             cv_text_parts.append(f"HEADLINE: {cv['headline']}")
@@ -1176,7 +1233,6 @@ def main():
                         
                         cv_text = "\n".join(cv_text_parts)
                         
-                        # Extraer datos del Excel para contexto
                         row = df[df[col_nombre] == nombre].iloc[0] if nombre in df[col_nombre].values else None
                         datos_excel = extraer_datos_excel_para_ia(row, col_map) if row is not None else None
                         
@@ -1199,13 +1255,11 @@ def main():
                 for nombre, analisis in st.session_state.analisis.items():
                     st.markdown(f"**👤 {nombre}**")
                     
-                    # Patentes
                     if analisis.get("patentes"):
                         st.markdown(f"**📜 Patentes ({len(analisis['patentes'])}):**")
-                        for pat in analisis["patletes"] if False else analisis["patentes"]:
+                        for pat in analisis["patentes"]:
                             st.caption(f"• {pat.get('titulo', '?')} {pat.get('numero', '')} [{pat.get('anio', '')}]")
                     
-                    # Spin-offs
                     if analisis.get("spin_offs"):
                         st.markdown(f"**🚀 Spin-offs ({len(analisis['spin_offs'])}):**")
                         for spin in analisis["spin_offs"]:
@@ -1214,21 +1268,17 @@ def main():
                             if spin.get("descripcion"):
                                 st.caption(f"  _{spin['descripcion']}_")
                     
-                    # Empresas
                     if analisis.get("empresas"):
                         st.markdown(f"**🏢 Empresas ({len(analisis['empresas'])}):**")
                         for emp in analisis["empresas"]:
                             actual = " [ACTUAL]" if emp.get("es_actual") else ""
                             st.markdown(f"- {emp.get('nombre', '?')}{actual} - {emp.get('rol', '')}")
                     
-                    # Roles múltiples
                     if analisis.get("roles_actuales_multiples"):
                         st.warning("⚡ Múltiples roles actuales detectados")
                     
-                    # Sector
                     st.info(f"**Sector:** {analisis.get('sector_principal', '?')}")
                     
-                    # Resumen
                     if analisis.get("resumen_ejecutivo"):
                         st.markdown(f"**📋 Resumen:** {analisis['resumen_ejecutivo']}")
                     
