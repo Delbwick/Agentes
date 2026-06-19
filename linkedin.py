@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión Streamlit Cloud + Browserless /content (sin /function)
+Versión con búsqueda manual + selección múltiple
 """
 
 import os
@@ -53,7 +53,7 @@ st.markdown("""
 
 
 # ============================================================================
-# CLASE: BROWSERLESS API REST (solo /content)
+# CLASE: BROWSERLESS API REST
 # ============================================================================
 class BrowserlessAPI:
     def __init__(self, token: str):
@@ -80,7 +80,6 @@ class BrowserlessAPI:
             return False, f"❌ Error: {str(e)[:100]}"
 
     def get_content(self, url: str, cookies: list = None) -> dict:
-        """Endpoint /content: devuelve HTML completo."""
         payload = {"url": url}
         if cookies:
             payload["cookies"] = cookies
@@ -101,7 +100,7 @@ class BrowserlessAPI:
 
 
 # ============================================================================
-# CLASE: LINKEDIN SCRAPER (solo /content)
+# CLASE: LINKEDIN SCRAPER
 # ============================================================================
 class LinkedInScraper:
     def __init__(self, api: BrowserlessAPI, cookies: list):
@@ -175,8 +174,20 @@ class LinkedInScraper:
 
         return result
 
-    def search_person(self, full_name: str, institution: str = "", debug_mode: bool = False) -> str | None:
-        """Busca persona usando /content."""
+    def check_critical_cookies(self) -> dict:
+        """Verifica qué cookies críticas están presentes."""
+        critical = ["li_at", "JSESSIONID", "bscookie", "liap"]
+        found = {}
+        for cookie_name in critical:
+            cookie = next((c for c in self.cookies if c["name"] == cookie_name), None)
+            if cookie:
+                found[cookie_name] = len(cookie.get("value", ""))
+            else:
+                found[cookie_name] = 0
+        return found
+
+    def search_person(self, full_name: str, institution: str = "", debug_mode: bool = False) -> list:
+        """Busca persona y devuelve lista de resultados (no solo el mejor)."""
         self.debug_info = {}
         
         query = full_name
@@ -200,7 +211,7 @@ class LinkedInScraper:
             self.debug_info["error"] = response.get("error")
             if debug_mode:
                 st.error(f"❌ Error en /content: {response.get('error')}")
-            return None
+            return []
 
         html = response["html"]
         self.debug_info["html_length"] = len(html)
@@ -210,35 +221,33 @@ class LinkedInScraper:
             self.debug_info["error"] = "HTML vacío"
             if debug_mode:
                 st.error("❌ HTML vacío devuelto")
-            return None
+            return []
 
         # Detectar si nos redirigieron a login
         if "signin" in html.lower()[:1000] or "login" in html.lower()[:1000]:
             self.debug_info["error"] = "Redirigido a login"
             if debug_mode:
                 st.error("❌ Sesión expirada durante la búsqueda")
-            return None
+                st.warning("💡 Las cookies pueden no estar aplicándose correctamente")
+            return []
 
         soup = BeautifulSoup(html, "html.parser")
         self.debug_info["page_title"] = soup.title.string if soup.title else ""
 
-        # Buscar enlaces a perfiles con múltiples selectores
+        # Buscar enlaces a perfiles
         all_links = soup.select("a[href*='/in/']")
         self.debug_info["total_links_in"] = len(all_links)
 
-        # Filtrar solo enlaces válidos a perfiles
+        # Filtrar solo enlaces válidos
         profile_links = []
         for link in all_links:
             href = link.get("href", "")
             if "/in/" in href and "login" not in href and "challenge" not in href:
-                # Limpiar URL
                 href = href.split("?")[0]
                 
-                # Extraer nombre
                 name_span = link.select_one("span[aria-hidden='true']")
                 name = name_span.get_text().strip() if name_span else ""
                 
-                # Extraer contexto (padre)
                 parent = link.find_parent("li") or link.find_parent("div")
                 context = parent.get_text()[:300] if parent else ""
                 
@@ -254,50 +263,34 @@ class LinkedInScraper:
             self.debug_info["error"] = "No se encontraron enlaces a perfiles"
             if debug_mode:
                 st.warning("⚠️ No se encontraron enlaces a perfiles en el HTML")
-                st.info(f"Total enlaces en página: {len(all_links)}")
-            return None
+            return []
 
-        # Elegir el mejor resultado
+        # Calcular score para cada resultado
         target_words = set(full_name.lower().split())
-        best_url = None
-        best_score = -1
-        best_name = ""
-
-        for pl in profile_links[:20]:
-            href = pl["href"]
+        for pl in profile_links:
             name = pl["name"].lower()
             context = pl["context"].lower()
             
             name_words = set(name.split())
             score = len(target_words & name_words) * 10
 
-            # Bonus por institución
             if institution:
                 inst_lower = institution.lower()
                 if any(w in context for w in inst_lower.split() if len(w) > 3):
                     score += 5
 
-            if score > best_score:
-                best_score = score
-                best_url = href
-                best_name = pl["name"]
+            pl["score"] = score
 
-        self.debug_info["best_match"] = {
-            "url": best_url,
-            "name": best_name,
-            "score": best_score
-        }
+        # Ordenar por score
+        profile_links.sort(key=lambda x: x["score"], reverse=True)
 
         if debug_mode:
-            st.success(f"✅ Mejor resultado: {best_name} (score: {best_score})")
-            st.write(f"**URL:** {best_url}")
-            with st.expander(f"📋 Top 5 resultados ({len(profile_links)} encontrados)"):
-                for i, pl in enumerate(profile_links[:5]):
-                    st.markdown(f"**{i+1}. {pl['name']}**")
-                    st.caption(f"URL: {pl['href']}")
-                    st.caption(f"Contexto: {pl['context'][:150]}...")
+            st.success(f"✅ {len(profile_links)} resultados encontrados")
+            for i, pl in enumerate(profile_links[:10]):
+                st.markdown(f"**{i+1}. {pl['name']}** (score: {pl['score']})")
+                st.caption(f"URL: {pl['href']}")
 
-        return best_url
+        return profile_links
 
     def extract_full_cv(self, profile_url: str, debug_mode: bool = False) -> dict | None:
         """Extrae CV completo usando /content."""
@@ -313,19 +306,15 @@ class LinkedInScraper:
         
         cv = {"url": profile_url, "sections": {}}
 
-        # Nombre
         h1 = soup.select_one("h1")
         cv["nombre"] = h1.get_text().strip() if h1 else ""
 
-        # Headline
         headline = soup.select_one(".text-body-medium.break-words")
         cv["headline"] = headline.get_text().strip() if headline else ""
 
-        # Ubicación
         ubicacion = soup.select_one(".text-body-small.inline")
         cv["ubicacion"] = ubicacion.get_text().strip() if ubicacion else ""
 
-        # Secciones
         section_ids = {
             "Acerca de": "about",
             "Experiencia": "experience",
@@ -342,7 +331,6 @@ class LinkedInScraper:
             if section:
                 cv["sections"][nombre_seccion] = section.get_text(separator="\n", strip=True)
 
-        # Texto completo como fallback
         main = soup.select_one("main")
         if main:
             cv["texto_completo"] = main.get_text(separator="\n", strip=True)
@@ -352,7 +340,7 @@ class LinkedInScraper:
         if debug_mode:
             st.info(f"📄 CV extraído: {cv['nombre']}")
             st.write(f"**Headline:** {cv['headline']}")
-            st.write(f"**Secciones encontradas:** {', '.join(cv['sections'].keys())}")
+            st.write(f"**Secciones:** {', '.join(cv['sections'].keys())}")
 
         return cv
 
@@ -504,6 +492,10 @@ def main():
         st.session_state.cookies = None
     if "debug_mode" not in st.session_state:
         st.session_state.debug_mode = False
+    if "search_results" not in st.session_state:
+        st.session_state.search_results = {}
+    if "selected_profiles" not in st.session_state:
+        st.session_state.selected_profiles = {}
 
     # ========================================================================
     # SIDEBAR
@@ -572,17 +564,20 @@ def main():
                     st.session_state.cookies = cookies
                     st.success(f"✅ {len(cookies)} cookies cargadas")
 
-                    li_at = next((c for c in cookies if c["name"] == "li_at"), None)
-                    if li_at:
-                        st.success(f"✅ Cookie 'li_at' encontrada (longitud: {len(li_at['value'])})")
-                    else:
-                        st.warning("⚠️ Cookie 'li_at' NO encontrada.")
-
                     if st.session_state.api:
                         st.session_state.scraper = LinkedInScraper(
                             st.session_state.api,
                             cookies
                         )
+                        
+                        # Verificar cookies críticas
+                        critical = st.session_state.scraper.check_critical_cookies()
+                        st.write("**Cookies críticas:**")
+                        for name, length in critical.items():
+                            if length > 0:
+                                st.success(f"✅ {name}: {length} chars")
+                            else:
+                                st.error(f"❌ {name}: FALTA")
                 else:
                     st.error("❌ No se pudo parsear. Usa formato JSON.")
 
@@ -719,55 +714,108 @@ def main():
         col_nombre = col_map["nombre"]
         col_inst = col_map.get("institucion")
 
-        # STEP 2: Buscar CVs
+        # STEP 2: Buscar CVs - AHORA CON 2 MÉTODOS
         st.markdown("### 2️⃣ Buscar CVs en LinkedIn")
 
         if not st.session_state.linkedin_ok:
             st.warning("⚠️ Primero carga las cookies y pulsa '🧪 Testear sesión LinkedIn'")
-            seleccion = []
         else:
-            seleccion = st.multiselect(
-                "Selecciona investigadores",
-                df[col_nombre].tolist(),
-                default=df[col_nombre].tolist()[:1]
-            )
+            # Tabs para los 2 métodos
+            tab1, tab2 = st.tabs(["🔍 Búsqueda automática", "🔗 URL manual"])
+            
+            with tab1:
+                st.info("💡 Busca automáticamente y permite seleccionar entre resultados")
+                seleccion = st.multiselect(
+                    "Selecciona investigadores",
+                    df[col_nombre].tolist(),
+                    default=df[col_nombre].tolist()[:1]
+                )
 
-        if st.button(
-            "🔍 Buscar y extraer CVs",
-            type="primary",
-            use_container_width=True,
-            disabled=len(seleccion) == 0 or not st.session_state.linkedin_ok
-        ):
-            progress = st.progress(0)
-            status_container = st.container()
+                if st.button(
+                    "🔍 Buscar candidatos",
+                    type="primary",
+                    use_container_width=True,
+                    disabled=len(seleccion) == 0
+                ):
+                    progress = st.progress(0)
+                    status_container = st.container()
 
-            for i, nombre in enumerate(seleccion):
-                cached = get_cached_cv(nombre)
-                if cached:
-                    st.session_state.cvs[nombre] = cached
-                    with status_container:
-                        st.info(f"⚡ {nombre}: de caché")
-                    progress.progress((i + 1) / len(seleccion))
-                    continue
+                    for i, nombre in enumerate(seleccion):
+                        inst = ""
+                        if col_inst:
+                            inst = str(df[df[col_nombre] == nombre][col_inst].iloc[0])
 
-                inst = ""
-                if col_inst:
-                    inst = str(df[df[col_nombre] == nombre][col_inst].iloc[0])
+                        with status_container:
+                            with st.spinner(f"🔍 {nombre}..."):
+                                results = st.session_state.scraper.search_person(
+                                    nombre, inst, debug_mode=st.session_state.debug_mode
+                                )
+                                
+                                if results:
+                                    st.session_state.search_results[nombre] = results
+                                    st.success(f"✅ {nombre}: {len(results)} candidatos encontrados")
+                                else:
+                                    st.warning(f"❌ {nombre}: no encontrado")
+                        
+                        progress.progress((i + 1) / len(seleccion))
+                        time.sleep(2)
 
-                try:
-                    with status_container:
-                        with st.spinner(f"🔍 {nombre}..."):
-                            url = st.session_state.scraper.search_person(
-                                nombre, inst, debug_mode=st.session_state.debug_mode
+            with tab2:
+                st.info("💡 Pega directamente la URL del perfil de LinkedIn")
+                selected_name = st.selectbox(
+                    "Selecciona investigador",
+                    df[col_nombre].tolist()
+                )
+                manual_url = st.text_input(
+                    "URL de LinkedIn",
+                    placeholder="https://www.linkedin.com/in/valerio-pruneri-123456/"
+                )
+                
+                if manual_url and st.button("💾 Guardar URL", use_container_width=True):
+                    st.session_state.selected_profiles[selected_name] = manual_url
+                    st.success(f"✅ URL guardada para {selected_name}")
+
+            # Mostrar resultados de búsqueda para seleccionar
+            if st.session_state.search_results:
+                st.markdown("### 📋 Selecciona el perfil correcto")
+                
+                for nombre, results in st.session_state.search_results.items():
+                    with st.expander(f"👤 {nombre} ({len(results)} candidatos)", expanded=True):
+                        # Crear opciones para radio
+                        options = []
+                        for i, r in enumerate(results[:10]):
+                            label = f"{i+1}. {r['name']} (score: {r['score']})"
+                            options.append((label, r['href']))
+                        
+                        if options:
+                            selected = st.radio(
+                                f"Selecciona el perfil de {nombre}:",
+                                options=[opt[0] for opt in options],
+                                key=f"select_{nombre}"
                             )
+                            
+                            # Guardar selección
+                            for label, href in options:
+                                if label == selected:
+                                    st.session_state.selected_profiles[nombre] = href
+                                    st.caption(f"URL: {href}")
+                                    break
 
-                    # Mostrar debug de búsqueda si está activado
-                    if st.session_state.debug_mode and st.session_state.scraper.debug_info:
-                        with st.expander("🐛 Debug de búsqueda", expanded=True):
-                            debug = st.session_state.scraper.debug_info
-                            st.json(debug)
-
-                    if url:
+        # Extraer CVs de los perfiles seleccionados
+        if st.session_state.selected_profiles:
+            st.markdown("### 📄 Extraer CVs")
+            
+            if st.button("📥 Extraer CVs seleccionados", type="primary", use_container_width=True):
+                progress = st.progress(0)
+                status_container = st.container()
+                
+                for i, (nombre, url) in enumerate(st.session_state.selected_profiles.items()):
+                    cached = get_cached_cv(nombre)
+                    if cached:
+                        st.session_state.cvs[nombre] = cached
+                        with status_container:
+                            st.info(f"⚡ {nombre}: de caché")
+                    else:
                         with status_container:
                             with st.spinner(f"📄 {nombre}..."):
                                 cv = st.session_state.scraper.extract_full_cv(
@@ -779,17 +827,11 @@ def main():
                                     st.success(f"✅ {nombre}: {cv.get('headline', 'OK')[:80]}")
                                 else:
                                     st.warning(f"⚠️ {nombre}: no se pudo extraer CV")
-                    else:
-                        with status_container:
-                            st.warning(f"❌ {nombre}: no encontrado")
-                except Exception as e:
-                    with status_container:
-                        st.error(f"❌ {nombre}: {str(e)[:100]}")
-
-                progress.progress((i + 1) / len(seleccion))
-                time.sleep(2)
-
-            st.balloons()
+                    
+                    progress.progress((i + 1) / len(st.session_state.selected_profiles))
+                    time.sleep(2)
+                
+                st.balloons()
 
         # Mostrar CVs
         if st.session_state.cvs:
