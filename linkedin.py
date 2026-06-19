@@ -1,6 +1,7 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión con fotos de perfil + información enriquecida
+Versión Streamlit Cloud + Browserless API REST
+Autor: Asistente IA para Ivan
 """
 
 import os
@@ -34,41 +35,30 @@ st.markdown("""
 <style>
     .stButton>button { width: 100%; }
     .big-header { font-size: 2.2rem; font-weight: 700; margin-bottom: 0.5rem; }
-    .candidate-card {
-        padding: 1rem;
-        border: 2px solid #e0e0e0;
-        border-radius: 12px;
-        margin: 0.8rem 0;
-        background: #fafafa;
-        transition: all 0.3s ease;
-    }
-    .candidate-card:hover {
-        background: #f0f7ff;
-        border-color: #0073b1;
-        box-shadow: 0 4px 8px rgba(0,115,177,0.2);
-    }
-    .profile-avatar {
-        width: 80px;
-        height: 80px;
-        border-radius: 50%;
-        object-fit: cover;
-        border: 3px solid #0073b1;
-    }
     .score-badge {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
-        padding: 0.3rem 0.8rem;
-        border-radius: 20px;
+        padding: 0.2rem 0.6rem;
+        border-radius: 12px;
         font-weight: bold;
+        font-size: 0.85rem;
         display: inline-block;
     }
     .match-badge {
         background: #28a745;
         color: white;
-        padding: 0.2rem 0.5rem;
-        border-radius: 12px;
-        font-size: 0.85rem;
+        padding: 0.15rem 0.5rem;
+        border-radius: 8px;
+        font-size: 0.8rem;
         margin-right: 0.3rem;
+        display: inline-block;
+    }
+    .candidate-row {
+        padding: 0.5rem;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    .candidate-row:hover {
+        background: #f8f9fa;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -163,12 +153,12 @@ class LinkedInScraper:
 
         if "signin" in html.lower()[:2000] or "login" in html.lower()[:2000]:
             result["is_login_page"] = True
-            result["debug_info"] = "⚠️ LinkedIn redirigió a login."
+            result["debug_info"] = "️ LinkedIn redirigió a login."
             return result
 
         if "challenge" in html.lower()[:2000]:
             result["is_challenge"] = True
-            result["debug_info"] = "⚠️ LinkedIn muestra captcha."
+            result["debug_info"] = "️ LinkedIn muestra captcha."
             return result
 
         session_indicators = [
@@ -204,7 +194,6 @@ class LinkedInScraper:
         return found
 
     def _extract_name_from_link(self, link) -> str:
-        """Extrae nombre del enlace usando múltiples métodos."""
         name = ""
         
         # Método 1: aria-label
@@ -239,32 +228,15 @@ class LinkedInScraper:
         
         return name
 
-    def _extract_avatar_url(self, link) -> str:
-        """Extrae URL de la imagen de perfil."""
-        img = link.select_one("img")
-        if img:
-            src = img.get("src", "") or img.get("data-src", "") or img.get("data-lazy-src", "")
-            if src:
-                # LinkedIn usa imágenes progresivas, obtener la de mayor calidad
-                if "licdn.com" in src:
-                    # Reemplazar con versión de alta calidad si es posible
-                    return src
-                return src
-        return ""
-
     def _extract_headline_from_context(self, parent) -> str:
-        """Extrae headline/institución del contexto."""
         if not parent:
             return ""
-        
         text = parent.get_text(separator=" ", strip=True)
         if len(text) > 300:
             text = text[:300]
-        
         return text
 
     def search_person(self, full_name: str, institution: str = "", orcid: str = "", debug_mode: bool = False) -> list:
-        """Busca persona y devuelve lista con info completa incluyendo fotos."""
         self.debug_info = {}
         
         query = full_name
@@ -286,8 +258,6 @@ class LinkedInScraper:
         
         if not response["ok"]:
             self.debug_info["error"] = response.get("error")
-            if debug_mode:
-                st.error(f"❌ Error: {response.get('error')}")
             return []
 
         html = response["html"]
@@ -322,9 +292,7 @@ class LinkedInScraper:
                 continue
             seen_urls.add(href)
             
-            # Extraer información completa
             name = self._extract_name_from_link(link)
-            avatar_url = self._extract_avatar_url(link)
             
             # Extraer headline
             headline = ""
@@ -342,7 +310,6 @@ class LinkedInScraper:
                 else:
                     location = text[:100]
             
-            # Contexto completo
             parent = link.find_parent("li") or link.find_parent("div", class_=re.compile("entity-result|search-result"))
             context = self._extract_headline_from_context(parent)
             
@@ -352,7 +319,6 @@ class LinkedInScraper:
                 "headline": headline,
                 "location": location,
                 "context": context,
-                "avatar_url": avatar_url,
             })
 
         self.debug_info["profile_links_found"] = len(profile_links)
@@ -394,7 +360,6 @@ class LinkedInScraper:
         return profile_links
 
     def extract_full_cv(self, profile_url: str, debug_mode: bool = False) -> dict | None:
-        """Extrae CV completo."""
         response = self.api.get_content(profile_url, cookies=self.cookies)
 
         if not response["ok"] or not response["html"]:
@@ -415,13 +380,6 @@ class LinkedInScraper:
 
         ubicacion = soup.select_one(".text-body-small.inline")
         cv["ubicacion"] = ubicacion.get_text().strip() if ubicacion else ""
-
-        # Extraer foto de perfil del perfil completo
-        profile_img = soup.select_one("img[id*='profile-photo'], div.pv-top-card__photo img")
-        if profile_img:
-            cv["profile_photo"] = profile_img.get("src", "")
-        else:
-            cv["profile_photo"] = ""
 
         section_ids = {
             "Acerca de": "about",
@@ -446,7 +404,7 @@ class LinkedInScraper:
             cv["texto_completo"] = soup.get_text(separator="\n", strip=True)
 
         if debug_mode:
-            st.info(f"📄 CV extraído: {cv['nombre']}")
+            st.info(f" CV extraído: {cv['nombre']}")
             st.write(f"**Headline:** {cv['headline']}")
             st.write(f"**Secciones:** {', '.join(cv['sections'].keys())}")
 
@@ -722,7 +680,7 @@ def main():
             api_key = st.text_input("API Key OpenAI", type="password")
 
         if api_key:
-            if st.button("🔍 Verificar OpenAI"):
+            if st.button(" Verificar OpenAI"):
                 with st.spinner("Verificando..."):
                     try:
                         client = OpenAI(api_key=api_key)
@@ -735,7 +693,7 @@ def main():
                         st.error(f"❌ {str(e)[:80]}")
 
         if st.session_state.openai_ok:
-            st.success("🟢 OpenAI listo")
+            st.success(" OpenAI listo")
         else:
             st.warning("🟡 OpenAI no configurado")
 
@@ -748,7 +706,7 @@ def main():
         st.write(f"👥 CVs: {len(st.session_state.cvs)}")
         st.write(f"🏭 Análisis: {len(st.session_state.analisis)}")
         if st.session_state.api:
-            st.write(f"💳 Créditos: {st.session_state.api.credits_used}")
+            st.write(f" Créditos: {st.session_state.api.credits_used}")
 
         if st.button("🔄 Reiniciar"):
             for k in list(st.session_state.keys()):
@@ -762,7 +720,7 @@ def main():
     st.markdown("Analiza investigadores y detecta **empresas** y **spin-offs**.")
 
     # STEP 1: Excel
-    st.markdown("### 1️⃣ Cargar Excel")
+    st.markdown("### 1️ Cargar Excel")
     uploaded = st.file_uploader("Sube el Excel", type=["xlsx", "xls"])
 
     if uploaded is not None:
@@ -787,7 +745,7 @@ def main():
 
         c1, c2, c3 = st.columns(3)
         c1.metric("👤 Nombre", col_map.get("nombre", "❌"))
-        c2.metric("🏛️ Institución", col_map.get("institucion", "❌"))
+        c2.metric("️ Institución", col_map.get("institucion", "❌"))
         c3.metric("🆔 ORCID", col_map.get("orcid", "❌"))
 
         if "nombre" not in col_map:
@@ -852,110 +810,124 @@ def main():
                     st.session_state.selected_profiles[selected_name] = manual_url
                     st.success(f"✅ URL guardada para {selected_name}")
 
-            # Mostrar resultados con FOTOS
+            # Mostrar resultados COMPACTOS
             if st.session_state.search_results:
                 st.markdown("### 📋 Selecciona el perfil correcto")
+                st.info("💡 Ordenados por relevancia. Busca coincidencias en nombre e institución.")
                 
                 for nombre, results in st.session_state.search_results.items():
                     with st.expander(f"👤 {nombre} ({len(results)} candidatos)", expanded=True):
+                        # Info del Excel
                         inst_excel = str(df[df[col_nombre] == nombre][col_inst].iloc[0]) if col_inst else ""
                         orcid_excel = str(df[df[col_nombre] == nombre][col_orcid].iloc[0]) if col_orcid else ""
                         
-                        col_i1, col_i2 = st.columns(2)
-                        with col_i1:
-                            st.info(f"**🏛️ Institución:**\n\n{inst_excel[:100]}")
-                        with col_i2:
+                        col_ref1, col_ref2 = st.columns(2)
+                        with col_ref1:
+                            st.markdown(f"**🏛️ Institución:** {inst_excel[:80]}{'...' if len(inst_excel) > 80 else ''}")
+                        with col_ref2:
                             if orcid_excel:
-                                st.info(f"**🔗 ORCID:**\n\n[{orcid_excel}]({orcid_excel})")
+                                st.markdown(f"**🔗 ORCID:** [{orcid_excel[-8:]}]({orcid_excel})")
                         
                         st.divider()
                         
-                        # Tarjetas con fotos
-                        for i, r in enumerate(results[:15]):
+                        # Mostrar top 10 resultados
+                        for i, r in enumerate(results[:10]):
                             name = r.get('name', 'Sin nombre')
                             headline = r.get('headline', '')
                             location = r.get('location', '')
-                            avatar_url = r.get('avatar_url', '')
+                            context = r.get('context', '')
                             score = r.get('score', 0)
                             href = r.get('href', '')
-                            context = r.get('context', '')
                             
                             # Calcular coincidencias
                             name_match = nombre.lower() in name.lower()
-                            inst_match = inst_excel and any(w in context.lower() for w in inst_excel.lower().split() if len(w) > 3)
+                            inst_match = False
+                            inst_words_found = []
+                            if inst_excel and context:
+                                inst_words = [w for w in inst_excel.lower().split() if len(w) > 4]
+                                for word in inst_words[:5]:
+                                    if word in context.lower():
+                                        inst_match = True
+                                        inst_words_found.append(word)
                             
-                            # Crear tarjeta con columns
-                            col_avatar, col_content = st.columns([0.15, 0.85])
+                            # Tarjeta compacta
+                            col_checkbox, col_content = st.columns([0.08, 0.92])
                             
-                            with col_avatar:
-                                # Mostrar foto o placeholder
-                                if avatar_url:
-                                    st.markdown(
-                                        f'<img src="{avatar_url}" class="profile-avatar" alt="Foto">',
-                                        unsafe_allow_html=True
-                                    )
-                                else:
-                                    st.markdown(
-                                        '<div style="width:80px;height:80px;border-radius:50%;'
-                                        'background:#ddd;display:flex;align-items:center;justify-content:center;'
-                                        'border:3px solid #0073b1;">'
-                                        f'<span style="font-size:2rem;color:#666;">{name[0].upper() if name else "?"}</span>'
-                                        '</div>',
-                                        unsafe_allow_html=True
-                                    )
+                            with col_checkbox:
+                                selected = st.checkbox(
+                                    "",
+                                    key=f"select_{nombre}_{i}",
+                                    label_visibility="collapsed",
+                                    help="Marca para seleccionar"
+                                )
                             
                             with col_content:
-                                # Header
+                                # Header: Nombre + Score
                                 col_h1, col_h2 = st.columns([3, 1])
                                 with col_h1:
-                                    st.markdown(f"### {name}")
+                                    st.markdown(f"**{name}**")
                                 with col_h2:
-                                    if score > 0:
+                                    if score > 10:
                                         st.markdown(f'<span class="score-badge">Score: {score}</span>', unsafe_allow_html=True)
+                                    elif score > 0:
+                                        st.caption(f"Score: {score}")
                                 
-                                # Badges
+                                # Badges de coincidencia
                                 badges = []
                                 if name_match:
-                                    badges.append("🎯 Nombre coincide")
+                                    badges.append("🎯 Nombre")
                                 if inst_match:
-                                    badges.append("🏢 Institución coincide")
+                                    badges.append(f"🏢 Institución ({', '.join(inst_words_found[:2])})")
+                                
                                 if badges:
-                                    st.markdown(" ".join([f'<span class="match-badge">{b}</span>' for b in badges]), unsafe_allow_html=True)
+                                    badge_html = " ".join([f'<span class="match-badge">{b}</span>' for b in badges])
+                                    st.markdown(badge_html, unsafe_allow_html=True)
                                 
-                                # Info
+                                # Info relevante
+                                info_parts = []
                                 if headline:
-                                    st.caption(f"💼 {headline}")
+                                    info_parts.append(f"💼 {headline}")
                                 if location:
-                                    st.caption(f"📍 {location}")
+                                    info_parts.append(f"📍 {location}")
                                 
-                                if context and len(context) > 200:
-                                    context = context[:200] + "..."
-                                if context:
-                                    st.markdown(f"*{context}*")
+                                if info_parts:
+                                    st.caption(" • ".join(info_parts))
                                 
-                                # Acciones
-                                col_a1, col_a2 = st.columns(2)
-                                with col_a1:
-                                    if href:
-                                        st.markdown(f'[🔗 Ver en LinkedIn]({href})', unsafe_allow_html=True)
-                                with col_a2:
-                                    selected = st.checkbox(
-                                        "Seleccionar",
-                                        key=f"select_{nombre}_{i}",
-                                        label_visibility="collapsed"
-                                    )
+                                # Contexto recortado
+                                if context and len(context) > 20:
+                                    context_preview = context[:250] + "..." if len(context) > 250 else context
+                                    st.markdown(f"*{context_preview}*")
                                 
-                                st.divider()
+                                # Link
+                                if href:
+                                    st.markdown(f"[🔗 Ver perfil LinkedIn]({href})")
+                                
+                                st.markdown("---")
                         
-                        # Botón guardar
-                        if st.button(f"💾 Guardar selección de {nombre}", key=f"save_{nombre}", type="primary"):
-                            for i, r in enumerate(results[:15]):
-                                if st.session_state.get(f"select_{nombre}_{i}", False):
-                                    st.session_state.selected_profiles[nombre] = r['href']
-                                    st.success(f"✅ Seleccionado: {r.get('name', 'N/A')}")
-                                    break
-                            else:
-                                st.warning("⚠️ Selecciona un candidato")
+                        # Botón guardar selección
+                        col_btn1, col_btn2 = st.columns([2, 1])
+                        with col_btn1:
+                            if st.button(f"💾 Guardar selección", key=f"save_{nombre}", type="primary", use_container_width=True):
+                                seleccionado = False
+                                for i, r in enumerate(results[:10]):
+                                    if st.session_state.get(f"select_{nombre}_{i}", False):
+                                        st.session_state.selected_profiles[nombre] = r['href']
+                                        st.success(f"✅ Seleccionado: {r.get('name', 'N/A')} (Score: {r.get('score', 0)})")
+                                        seleccionado = True
+                                        break
+                                
+                                if not seleccionado:
+                                    st.warning("⚠️ Selecciona un candidato primero")
+                        
+                        with col_btn2:
+                            if st.button(f"🔄 Limpiar", key=f"clear_{nombre}"):
+                                for i in range(len(results[:10])):
+                                    key = f"select_{nombre}_{i}"
+                                    if key in st.session_state:
+                                        st.session_state[key] = False
+                                st.rerun()
+                        
+                        st.markdown("<br>", unsafe_allow_html=True)
 
         # Extraer CVs
         if st.session_state.selected_profiles:
@@ -981,7 +953,7 @@ def main():
                                 save_cv_cache(nombre, cv)
                                 st.success(f"✅ {nombre}: {cv.get('headline', 'OK')[:80]}")
                             else:
-                                st.warning(f"⚠️ {nombre}: no se pudo extraer")
+                                st.warning(f"️ {nombre}: no se pudo extraer")
                     
                     progress.progress((i + 1) / len(st.session_state.selected_profiles))
                     time.sleep(2)
@@ -992,14 +964,9 @@ def main():
         if st.session_state.cvs:
             with st.expander(f"📄 CVs ({len(st.session_state.cvs)})", expanded=False):
                 for nombre, cv in st.session_state.cvs.items():
-                    st.markdown(f"**👤 {nombre}**")
+                    st.markdown(f"** {nombre}**")
                     st.caption(f"🎯 {cv.get('headline', 'N/A')}")
                     st.caption(f"🔗 {cv.get('url', 'N/A')}")
-                    
-                    # Mostrar foto si existe
-                    if cv.get("profile_photo"):
-                        st.image(cv["profile_photo"], width=150)
-                    
                     for sec, txt in cv.get("sections", {}).items():
                         with st.expander(f"  • {sec}", expanded=False):
                             st.text(txt[:1500])
@@ -1036,7 +1003,7 @@ def main():
                     st.markdown(f"**👤 {nombre}**")
                     if analisis.get("empresas"):
                         for emp in analisis["empresas"]:
-                            tipo = "🚀 **SPIN-OFF**" if emp.get("es_spinoff") else "🏢 Empresa"
+                            tipo = "🚀 **SPIN-OFF**" if emp.get("es_spinoff") else " Empresa"
                             st.markdown(f"- {tipo}: **{emp.get('nombre', '?')}** ({emp.get('rol', 'N/A')})")
                             if emp.get("descripcion"):
                                 st.caption(f"   _{emp['descripcion']}_")
@@ -1047,7 +1014,7 @@ def main():
                     st.divider()
 
         # STEP 4: Excel
-        st.markdown("### 4️⃣ Generar Excel")
+        st.markdown("### 4️ Generar Excel")
 
         if st.session_state.analisis:
             if st.button("📊 Generar Excel", type="primary", use_container_width=True):
