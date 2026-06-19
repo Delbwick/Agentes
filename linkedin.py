@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión final con filtrado relajado + limpieza de texto + análisis IA mejorado
+Versión final con búsqueda mejorada + análisis IA de patentes/spin-offs
 """
 
 import os
@@ -86,12 +86,12 @@ class BrowserlessAPI:
 
 
 # ============================================================================
-# CLASE: LINKEDIN SCRAPER
+# CLASE: LINKEDIN SCRAPER (MEJORADO)
 # ============================================================================
 class LinkedInScraper:
     def __init__(self, api: BrowserlessAPI, cookies: list):
         self.api = api
-        self.cookies = cookies
+        self.cookies = cookies if cookies else []
         self.debug_info = {}
 
     def test_linkedin_session(self) -> dict:
@@ -175,11 +175,25 @@ class LinkedInScraper:
         
         return found
 
+    def _normalize_name(self, name: str) -> str:
+        """Normaliza un nombre para comparación: elimina acentos, caracteres especiales, etc."""
+        # Normalizar caracteres especiales
+        normalized = name.lower()
+        normalized = normalized.replace('ı́', 'i').replace('í', 'i').replace('á', 'a')
+        normalized = normalized.replace('é', 'e').replace('ó', 'o').replace('ú', 'u')
+        normalized = normalized.replace('ñ', 'n').replace('ç', 'c')
+        normalized = normalized.replace('ü', 'u')
+        # Eliminar caracteres no alfabéticos
+        normalized = re.sub(r'[^a-z\s]', ' ', normalized)
+        # Normalizar espacios
+        normalized = ' '.join(normalized.split())
+        return normalized
+
     def _extract_name_from_link(self, link) -> str:
-        """Extrae nombre del enlace."""
+        """Extrae nombre del enlace usando múltiples métodos."""
         name = ""
         
-        # Método 1: aria-label
+        # Método 1: aria-label (más fiable)
         aria_label = link.get("aria-label", "")
         if aria_label and len(aria_label) > 2:
             name = aria_label.strip()
@@ -199,26 +213,22 @@ class LinkedInScraper:
                     name = text
                     break
         
-        # Método 4: texto directo
+        # Método 4: texto directo del enlace
         if not name:
             text = link.get_text().strip()
             if text and len(text) > 2 and len(text) < 100:
                 name = text
         
-        # Limpiar
+        # Limpiar nombre
         name = re.sub(r'\s+', ' ', name).strip()
         name = re.sub(r'^(Ver perfil de|View profile de|View)\s*', '', name, flags=re.IGNORECASE)
         
         return name
 
-    def _extract_headline_from_parent(self, parent) -> str:
-        """Extrae headline/cargo del contexto."""
+    def _extract_headline_from_context(self, parent) -> str:
+        """Extrae headline/institución del contexto del resultado."""
         if not parent:
             return ""
-        
-        headline_elem = parent.select_one(".entity-result__summary")
-        if headline_elem:
-            return headline_elem.get_text().strip()[:200]
         
         text = parent.get_text(separator=" ", strip=True)
         if len(text) > 300:
@@ -227,7 +237,7 @@ class LinkedInScraper:
         return text
 
     def _extract_location(self, parent) -> str:
-        """Extrae ubicación."""
+        """Extrae ubicación del resultado."""
         if not parent:
             return ""
         
@@ -242,136 +252,23 @@ class LinkedInScraper:
         return ""
 
     def _extract_current_position(self, parent) -> str:
-        """Extrae posición actual."""
+        """Extrae posición/empresa actual del resultado."""
         if not parent:
             return ""
         
         text = parent.get_text()
         
+        # LinkedIn suele mostrar: "Cargo en Empresa · X años"
         match = re.search(r'([^\n·]+?)\s+en\s+([^\n·]+?)(?:\s+·|\s+\d+\s+a)', text)
         if match:
             return f"{match.group(1).strip()} en {match.group(2).strip()}"
         
+        # Fallback: primera línea significativa
         lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) > 10]
         if lines:
             return lines[0][:150]
         
         return ""
-
-    def search_person(self, full_name: str, institution: str = "", orcid: str = "", debug_mode: bool = False) -> list:
-        """Busca persona. FILTRADO MUY RELAJADO: muestra casi todo."""
-        self.debug_info = {}
-        
-        query = full_name
-        if institution:
-            inst_clean = re.sub(r'[;|,()\[\]]', ' ', institution)
-            words = [w for w in inst_clean.split() if len(w) > 3]
-            if words:
-                query += " " + " ".join(words[:2])
-
-        search_url = (
-            f"https://www.linkedin.com/search/results/people/"
-            f"?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER"
-        )
-
-        self.debug_info["search_url"] = search_url
-        self.debug_info["query"] = query
-
-        response = self.api.get_content(search_url, cookies=self.cookies)
-        
-        if not response["ok"]:
-            self.debug_info["error"] = response.get("error")
-            if debug_mode:
-                st.error(f"❌ Error: {response.get('error')}")
-            return []
-
-        html = response["html"]
-        self.debug_info["html_length"] = len(html)
-        self.debug_info["final_url"] = response.get("final_url", "")
-
-        if not html:
-            self.debug_info["error"] = "HTML vacío"
-            return []
-
-        if "signin" in html.lower()[:1000] or "login" in html.lower()[:1000]:
-            self.debug_info["error"] = "Redirigido a login"
-            if debug_mode:
-                st.error("❌ Sesión expirada")
-            return []
-
-        soup = BeautifulSoup(html, "html.parser")
-        self.debug_info["page_title"] = soup.title.string if soup.title else ""
-
-        all_links = soup.select("a[href*='/in/']")
-        self.debug_info["total_links_in"] = len(all_links)
-
-        profile_links = []
-        seen_urls = set()
-        target_words = set(full_name.lower().split())
-        
-        for link in all_links:
-            href = link.get("href", "")
-            if "/in/" not in href or "login" in href or "challenge" in href:
-                continue
-            
-            href = href.split("?")[0]
-            
-            if href in seen_urls:
-                continue
-            seen_urls.add(href)
-            
-            name = self._extract_name_from_link(link)
-            
-            # FILTRADO MUY RELAJADO: Solo excluir si nombre está vacío
-            if not name or len(name) < 2:
-                continue
-            
-            # Extraer contexto
-            parent = link.find_parent("li") or link.find_parent("div", class_=re.compile("entity-result|search-result"))
-            context = self._extract_headline_from_parent(parent)
-            location = self._extract_location(parent)
-            current_position = self._extract_current_position(parent)
-            
-            # Calcular score (informativo, no se usa para filtrar)
-            name_lower = name.lower()
-            name_words = set(name_lower.split())
-            common_words = target_words & name_words
-            score = len(common_words) * 10
-
-            if institution:
-                inst_lower = institution.lower()
-                inst_words = [w for w in inst_lower.split() if len(w) > 3]
-                for word in inst_words[:3]:
-                    if word in context.lower():
-                        score += 5
-
-            if orcid and orcid in context:
-                score += 20
-
-            if current_position:
-                score += 3
-
-            if location:
-                score += 2
-
-            profile_links.append({
-                "href": href,
-                "name": name,
-                "context": context,
-                "location": location,
-                "current_position": current_position,
-                "score": score,
-            })
-
-        self.debug_info["profile_links_found"] = len(profile_links)
-
-        # Ordenar por score (los mejores primero)
-        profile_links.sort(key=lambda x: x["score"], reverse=True)
-
-        if debug_mode:
-            st.success(f"✅ {len(profile_links)} resultados encontrados")
-
-        return profile_links
 
     def _clean_linkedin_text(self, text: str) -> str:
         """Limpia el texto eliminando footer, headers y ruido de LinkedIn."""
@@ -391,9 +288,9 @@ class LinkedInScraper:
             r"Accede a tu Configuración",
             r"Transparencia de las recomendaciones",
             r"Más información sobre el contenido recomendado",
-            r"Seleccionar idioma.*?(?:한국어|العربية|हिंदी|日本語|English)",
             # Lista de idiomas
             r"(?:العربية|বাংলা|Čeština|Dansk|Deutsch|Ελληνικά|English|Español|Suomi|Français|हिंदी|Magyar|Bahasa Indonesia|Italiano|עברית|日本語|한국어|मराठी|Bahasa Malaysia|Nederlands|Norsk|Polski|Português|Română|Русский|Svenska|Tagalog|ภาษาไทย|Türkçe|Українська|Tiếng Việt|简体中文|繁體中文)",
+            r"Seleccionar idioma",
             # Headers y navegación
             r"Inicio\s+Mi red\s+Empleos\s+Mensajes\s+Notificaciones",
             r"Para negocios.*?Publicidad",
@@ -416,8 +313,6 @@ class LinkedInScraper:
             r"•\s*\d+(?:er|º|ª)",
             # Anuncios
             r"¿Por qué estoy viendo este anuncio\?",
-            # Sección de contacto repetida
-            r"Información de contacto\s+\n\s*\d+\s+contactos",
         ]
         
         cleaned_text = text
@@ -426,13 +321,11 @@ class LinkedInScraper:
         
         # Eliminar líneas vacías múltiples
         cleaned_text = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned_text)
-        # Eliminar espacios al inicio de líneas
         cleaned_text = re.sub(r'\n\s+', '\n', cleaned_text)
         cleaned_text = cleaned_text.strip()
         
-        # Si después de limpiar queda muy poco, devolver el original recortado
+        # Si después de limpiar queda muy poco, intentar extracción conservadora
         if len(cleaned_text) < 100 and len(text) > 500:
-            # Intentar extracción más conservadora
             lines = text.split('\n')
             useful_lines = []
             skip_patterns = [
@@ -455,13 +348,163 @@ class LinkedInScraper:
         
         return cleaned_text
 
+    def search_person(self, full_name: str, institution: str = "", orcid: str = "", debug_mode: bool = False) -> list:
+        """Busca persona y devuelve lista de resultados válidos con score correcto."""
+        self.debug_info = {}
+        
+        # PREPARAR NOMBRE PARA BÚSQUEDA
+        search_name = full_name
+        # Normalizar caracteres especiales
+        search_name = search_name.replace('ı́', 'i').replace('í', 'i').replace('á', 'a')
+        search_name = search_name.replace('é', 'e').replace('ó', 'o').replace('ú', 'u')
+        search_name = search_name.replace('ñ', 'n').replace('ç', 'c').replace('ü', 'u')
+        # Eliminar iniciales (B. Linares-Barranco → Linares-Barranco)
+        search_name = re.sub(r'\b[A-Z]\.\s*', '', search_name)
+        # Eliminar guiones y caracteres especiales para búsqueda
+        search_name_clean = re.sub(r'[^a-zA-Z\s]', ' ', search_name)
+        search_name_clean = ' '.join(search_name_clean.split())
+        
+        query = search_name_clean
+        if institution:
+            inst_clean = re.sub(r'[;|,()\[\]]', ' ', institution)
+            words = [w for w in inst_clean.split() if len(w) > 3]
+            if words:
+                query += " " + " ".join(words[:2])
+
+        search_url = (
+            f"https://www.linkedin.com/search/results/people/"
+            f"?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER"
+        )
+
+        self.debug_info["search_url"] = search_url
+        self.debug_info["query"] = query
+
+        response = self.api.get_content(search_url, cookies=self.cookies)
+        
+        if not response["ok"]:
+            self.debug_info["error"] = response.get("error")
+            if debug_mode:
+                st.error(f"❌ Error en /content: {response.get('error')}")
+            return []
+
+        html = response["html"]
+        self.debug_info["html_length"] = len(html)
+        self.debug_info["final_url"] = response.get("final_url", "")
+
+        if not html:
+            self.debug_info["error"] = "HTML vacío"
+            if debug_mode:
+                st.error("❌ HTML vacío devuelto")
+            return []
+
+        if "signin" in html.lower()[:1000] or "login" in html.lower()[:1000]:
+            self.debug_info["error"] = "Redirigido a login"
+            if debug_mode:
+                st.error("❌ Sesión expirada durante la búsqueda")
+            return []
+
+        soup = BeautifulSoup(html, "html.parser")
+        self.debug_info["page_title"] = soup.title.string if soup.title else ""
+
+        all_links = soup.select("a[href*='/in/']")
+        self.debug_info["total_links_in"] = len(all_links)
+
+        profile_links = []
+        seen_urls = set()
+        
+        # PREPARAR PALABRAS OBJETIVO (normalizadas)
+        target_name_normalized = self._normalize_name(full_name)
+        target_words = set(target_name_normalized.split())
+        
+        for link in all_links:
+            href = link.get("href", "")
+            if "/in/" not in href or "login" in href or "challenge" in href:
+                continue
+            
+            href = href.split("?")[0]
+            
+            if href in seen_urls:
+                continue
+            seen_urls.add(href)
+            
+            # Extraer nombre
+            name = self._extract_name_from_link(link)
+            
+            # Extraer contexto
+            parent = link.find_parent("li") or link.find_parent("div", class_=re.compile("entity-result|search-result"))
+            context = self._extract_headline_from_context(parent)
+            location = self._extract_location(parent)
+            current_position = self._extract_current_position(parent)
+            
+            # Extraer avatar
+            img = link.select_one("img")
+            avatar_url = img.get("src", "") if img else ""
+            
+            # CALCULAR SCORE CORRECTAMENTE
+            name_normalized = self._normalize_name(name)
+            name_words = set(name_normalized.split())
+            
+            # Score base: palabras comunes entre nombre buscado y encontrado
+            common_words = target_words & name_words
+            score = len(common_words) * 10
+            
+            # Bonus por institución en el contexto
+            if institution:
+                inst_lower = institution.lower()
+                inst_words = [w for w in inst_lower.split() if len(w) > 3]
+                for word in inst_words[:3]:
+                    if word in context.lower():
+                        score += 5
+            
+            # Bonus por ORCID si aparece en el contexto
+            if orcid and orcid in context:
+                score += 20
+            
+            # Bonus por tener posición actual
+            if current_position:
+                score += 3
+            
+            # Bonus por tener ubicación
+            if location:
+                score += 2
+            
+            # FILTRAR: Solo incluir si score >= 10 (al menos 1 palabra del nombre coincide)
+            if score < 10:
+                continue
+            
+            profile_links.append({
+                "href": href,
+                "name": name,
+                "context": context,
+                "location": location,
+                "current_position": current_position,
+                "avatar_url": avatar_url,
+                "score": score,
+            })
+
+        self.debug_info["profile_links_found"] = len(profile_links)
+
+        if not profile_links:
+            self.debug_info["error"] = "No se encontraron candidatos con coincidencia de nombre"
+            if debug_mode:
+                st.warning("⚠️ No se encontraron candidatos válidos")
+            return []
+
+        # Ordenar por score (mayor a menor)
+        profile_links.sort(key=lambda x: x["score"], reverse=True)
+
+        if debug_mode:
+            st.success(f"✅ {len(profile_links)} candidatos válidos encontrados")
+
+        return profile_links
+
     def extract_full_cv(self, profile_url: str, debug_mode: bool = False) -> dict | None:
-        """Extrae CV completo con limpieza de ruido."""
+        """Extrae CV completo usando /content con limpieza de ruido."""
         response = self.api.get_content(profile_url, cookies=self.cookies)
 
         if not response["ok"] or not response["html"]:
             if debug_mode:
-                st.error(f"❌ Error: {response.get('error')}")
+                st.error(f"❌ Error extrayendo CV: {response.get('error')}")
             return None
 
         html = response["html"]
@@ -797,21 +840,26 @@ def save_cv_cache(nombre: str, cv: dict):
 
 
 def extraer_datos_excel_para_ia(row, col_map: dict) -> dict:
+    """Extrae datos relevantes del Excel para pasar al LLM como contexto."""
     datos = {}
     
+    # Patentes
     if "patentes" in col_map:
         datos["patentes"] = str(row.get(col_map["patentes"], ""))
     elif "Representative_Patent_Titles" in row.index:
         datos["patentes"] = str(row.get("Representative_Patent_Titles", ""))
     
+    # Publicaciones
     if "publicaciones" in col_map:
         datos["publicaciones"] = str(row.get(col_map["publicaciones"], ""))
     elif "Publication_Articles_Total_Area" in row.index:
         datos["publicaciones"] = str(row.get("Publication_Articles_Total_Area", ""))
     
+    # Institución
     if "institucion" in col_map:
         datos["institucion"] = str(row.get(col_map["institucion"], ""))
     
+    # Score
     if "score" in col_map:
         datos["score"] = str(row.get(col_map["score"], ""))
     elif "Score_10xPatents_plus_Articles" in row.index:
@@ -905,7 +953,7 @@ def main():
                     if st.session_state.api:
                         st.session_state.scraper = LinkedInScraper(st.session_state.api, cookies)
                         
-                        # FIX: Asegurar que check_critical_cookies siempre devuelve dict
+                        # Verificar cookies críticas
                         try:
                             critical = st.session_state.scraper.check_critical_cookies()
                             if critical is None:
@@ -1066,9 +1114,9 @@ def main():
                             
                             if results:
                                 st.session_state.search_results[nombre] = results
-                                st.success(f"✅ {nombre}: {len(results)} candidatos")
+                                st.success(f"✅ {nombre}: {len(results)} candidatos válidos")
                             else:
-                                st.warning(f"❌ {nombre}: sin resultados")
+                                st.warning(f"❌ {nombre}: sin candidatos válidos")
                         
                         progress.progress((i + 1) / len(seleccion))
                         time.sleep(2)
@@ -1091,10 +1139,10 @@ def main():
                     st.session_state.selected_profiles[selected_name] = manual_url
                     st.success(f"✅ URL guardada")
 
-            # Mostrar resultados (SIN FILTRADO AGRESIVO)
+            # Mostrar resultados
             if st.session_state.search_results:
                 st.markdown("### 📋 Selecciona el perfil correcto")
-                st.info("💡 Ordenados por score (relevancia). Los primeros son los más probables.")
+                st.info("💡 Ordenados por score (relevancia). Solo se muestran candidatos con coincidencia de nombre.")
                 
                 for nombre, results in st.session_state.search_results.items():
                     with st.expander(f"👤 {nombre} ({len(results)} candidatos)", expanded=True):
@@ -1115,6 +1163,7 @@ def main():
                             current_position = r.get('current_position', '')
                             score = r.get('score', 0)
                             
+                            # Label enriquecido
                             label_parts = [f"{i+1}. {name} (score: {score})"]
                             if current_position:
                                 label_parts.append(f"   💼 {current_position[:100]}")
