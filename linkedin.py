@@ -1,13 +1,12 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión con mejor extracción de nombres + búsqueda Google
+Versión con filtrado, extracción mejorada y análisis IA enfocado en spin-offs/patentes
 """
 
 import os
 import re
 import json
 import time
-import webbrowser
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime
@@ -35,17 +34,6 @@ st.markdown("""
 <style>
     .stButton>button { width: 100%; }
     .big-header { font-size: 2.2rem; font-weight: 700; margin-bottom: 0.5rem; }
-    .candidate-card {
-        padding: 0.8rem;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        margin: 0.5rem 0;
-        background: #fafafa;
-    }
-    .candidate-card:hover {
-        background: #f0f0f0;
-        border-color: #0073b1;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -71,7 +59,7 @@ class BrowserlessAPI:
             elif resp.status_code == 401:
                 return False, "❌ Token inválido"
             elif resp.status_code == 429:
-                return False, "⚠️ Límite de créditos alcanzado"
+                return False, "⚠️ Límite de créditos"
             else:
                 return False, f"❌ Error {resp.status_code}"
         except Exception as e:
@@ -98,7 +86,7 @@ class BrowserlessAPI:
 
 
 # ============================================================================
-# CLASE: LINKEDIN SCRAPER (con mejor extracción)
+# CLASE: LINKEDIN SCRAPER (con filtrado y extracción mejorada)
 # ============================================================================
 class LinkedInScraper:
     def __init__(self, api: BrowserlessAPI, cookies: list):
@@ -180,10 +168,10 @@ class LinkedInScraper:
         return found
 
     def _extract_name_from_link(self, link) -> str:
-        """Extrae nombre del enlace usando múltiples métodos."""
+        """Extrae nombre del enlace."""
         name = ""
         
-        # Método 1: aria-label (más fiable)
+        # Método 1: aria-label
         aria_label = link.get("aria-label", "")
         if aria_label and len(aria_label) > 2:
             name = aria_label.strip()
@@ -203,33 +191,87 @@ class LinkedInScraper:
                     name = text
                     break
         
-        # Método 4: texto directo del enlace
+        # Método 4: texto directo
         if not name:
             text = link.get_text().strip()
             if text and len(text) > 2 and len(text) < 100:
                 name = text
         
-        # Limpiar nombre
+        # Limpiar
         name = re.sub(r'\s+', ' ', name).strip()
-        # Eliminar prefijos comunes
         name = re.sub(r'^(Ver perfil de|View profile de|View)\s*', '', name, flags=re.IGNORECASE)
         
         return name
 
-    def _extract_headline_from_context(self, parent) -> str:
-        """Extrae headline/institución del contexto del resultado."""
+    def _extract_headline_from_parent(self, parent) -> str:
+        """Extrae headline/cargo del contexto del resultado."""
         if not parent:
             return ""
         
+        # Buscar patrones de headline
+        headline_elem = parent.select_one(".entity-result__summary")
+        if headline_elem:
+            return headline_elem.get_text().strip()[:200]
+        
+        # Fallback: texto completo
         text = parent.get_text(separator=" ", strip=True)
-        # Limitar longitud
         if len(text) > 300:
             text = text[:300]
         
         return text
 
+    def _extract_location(self, parent) -> str:
+        """Extrae ubicación del resultado."""
+        if not parent:
+            return ""
+        
+        # Buscar patrón de ubicación (suele estar después de ·)
+        text = parent.get_text()
+        if "·" in text:
+            parts = text.split("·")
+            for part in parts:
+                part = part.strip()
+                # Ubicaciones típicas: "Madrid", "Barcelona, España", etc.
+                if len(part) < 50 and any(c in part for c in [",", "España", "Spain", "Cataluña", "Madrid", "Barcelona", "Sevilla", "Valencia"]):
+                    return part.strip()
+        
+        return ""
+
+    def _extract_current_position(self, parent) -> str:
+        """Extrae posición/empresa actual del resultado."""
+        if not parent:
+            return ""
+        
+        # Buscar patrón de posición actual
+        text = parent.get_text()
+        
+        # LinkedIn suele mostrar: "Cargo en Empresa · X años"
+        match = re.search(r'([^\n·]+?)\s+en\s+([^\n·]+?)(?:\s+·|\s+\d+\s+a)', text)
+        if match:
+            return f"{match.group(1).strip()} en {match.group(2).strip()}"
+        
+        # Fallback: primera línea significativa
+        lines = [l.strip() for l in text.split('\n') if l.strip() and len(l.strip()) > 10]
+        if lines:
+            return lines[0][:150]
+        
+        return ""
+
+    def _name_similarity(self, name1: str, name2: str) -> float:
+        """Calcula similitud entre dos nombres (0-1)."""
+        n1 = set(name1.lower().split())
+        n2 = set(name2.lower().split())
+        
+        if not n1 or not n2:
+            return 0.0
+        
+        intersection = len(n1 & n2)
+        union = len(n1 | n2)
+        
+        return intersection / union if union > 0 else 0.0
+
     def search_person(self, full_name: str, institution: str = "", orcid: str = "", debug_mode: bool = False) -> list:
-        """Busca persona y devuelve lista de resultados con info completa."""
+        """Busca persona y devuelve lista FILTRADA con info completa."""
         self.debug_info = {}
         
         query = full_name
@@ -251,8 +293,6 @@ class LinkedInScraper:
         
         if not response["ok"]:
             self.debug_info["error"] = response.get("error")
-            if debug_mode:
-                st.error(f"❌ Error en /content: {response.get('error')}")
             return []
 
         html = response["html"]
@@ -261,103 +301,101 @@ class LinkedInScraper:
 
         if not html:
             self.debug_info["error"] = "HTML vacío"
-            if debug_mode:
-                st.error("❌ HTML vacío devuelto")
             return []
 
-        # Detectar si nos redirigieron a login
         if "signin" in html.lower()[:1000] or "login" in html.lower()[:1000]:
             self.debug_info["error"] = "Redirigido a login"
-            if debug_mode:
-                st.error("❌ Sesión expirada durante la búsqueda")
             return []
 
         soup = BeautifulSoup(html, "html.parser")
         self.debug_info["page_title"] = soup.title.string if soup.title else ""
 
-        # Buscar TODOS los enlaces que contengan /in/
         all_links = soup.select("a[href*='/in/']")
         self.debug_info["total_links_in"] = len(all_links)
 
-        # Filtrar y extraer info
         profile_links = []
         seen_urls = set()
+        target_words = set(full_name.lower().split())
         
         for link in all_links:
             href = link.get("href", "")
             if "/in/" not in href or "login" in href or "challenge" in href:
                 continue
             
-            # Limpiar URL
             href = href.split("?")[0]
             
-            # Evitar duplicados
             if href in seen_urls:
                 continue
             seen_urls.add(href)
             
-            # Extraer nombre con múltiples métodos
+            # Extraer nombre
             name = self._extract_name_from_link(link)
             
-            # Extraer contexto (headline, institución)
-            parent = link.find_parent("li") or link.find_parent("div", class_=re.compile("entity-result|search-result"))
-            context = self._extract_headline_from_context(parent)
+            # FILTRADO: Solo incluir si al menos 1 palabra del nombre coincide
+            name_lower = name.lower()
+            name_words = set(name_lower.split())
+            common_words = target_words & name_words
             
-            # Extraer URL de imagen si existe (avatar)
-            img = link.select_one("img")
-            avatar_url = img.get("src", "") if img else ""
+            # Filtrar nombres muy cortos o sin coincidencia
+            if len(common_words) == 0:
+                continue
+            
+            # Extraer contexto
+            parent = link.find_parent("li") or link.find_parent("div", class_=re.compile("entity-result|search-result"))
+            context = self._extract_headline_from_parent(parent)
+            location = self._extract_location(parent)
+            current_position = self._extract_current_position(parent)
+            
+            # Calcular score
+            score = len(common_words) * 10
+
+            # Bonus por institución
+            if institution:
+                inst_lower = institution.lower()
+                inst_words = [w for w in inst_lower.split() if len(w) > 3]
+                for word in inst_words[:3]:
+                    if word in context.lower():
+                        score += 5
+
+            # Bonus por ORCID
+            if orcid and orcid in context:
+                score += 20
+
+            # Bonus por tener posición actual
+            if current_position:
+                score += 3
+
+            # Bonus por tener ubicación
+            if location:
+                score += 2
+
+            # FILTRADO: Solo incluir si score >= 10 (al menos nombre + algo más)
+            if score < 10:
+                continue
             
             profile_links.append({
                 "href": href,
                 "name": name,
                 "context": context,
-                "avatar_url": avatar_url,
+                "location": location,
+                "current_position": current_position,
+                "score": score,
             })
 
         self.debug_info["profile_links_found"] = len(profile_links)
 
-        if not profile_links:
-            self.debug_info["error"] = "No se encontraron enlaces a perfiles"
-            if debug_mode:
-                st.warning("⚠️ No se encontraron enlaces a perfiles en el HTML")
-            return []
-
-        # Calcular score para cada resultado
-        target_words = set(full_name.lower().split())
-        for pl in profile_links:
-            name = pl["name"].lower()
-            context = pl["context"].lower()
-            
-            name_words = set(name.split())
-            score = len(target_words & name_words) * 10
-
-            # Bonus por institución
-            if institution:
-                inst_lower = institution.lower()
-                if any(w in context for w in inst_lower.split() if len(w) > 3):
-                    score += 5
-
-            # Bonus por ORCID si aparece en el contexto
-            if orcid and orcid in context:
-                score += 20
-
-            pl["score"] = score
-
         # Ordenar por score
         profile_links.sort(key=lambda x: x["score"], reverse=True)
-
-        if debug_mode:
-            st.success(f"✅ {len(profile_links)} resultados encontrados")
 
         return profile_links
 
     def extract_full_cv(self, profile_url: str, debug_mode: bool = False) -> dict | None:
-        """Extrae CV completo usando /content."""
+        """Extrae CV completo usando múltiples estrategias."""
         response = self.api.get_content(profile_url, cookies=self.cookies)
 
         if not response["ok"] or not response["html"]:
             if debug_mode:
-                st.error(f"❌ Error extrayendo CV: {response.get('error')}")
+                st.error(f"❌ Error: {response.get('error')}")
             return None
 
         html = response["html"]
@@ -365,91 +403,191 @@ class LinkedInScraper:
         
         cv = {"url": profile_url, "sections": {}}
 
-        # Nombre - múltiples métodos
+        # Nombre
         h1 = soup.select_one("h1")
         if h1:
             cv["nombre"] = h1.get_text().strip()
         else:
-            # Fallback: buscar en title
             title = soup.title.string if soup.title else ""
             if "|" in title:
                 cv["nombre"] = title.split("|")[0].strip()
             elif "LinkedIn" in title:
                 cv["nombre"] = title.replace("LinkedIn", "").strip()
+            else:
+                cv["nombre"] = title.strip()
 
-        # Headline
-        headline = soup.select_one(".text-body-medium.break-words")
-        cv["headline"] = headline.get_text().strip() if headline else ""
+        # Headline - múltiples selectores
+        headline_selectors = [
+            ".text-body-medium.break-words",
+            ".text-body-medium",
+            "div[class*='text-body-medium']",
+            ".pv-top-card--list span:first-child",
+        ]
+        for selector in headline_selectors:
+            headline = soup.select_one(selector)
+            if headline:
+                cv["headline"] = headline.get_text().strip()
+                break
+        else:
+            cv["headline"] = ""
 
         # Ubicación
-        ubicacion = soup.select_one(".text-body-small.inline")
-        cv["ubicacion"] = ubicacion.get_text().strip() if ubicacion else ""
+        ubicacion_selectors = [
+            ".text-body-small.inline",
+            ".text-body-small",
+            "span[class*='text-body-small']",
+        ]
+        for selector in ubicacion_selectors:
+            ubicacion = soup.select_one(selector)
+            if ubicacion:
+                cv["ubicacion"] = ubicacion.get_text().strip()
+                break
+        else:
+            cv["ubicacion"] = ""
 
-        # Secciones
+        # Secciones - intentar múltiples selectores
         section_ids = {
-            "Acerca de": "about",
-            "Experiencia": "experience",
-            "Educación": "education",
-            "Publicaciones": "publications",
-            "Patentes": "patents",
-            "Proyectos": "projects",
-            "Idiomas": "languages",
-            "Premios": "honors",
+            "Acerca de": ["about", "about-section"],
+            "Experiencia": ["experience", "experience-section"],
+            "Educación": ["education", "education-section"],
+            "Publicaciones": ["publications", "publications-section"],
+            "Patentes": ["patents", "patents-section"],
+            "Proyectos": ["projects", "projects-section"],
+            "Idiomas": ["languages", "languages-section"],
+            "Premios": ["honors", "honors-section", "awards"],
         }
 
-        for nombre_seccion, section_id in section_ids.items():
-            section = soup.select_one(f"section#{section_id}")
-            if section:
-                cv["sections"][nombre_seccion] = section.get_text(separator="\n", strip=True)
+        for nombre_seccion, possible_ids in section_ids.items():
+            for section_id in possible_ids:
+                section = soup.select_one(f"section#{section_id}") or soup.select_one(f"section[id*='{section_id}']")
+                if section:
+                    cv["sections"][nombre_seccion] = section.get_text(separator="\n", strip=True)
+                    break
 
-        # Texto completo como fallback
+        # ESTRATEGIA CLAVE: Extraer TODO el texto del main como fallback
         main = soup.select_one("main")
         if main:
             cv["texto_completo"] = main.get_text(separator="\n", strip=True)
         else:
-            cv["texto_completo"] = soup.get_text(separator="\n", strip=True)
+            # Fallback: todo el body
+            body = soup.select_one("body")
+            if body:
+                cv["texto_completo"] = body.get_text(separator="\n", strip=True)
+            else:
+                cv["texto_completo"] = soup.get_text(separator="\n", strip=True)
+
+        # Si no se encontraron secciones, intentar extraer del texto completo
+        if not cv["sections"] and cv["texto_completo"]:
+            # Intentar identificar secciones por patrones de texto
+            text = cv["texto_completo"]
+            
+            # Buscar patrones de secciones comunes
+            section_patterns = {
+                "Acerca de": r"(?:Acerca de|About)\s*\n(.*?)(?=\n\s*(?:Experiencia|Experience|Educación|Education)|$)",
+                "Experiencia": r"(?:Experiencia|Experience)\s*\n(.*?)(?=\n\s*(?:Educación|Education|Publicaciones|Patentes)|$)",
+                "Educación": r"(?:Educación|Education|Formación)\s*\n(.*?)(?=\n\s*(?:Publicaciones|Patentes|Proyectos|Idiomas)|$)",
+                "Publicaciones": r"(?:Publicaciones|Publications)\s*\n(.*?)(?=\n\s*(?:Patentes|Proyectos|Idiomas|Premios)|$)",
+                "Patentes": r"(?:Patentes|Patents)\s*\n(.*?)(?=\n\s*(?:Proyectos|Idiomas|Premios)|$)",
+            }
+            
+            for section_name, pattern in section_patterns.items():
+                match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+                if match:
+                    section_text = match.group(1).strip()
+                    if len(section_text) > 50:  # Solo si hay contenido significativo
+                        cv["sections"][section_name] = section_text[:3000]
 
         if debug_mode:
             st.info(f"📄 CV extraído: {cv['nombre']}")
             st.write(f"**Headline:** {cv['headline']}")
-            st.write(f"**Secciones:** {', '.join(cv['sections'].keys())}")
+            st.write(f"**Secciones encontradas:** {', '.join(cv['sections'].keys())}")
+            st.write(f"**Longitud texto completo:** {len(cv.get('texto_completo', ''))} chars")
 
         return cv
 
 
 # ============================================================================
-# CLASE: CV ANALYZER (OpenAI)
+# CLASE: CV ANALYZER (OpenAI) - PROMPT MEJORADO
 # ============================================================================
 class CVAnalyzer:
-    SYSTEM_PROMPT = """Eres un analista experto en transferencia de tecnología y spin-offs académicas españolas.
-Analiza el CV de un investigador y extrae:
-1. Lista de EMPRESAS privadas en las que ha trabajado (excluyendo universidades y OPIs).
-2. SPIN-OFFs que haya fundado, cofundado o asesorado.
-3. Para cada empresa/spin-off, descripción breve de su actividad.
+    SYSTEM_PROMPT = """Eres un analista experto en transferencia de tecnología, spin-offs académicas y propiedad industrial en España.
+Tu especialidad es identificar investigadores con actividad en sectores de INDUSTRIA, BIOTECH, MEDTECH y DEEP TECH.
 
-Responde SOLO en JSON:
+Analiza el CV de un investigador y extrae:
+
+1. **PATENTES**: Lista de patentes mencionadas (título, número si disponible, año)
+2. **SPIN-OFFS**: Empresas nacidas de la universidad que haya fundado, cofundado o asesorado
+3. **EMPRESAS**: Otras empresas privadas donde haya trabajado (excluyendo universidades y OPIs como CSIC)
+4. **ROLES ACTUALES**: Si actualmente trabaja en 2 o más empresas, o es CEO/fundador de alguna
+5. **SECTOR**: Clasifica su actividad en: Industria, Biotech, Medtech, Deep Tech, TIC, Energía, Otro
+
+Para cada empresa/spin-off, indica:
+- Si es spin-off (nacida de universidad)
+- Su rol (fundador, CEO, consejero, empleado, etc.)
+- Descripción breve de actividad
+- Si es la posición actual
+
+Responde SOLO en JSON con este formato exacto:
 {
-  "empresas": [
-    {"nombre": "...", "rol": "...", "descripcion": "...", "es_spinoff": true/false}
+  "patentes": [
+    {"titulo": "...", "numero": "...", "anio": "..."}
   ],
-  "resumen_industrial": "Párrafo resumen"
+  "spin_offs": [
+    {"nombre": "...", "rol": "...", "descripcion": "...", "es_actual": true/false}
+  ],
+  "empresas": [
+    {"nombre": "...", "rol": "...", "descripcion": "...", "es_actual": true/false, "es_spinoff": false}
+  ],
+  "roles_actuales_multiples": true/false,
+  "sector_principal": "Industria|Biotech|Medtech|Deep Tech|TIC|Energía|Otro",
+  "resumen_ejecutivo": "Párrafo de 3-4 líneas resumiendo su actividad industrial, patentes y spin-offs"
 }
-Si no hay actividad industrial:
-{"empresas": [], "resumen_industrial": "Sin actividad industrial relevante."}
+
+Si no hay actividad industrial/patentes/spin-offs:
+{
+  "patentes": [],
+  "spin_offs": [],
+  "empresas": [],
+  "roles_actuales_multiples": false,
+  "sector_principal": "Académico",
+  "resumen_ejecutivo": "Investigador principalmente académico sin actividad industrial relevante detectada."
+}
 """
 
     def __init__(self, api_key: str):
         self.client = OpenAI(api_key=api_key)
 
-    def analizar_cv(self, nombre: str, cv_text: str) -> dict:
+    def analizar_cv(self, nombre: str, cv_text: str, datos_excel: dict = None) -> dict:
+        # Construir prompt con contexto adicional del Excel si está disponible
+        excel_context = ""
+        if datos_excel:
+            excel_context = "\n\nDATOS ADICIONALES DEL EXPEDIENTE DEL INVESTIGADOR:\n"
+            if datos_excel.get("patentes"):
+                excel_context += f"- Patentes conocidas: {datos_excel['patentes']}\n"
+            if datos_excel.get("publicaciones"):
+                excel_context += f"- Publicaciones: {datos_excel['publicaciones']}\n"
+            if datos_excel.get("institucion"):
+                excel_context += f"- Institución: {datos_excel['institucion']}\n"
+            if datos_excel.get("score"):
+                excel_context += f"- Score de patentes+publicaciones: {datos_excel['score']}\n"
+
         prompt = f"""Investigador: {nombre}
+{excel_context}
 
-CV:
+CV EXTRAÍDO DE LINKEDIN:
 ---
-{cv_text[:12000]}
+{cv_text[:15000]}
 ---
 
-Extrae empresas y spin-offs."""
+Analiza el CV y extrae:
+1. PATENTES mencionadas
+2. SPIN-OFFS fundadas o cofundadas
+3. EMPRESAS donde ha trabajado
+4. Si tiene múltiples roles actuales o es CEO/fundador
+5. Sector principal (Industria, Biotech, Medtech, Deep Tech, etc.)
+
+Cruza la información del CV con los datos del expediente si están disponibles."""
+
         try:
             resp = self.client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -462,38 +600,100 @@ Extrae empresas y spin-offs."""
             )
             return json.loads(resp.choices[0].message.content)
         except Exception as e:
-            return {"empresas": [], "resumen_industrial": f"Error: {e}"}
+            return {
+                "patentes": [],
+                "spin_offs": [],
+                "empresas": [],
+                "roles_actuales_multiples": False,
+                "sector_principal": "Error",
+                "resumen_ejecutivo": f"Error en análisis: {e}"
+            }
 
 
 def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
+    """Formatea el resultado completo para la celda INDUSTRIAL info."""
     lineas = [f"=== {nombre_original} ===", ""]
+    
+    # Perfil LinkedIn
     if cv:
         lineas.append("📄 PERFIL LINKEDIN:")
         if cv.get("headline"):
             lineas.append(f"🎯 {cv['headline']}")
+        if cv.get("ubicacion"):
+            lineas.append(f"📍 {cv['ubicacion']}")
         if cv.get("url"):
             lineas.append(f"🔗 {cv['url']}")
+        
+        # Solo mostrar secciones con contenido real
         for seccion, texto in cv.get("sections", {}).items():
-            lineas.append(f"\n— {seccion.upper()} —")
-            lineas.append(texto)
-        if cv.get("texto_completo"):
-            lineas.append("\n— TEXTO COMPLETO —")
-            lineas.append(cv["texto_completo"])
-    lineas.append("\n" + "=" * 60)
-    lineas.append("🏭 ANÁLISIS INDUSTRIAL / SPIN-OFFS:")
-    lineas.append("=" * 60)
-    if analisis.get("empresas"):
-        for emp in analisis["empresas"]:
-            tipo = "🚀 SPIN-OFF" if emp.get("es_spinoff") else "🏢 EMPRESA"
-            lineas.append(f"\n{tipo}: {emp.get('nombre', '?')}")
-            if emp.get("rol"):
-                lineas.append(f"   Rol: {emp['rol']}")
-            if emp.get("descripcion"):
-                lineas.append(f"   Actividad: {emp['descripcion']}")
+            if texto and len(texto) > 50:
+                lineas.append(f"\n— {seccion.upper()} —")
+                lineas.append(texto[:2000])
+    
+    # Análisis IA
+    lineas.append("\n" + "=" * 70)
+    lineas.append("🔬 ANÁLISIS SPIN-OFFS / PATENTES / ACTIVIDAD INDUSTRIAL:")
+    lineas.append("=" * 70)
+    
+    # Patentes
+    if analisis.get("patentes"):
+        lineas.append("\n📜 PATENTES:")
+        for pat in analisis["patentes"]:
+            titulo = pat.get("titulo", "?")
+            numero = pat.get("numero", "")
+            anio = pat.get("anio", "")
+            linea = f"  • {titulo}"
+            if numero:
+                linea += f" ({numero})"
+            if anio:
+                linea += f" [{anio}]"
+            lineas.append(linea)
     else:
-        lineas.append("\nNo se detectaron empresas ni spin-offs.")
-    if analisis.get("resumen_industrial"):
-        lineas.append(f"\n📋 RESUMEN: {analisis['resumen_industrial']}")
+        lineas.append("\n📜 PATENTES: No detectadas")
+    
+    # Spin-offs
+    if analisis.get("spin_offs"):
+        lineas.append("\n🚀 SPIN-OFFS:")
+        for spin in analisis["spin_offs"]:
+            nombre = spin.get("nombre", "?")
+            rol = spin.get("rol", "")
+            desc = spin.get("descripcion", "")
+            actual = " [ACTUAL]" if spin.get("es_actual") else ""
+            lineas.append(f"\n  🚀 {nombre}{actual}")
+            if rol:
+                lineas.append(f"     Rol: {rol}")
+            if desc:
+                lineas.append(f"     Actividad: {desc}")
+    else:
+        lineas.append("\n🚀 SPIN-OFFS: No detectadas")
+    
+    # Empresas
+    if analisis.get("empresas"):
+        lineas.append("\n🏢 OTRAS EMPRESAS:")
+        for emp in analisis["empresas"]:
+            nombre = emp.get("nombre", "?")
+            rol = emp.get("rol", "")
+            desc = emp.get("descripcion", "")
+            actual = " [ACTUAL]" if emp.get("es_actual") else ""
+            lineas.append(f"\n  🏢 {nombre}{actual}")
+            if rol:
+                lineas.append(f"     Rol: {rol}")
+            if desc:
+                lineas.append(f"     Actividad: {desc}")
+    
+    # Roles múltiples
+    if analisis.get("roles_actuales_multiples"):
+        lineas.append("\n⚡ MÚLTIPLES ROLES ACTUALES: Sí")
+    
+    # Sector
+    sector = analisis.get("sector_principal", "")
+    if sector:
+        lineas.append(f"\n🏭 SECTOR PRINCIPAL: {sector}")
+    
+    # Resumen ejecutivo
+    if analisis.get("resumen_ejecutivo"):
+        lineas.append(f"\n📋 RESUMEN EJECUTIVO:\n{analisis['resumen_ejecutivo']}")
+    
     return "\n".join(lineas)
 
 
@@ -541,6 +741,35 @@ def save_cv_cache(nombre: str, cv: dict):
         json.dump(cv, f, ensure_ascii=False, indent=2)
 
 
+def extraer_datos_excel_para_ia(row, col_map: dict) -> dict:
+    """Extrae datos relevantes del Excel para pasar al LLM como contexto."""
+    datos = {}
+    
+    # Patentes
+    if "patentes" in col_map:
+        datos["patentes"] = str(row.get(col_map["patentes"], ""))
+    elif "Representative_Patent_Titles" in row.index:
+        datos["patentes"] = str(row.get("Representative_Patent_Titles", ""))
+    
+    # Publicaciones
+    if "publicaciones" in col_map:
+        datos["publicaciones"] = str(row.get(col_map["publicaciones"], ""))
+    elif "Publication_Articles_Total_Area" in row.index:
+        datos["publicaciones"] = str(row.get("Publication_Articles_Total_Area", ""))
+    
+    # Institución
+    if "institucion" in col_map:
+        datos["institucion"] = str(row.get(col_map["institucion"], ""))
+    
+    # Score
+    if "score" in col_map:
+        datos["score"] = str(row.get(col_map["score"], ""))
+    elif "Score_10xPatents_plus_Articles" in row.index:
+        datos["score"] = str(row.get("Score_10xPatents_plus_Articles", ""))
+    
+    return datos
+
+
 # ============================================================================
 # STREAMLIT APP
 # ============================================================================
@@ -575,18 +804,12 @@ def main():
     with st.sidebar:
         st.markdown("## ⚙️ Configuración")
 
-        # --- MODO DEBUG ---
         st.markdown("### 🐛 Modo Debug")
-        debug_mode = st.checkbox(
-            "🔍 Activar modo debug",
-            value=False,
-            help="Muestra información detallada en cada búsqueda"
-        )
+        debug_mode = st.checkbox("🔍 Activar modo debug", value=False)
         st.session_state.debug_mode = debug_mode
 
         st.divider()
 
-        # --- Browserless ---
         st.markdown("### 🌐 Browserless API")
 
         token_from_secrets = ""
@@ -597,12 +820,12 @@ def main():
 
         if token_from_secrets:
             token = token_from_secrets
-            st.success("✅ Token cargado desde secrets")
+            st.success("✅ Token cargado")
         else:
-            token = st.text_input("Token Browserless (manual)", type="password")
+            token = st.text_input("Token Browserless", type="password")
 
         if token:
-            if st.button("🔌 Verificar conexión Browserless"):
+            if st.button("🔌 Verificar conexión"):
                 with st.spinner("Verificando..."):
                     api = BrowserlessAPI(token)
                     ok, msg = api.test_connection()
@@ -619,30 +842,19 @@ def main():
 
         st.divider()
 
-        # --- LinkedIn Cookies ---
         st.markdown("### 🔐 LinkedIn Cookies")
-        st.caption("Exporta cookies desde tu Chrome local con 'Cookie-Editor'.")
-
-        cookies_text = st.text_area(
-            "Pega las cookies (JSON)",
-            height=150,
-            label_visibility="collapsed",
-        )
+        cookies_text = st.text_area("Pega cookies (JSON)", height=150, label_visibility="collapsed")
 
         if cookies_text and st.button("🔑 Cargar cookies"):
-            with st.spinner("Parseando cookies..."):
+            with st.spinner("Parseando..."):
                 cookies = parse_cookies_text(cookies_text)
                 if cookies:
                     st.session_state.cookies = cookies
                     st.success(f"✅ {len(cookies)} cookies cargadas")
 
                     if st.session_state.api:
-                        st.session_state.scraper = LinkedInScraper(
-                            st.session_state.api,
-                            cookies
-                        )
+                        st.session_state.scraper = LinkedInScraper(st.session_state.api, cookies)
                         
-                        # Verificar cookies críticas
                         critical = st.session_state.scraper.check_critical_cookies()
                         st.write("**Cookies críticas:**")
                         for name, length in critical.items():
@@ -651,34 +863,21 @@ def main():
                             else:
                                 st.error(f"❌ {name}: FALTA")
                 else:
-                    st.error("❌ No se pudo parsear. Usa formato JSON.")
+                    st.error("❌ Formato inválido")
 
-        # --- DIAGNÓSTICO ---
         if st.session_state.scraper:
             st.divider()
-            st.markdown("### 🔍 Diagnóstico de sesión LinkedIn")
+            st.markdown("### 🔍 Diagnóstico")
             
-            if st.button("🧪 Testear sesión LinkedIn"):
-                with st.spinner("Probando cookies..."):
+            if st.button("🧪 Testear sesión"):
+                with st.spinner("Probando..."):
                     test_result = st.session_state.scraper.test_linkedin_session()
-                    
                     if test_result["ok"]:
                         st.session_state.linkedin_ok = True
                         st.success(test_result["debug_info"])
                     else:
                         st.session_state.linkedin_ok = False
-                        if test_result["is_login_page"]:
-                            st.error("❌ Cookies inválidas o expiradas.")
-                        elif test_result["is_challenge"]:
-                            st.error("❌ LinkedIn muestra captcha.")
-                        else:
-                            st.warning(test_result["debug_info"])
-                    
-                    with st.expander("🔧 Info de debug"):
-                        st.write(f"**URL final:** {test_result['final_url']}")
-                        st.write(f"**Título:** {test_result['title']}")
-                        st.write(f"**Longitud HTML:** {test_result['html_length']} chars")
-                        st.markdown(f"**Debug:**\n```\n{test_result['debug_info']}\n```")
+                        st.warning(test_result["debug_info"])
 
         if st.session_state.linkedin_ok:
             st.success("🟢 LinkedIn listo")
@@ -687,7 +886,6 @@ def main():
 
         st.divider()
 
-        # --- OpenAI ---
         st.markdown("### 🤖 OpenAI API")
         
         openai_from_secrets = ""
@@ -698,9 +896,9 @@ def main():
 
         if openai_from_secrets:
             api_key = openai_from_secrets
-            st.success("✅ OpenAI key cargada desde secrets")
+            st.success("✅ OpenAI key cargada")
         else:
-            api_key = st.text_input("API Key OpenAI (manual)", type="password")
+            api_key = st.text_input("API Key OpenAI", type="password")
 
         if api_key:
             if st.button("🔍 Verificar OpenAI"):
@@ -722,17 +920,14 @@ def main():
 
         st.divider()
 
-        # --- Estado ---
         st.markdown("### 📊 Estado")
-        st.write(f"🌐 Browserless: {'🟢 OK' if st.session_state.api else '🟡 No conectado'}")
-        st.write(f"🔗 LinkedIn: {'🟢 OK' if st.session_state.linkedin_ok else '🟡 No verificado'}")
-        st.write(f"🤖 OpenAI: {'🟢 OK' if st.session_state.openai_ok else '🟡 Pendiente'}")
-        st.write(f"👥 CVs extraídos: {len(st.session_state.cvs)}")
-        st.write(f"🏭 Análisis hechos: {len(st.session_state.analisis)}")
-        if st.session_state.api:
-            st.write(f"💳 Créditos usados: {st.session_state.api.credits_used}")
+        st.write(f"🌐 Browserless: {'🟢 OK' if st.session_state.api else '🟡'}")
+        st.write(f"🔗 LinkedIn: {'🟢 OK' if st.session_state.linkedin_ok else '🟡'}")
+        st.write(f"🤖 OpenAI: {'🟢 OK' if st.session_state.openai_ok else '🟡'}")
+        st.write(f"👥 CVs: {len(st.session_state.cvs)}")
+        st.write(f"🏭 Análisis: {len(st.session_state.analisis)}")
 
-        if st.button("🔄 Reiniciar sesión"):
+        if st.button("🔄 Reiniciar"):
             for k in list(st.session_state.keys()):
                 del st.session_state[k]
             st.rerun()
@@ -741,13 +936,10 @@ def main():
     # MAIN
     # ========================================================================
     st.markdown('<p class="big-header">🚀 Spin-off Detector</p>', unsafe_allow_html=True)
-    st.markdown(
-        "Analiza investigadores a partir de su CV de LinkedIn y detecta "
-        "**empresas** y **spin-offs** en las que han participado."
-    )
+    st.markdown("Analiza investigadores y detecta **patentes**, **spin-offs** y **actividad industrial**.")
 
     # STEP 1: Excel
-    st.markdown("### 1️⃣ Cargar Excel de investigadores")
+    st.markdown("### 1️⃣ Cargar Excel")
     uploaded = st.file_uploader("Sube el Excel", type=["xlsx", "xls"])
 
     if uploaded is not None:
@@ -769,145 +961,123 @@ def main():
                 col_map["orcid"] = col
             elif "industrial" in cl:
                 col_map["industrial"] = col
+            elif "patent" in cl and "title" in cl:
+                col_map["patentes"] = col
+            elif "score" in cl and "10x" in cl:
+                col_map["score"] = col
+            elif "publication" in cl and "total" in cl:
+                col_map["publicaciones"] = col
 
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns(3)
         c1.metric("👤 Nombre", col_map.get("nombre", "❌"))
         c2.metric("🏛️ Institución", col_map.get("institucion", "❌"))
         c3.metric("🆔 ORCID", col_map.get("orcid", "❌"))
-        c4.metric("🏭 Industrial", col_map.get("industrial", "⚠️ nueva"))
-
-        with st.expander("👀 Vista previa"):
-            st.dataframe(df, use_container_width=True)
 
         if "nombre" not in col_map:
-            st.error("❌ No se detectó la columna de nombres.")
+            st.error("❌ No se detectó columna de nombres.")
             st.stop()
 
         col_nombre = col_map["nombre"]
         col_inst = col_map.get("institucion")
         col_orcid = col_map.get("orcid")
 
-        # STEP 2: Buscar CVs - CON 2 MÉTODOS MEJORADOS
+        # STEP 2: Buscar CVs
         st.markdown("### 2️⃣ Buscar CVs en LinkedIn")
 
         if not st.session_state.linkedin_ok:
-            st.warning("⚠️ Primero carga las cookies y pulsa '🧪 Testear sesión LinkedIn'")
+            st.warning("⚠️ Primero verifica sesión LinkedIn")
         else:
-            # Tabs para los 2 métodos
-            tab1, tab2 = st.tabs(["🔍 Búsqueda automática", "🔗 URL manual con búsqueda"])
+            tab1, tab2 = st.tabs(["🔍 Búsqueda automática", "🔗 URL manual"])
             
             with tab1:
-                st.info("💡 Busca automáticamente y permite seleccionar entre resultados")
                 seleccion = st.multiselect(
                     "Selecciona investigadores",
                     df[col_nombre].tolist(),
                     default=df[col_nombre].tolist()[:1]
                 )
 
-                if st.button(
-                    "🔍 Buscar candidatos",
-                    type="primary",
-                    use_container_width=True,
-                    disabled=len(seleccion) == 0
-                ):
+                if st.button("🔍 Buscar candidatos", type="primary", use_container_width=True):
                     progress = st.progress(0)
-                    status_container = st.container()
-
+                    
                     for i, nombre in enumerate(seleccion):
-                        inst = ""
-                        if col_inst:
-                            inst = str(df[df[col_nombre] == nombre][col_inst].iloc[0])
-                        orcid = ""
-                        if col_orcid:
-                            orcid = str(df[df[col_nombre] == nombre][col_orcid].iloc[0])
+                        inst = str(df[df[col_nombre] == nombre][col_inst].iloc[0]) if col_inst else ""
+                        orcid = str(df[df[col_nombre] == nombre][col_orcid].iloc[0]) if col_orcid else ""
 
-                        with status_container:
-                            with st.spinner(f"🔍 {nombre}..."):
-                                results = st.session_state.scraper.search_person(
-                                    nombre, inst, orcid, debug_mode=st.session_state.debug_mode
-                                )
-                                
-                                if results:
-                                    st.session_state.search_results[nombre] = results
-                                    st.success(f"✅ {nombre}: {len(results)} candidatos encontrados")
-                                else:
-                                    st.warning(f"❌ {nombre}: no encontrado")
+                        with st.spinner(f"🔍 {nombre}..."):
+                            results = st.session_state.scraper.search_person(
+                                nombre, inst, orcid, debug_mode=st.session_state.debug_mode
+                            )
+                            
+                            if results:
+                                st.session_state.search_results[nombre] = results
+                                st.success(f"✅ {nombre}: {len(results)} candidatos (filtrados)")
+                            else:
+                                st.warning(f"❌ {nombre}: sin resultados relevantes")
                         
                         progress.progress((i + 1) / len(seleccion))
                         time.sleep(2)
 
             with tab2:
-                st.info("💡 Busca en Google y pega la URL manualmente")
+                selected_name = st.selectbox("Selecciona investigador", df[col_nombre].tolist())
                 
-                selected_name = st.selectbox(
-                    "Selecciona investigador",
-                    df[col_nombre].tolist(),
-                    key="manual_select"
+                search_query = st.text_input(
+                    "Query Google",
+                    value=f'site:linkedin.com/in "{selected_name}"'
                 )
                 
-                # Botón de búsqueda en Google
-                col_search1, col_search2 = st.columns([3, 1])
-                with col_search1:
-                    search_query = st.text_input(
-                        "Query de búsqueda (pre-rellenado)",
-                        value=f'site:linkedin.com/in "{selected_name}"',
-                        key="search_query"
-                    )
-                with col_search2:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    if st.button("🔍 Buscar en Google", key="google_search"):
-                        google_url = f"https://www.google.com/search?q={requests.utils.quote(search_query)}"
-                        st.markdown(f'<a href="{google_url}" target="_blank"><button style="width:100%">Abrir Google ↗</button></a>', unsafe_allow_html=True)
+                if st.button("🔍 Buscar en Google"):
+                    google_url = f"https://www.google.com/search?q={requests.utils.quote(search_query)}"
+                    st.markdown(f'[🌐 Abrir Google]({google_url})')
                 
-                manual_url = st.text_input(
-                    "URL de LinkedIn",
-                    placeholder="https://www.linkedin.com/in/valerio-pruneri-123456/"
-                )
+                manual_url = st.text_input("URL LinkedIn", placeholder="https://www.linkedin.com/in/...")
                 
-                if manual_url and st.button("💾 Guardar URL", use_container_width=True):
+                if manual_url and st.button("💾 Guardar URL"):
                     st.session_state.selected_profiles[selected_name] = manual_url
-                    st.success(f"✅ URL guardada para {selected_name}")
+                    st.success(f"✅ URL guardada")
 
-            # Mostrar resultados de búsqueda para seleccionar (MEJORADO)
+            # Mostrar resultados FILTRADOS con info mejorada
             if st.session_state.search_results:
                 st.markdown("### 📋 Selecciona el perfil correcto")
+                st.info("💡 Solo se muestran candidatos con coincidencia real de nombre. Ordenados por relevancia.")
                 
                 for nombre, results in st.session_state.search_results.items():
-                    with st.expander(f"👤 {nombre} ({len(results)} candidatos)", expanded=True):
-                        # Obtener info del Excel
-                        inst = ""
-                        if col_inst:
-                            inst = str(df[df[col_nombre] == nombre][col_inst].iloc[0])
-                        orcid = ""
-                        if col_orcid:
-                            orcid = str(df[df[col_nombre] == nombre][col_orcid].iloc[0])
+                    with st.expander(f"👤 {nombre} ({len(results)} candidatos válidos)", expanded=True):
+                        inst_excel = str(df[df[col_nombre] == nombre][col_inst].iloc[0]) if col_inst else ""
+                        orcid_excel = str(df[df[col_nombre] == nombre][col_orcid].iloc[0]) if col_orcid else ""
                         
-                        st.info(f"**Institución:** {inst}")
-                        if orcid:
-                            st.info(f"**ORCID:** {orcid}")
+                        st.markdown(f"**🏛️ Institución:** {inst_excel[:100]}")
+                        if orcid_excel:
+                            st.markdown(f"**🔗 ORCID:** [{orcid_excel}]({orcid_excel})")
                         
-                        # Crear opciones para radio con info completa
+                        st.divider()
+                        
                         options = []
-                        for i, r in enumerate(results[:15]):
+                        for i, r in enumerate(results[:10]):
                             name = r.get('name', 'Sin nombre')
-                            context = r.get('context', '')[:150]
+                            context = r.get('context', '')[:200]
+                            location = r.get('location', '')
+                            current_position = r.get('current_position', '')
                             score = r.get('score', 0)
                             
-                            # Label con info
-                            label = f"{i+1}. {name} (score: {score})"
-                            if context:
-                                label += f"\n   {context}"
+                            # Label enriquecido
+                            label_parts = [f"{i+1}. {name} (score: {score})"]
+                            if current_position:
+                                label_parts.append(f"   💼 {current_position[:100]}")
+                            if location:
+                                label_parts.append(f"   📍 {location}")
+                            if context and context != current_position:
+                                label_parts.append(f"   {context[:150]}")
+                            
+                            label = "\n".join(label_parts)
                             
                             options.append({
                                 "label": label,
                                 "href": r['href'],
                                 "name": name,
-                                "context": context,
                                 "score": score
                             })
                         
                         if options:
-                            # Mostrar cada candidato como card
                             selected_idx = st.radio(
                                 f"Selecciona el perfil de {nombre}:",
                                 options=list(range(len(options))),
@@ -915,14 +1085,10 @@ def main():
                                 key=f"select_{nombre}"
                             )
                             
-                            # Guardar selección
                             selected = options[selected_idx]
                             st.session_state.selected_profiles[nombre] = selected["href"]
                             
-                            # Mostrar URL seleccionada
-                            st.caption(f"**URL seleccionada:** {selected['href']}")
-                            
-                            # Botón para abrir en nueva pestaña
+                            st.caption(f"**URL:** {selected['href']}")
                             st.markdown(
                                 f'<a href="{selected["href"]}" target="_blank">'
                                 f'<button style="background-color:#0073b1;color:white;padding:5px 15px;'
@@ -931,36 +1097,33 @@ def main():
                                 unsafe_allow_html=True
                             )
 
-        # Extraer CVs de los perfiles seleccionados
+        # Extraer CVs
         if st.session_state.selected_profiles:
             st.markdown("### 📄 Extraer CVs")
-            st.write(f"**Perfiles seleccionados:** {len(st.session_state.selected_profiles)}")
+            st.write(f"**Perfiles:** {len(st.session_state.selected_profiles)}")
             
             for nombre, url in st.session_state.selected_profiles.items():
-                st.caption(f"• {nombre}: {url}")
+                st.caption(f"• **{nombre}**: {url}")
             
-            if st.button("📥 Extraer CVs seleccionados", type="primary", use_container_width=True):
+            if st.button("📥 Extraer CVs", type="primary", use_container_width=True):
                 progress = st.progress(0)
-                status_container = st.container()
                 
                 for i, (nombre, url) in enumerate(st.session_state.selected_profiles.items()):
                     cached = get_cached_cv(nombre)
                     if cached:
                         st.session_state.cvs[nombre] = cached
-                        with status_container:
-                            st.info(f"⚡ {nombre}: de caché")
+                        st.info(f"⚡ {nombre}: de caché")
                     else:
-                        with status_container:
-                            with st.spinner(f"📄 {nombre}..."):
-                                cv = st.session_state.scraper.extract_full_cv(
-                                    url, debug_mode=st.session_state.debug_mode
-                                )
-                                if cv:
-                                    st.session_state.cvs[nombre] = cv
-                                    save_cv_cache(nombre, cv)
-                                    st.success(f"✅ {nombre}: {cv.get('headline', 'OK')[:80]}")
-                                else:
-                                    st.warning(f"⚠️ {nombre}: no se pudo extraer CV")
+                        with st.spinner(f"📄 {nombre}..."):
+                            cv = st.session_state.scraper.extract_full_cv(url)
+                            if cv:
+                                st.session_state.cvs[nombre] = cv
+                                save_cv_cache(nombre, cv)
+                                secciones = len(cv.get("sections", {}))
+                                texto_len = len(cv.get("texto_completo", ""))
+                                st.success(f"✅ {nombre}: {secciones} secciones, {texto_len} chars texto completo")
+                            else:
+                                st.warning(f"⚠️ {nombre}: no se pudo extraer CV")
                     
                     progress.progress((i + 1) / len(st.session_state.selected_profiles))
                     time.sleep(2)
@@ -973,60 +1136,112 @@ def main():
                 for nombre, cv in st.session_state.cvs.items():
                     st.markdown(f"**👤 {nombre}**")
                     st.caption(f"🎯 {cv.get('headline', 'N/A')}")
+                    st.caption(f"📍 {cv.get('ubicacion', 'N/A')}")
                     st.caption(f"🔗 {cv.get('url', 'N/A')}")
-                    for sec, txt in cv.get("sections", {}).items():
-                        with st.expander(f"  • {sec}", expanded=False):
-                            st.text(txt[:1500])
+                    
+                    if cv.get("sections"):
+                        for sec, txt in cv.get("sections", {}).items():
+                            with st.expander(f"  • {sec} ({len(txt)} chars)", expanded=False):
+                                st.text(txt[:2000])
+                    
+                    if cv.get("texto_completo"):
+                        with st.expander(f"  • Texto completo ({len(cv['texto_completo'])} chars)", expanded=False):
+                            st.text(cv["texto_completo"][:3000])
+                    
                     st.divider()
 
-        # STEP 3: Analizar
-        st.markdown("### 3️⃣ Analizar con IA")
+        # STEP 3: Analizar con IA MEJORADO
+        st.markdown("### 3️⃣ Analizar con IA (Patentes + Spin-offs + Actividad Industrial)")
 
         if not st.session_state.openai_ok:
-            st.warning("⚠️ Configura OpenAI en la sidebar")
+            st.warning("⚠️ Configura OpenAI")
         elif not st.session_state.cvs:
             st.info("👉 Busca CVs primero")
         else:
             if st.button("🤖 Analizar con IA", type="primary", use_container_width=True):
                 analyzer = CVAnalyzer(api_key=st.session_state.openai_key)
                 progress = st.progress(0)
-                status_container = st.container()
 
                 for i, (nombre, cv) in enumerate(st.session_state.cvs.items()):
-                    with status_container:
-                        with st.spinner(f"🧠 {nombre}..."):
-                            cv_text = "\n\n".join(cv.get("sections", {}).values()) or cv.get("texto_completo", "")
-                            analisis = analyzer.analizar_cv(nombre, cv_text)
-                            st.session_state.analisis[nombre] = analisis
-                            n_emp = len(analisis.get("empresas", []))
-                            n_spin = sum(1 for e in analisis.get("empresas", []) if e.get("es_spinoff"))
-                            st.success(f"✅ **{nombre}**: {n_emp} empresas, {n_spin} spin-offs")
+                    with st.spinner(f"🧠 {nombre}..."):
+                        # Preparar texto del CV
+                        cv_text_parts = []
+                        if cv.get("headline"):
+                            cv_text_parts.append(f"HEADLINE: {cv['headline']}")
+                        if cv.get("ubicacion"):
+                            cv_text_parts.append(f"UBICACIÓN: {cv['ubicacion']}")
+                        
+                        for sec, txt in cv.get("sections", {}).items():
+                            cv_text_parts.append(f"\n=== {sec.upper()} ===\n{txt}")
+                        
+                        if cv.get("texto_completo"):
+                            cv_text_parts.append(f"\n=== TEXTO COMPLETO ===\n{cv['texto_completo']}")
+                        
+                        cv_text = "\n".join(cv_text_parts)
+                        
+                        # Extraer datos del Excel para contexto
+                        row = df[df[col_nombre] == nombre].iloc[0] if nombre in df[col_nombre].values else None
+                        datos_excel = extraer_datos_excel_para_ia(row, col_map) if row is not None else None
+                        
+                        analisis = analyzer.analizar_cv(nombre, cv_text, datos_excel)
+                        st.session_state.analisis[nombre] = analisis
+                        
+                        n_pat = len(analisis.get("patentes", []))
+                        n_spin = len(analisis.get("spin_offs", []))
+                        n_emp = len(analisis.get("empresas", []))
+                        sector = analisis.get("sector_principal", "?")
+                        
+                        st.success(f"✅ **{nombre}**: {n_pat} patentes, {n_spin} spin-offs, {n_emp} empresas | Sector: {sector}")
                     progress.progress((i + 1) / len(st.session_state.cvs))
 
                 st.balloons()
 
         # Mostrar análisis
         if st.session_state.analisis:
-            with st.expander(f"🏭 Análisis ({len(st.session_state.analisis)})", expanded=False):
+            with st.expander(f"🔬 Análisis completo ({len(st.session_state.analisis)})", expanded=False):
                 for nombre, analisis in st.session_state.analisis.items():
                     st.markdown(f"**👤 {nombre}**")
+                    
+                    # Patentes
+                    if analisis.get("patentes"):
+                        st.markdown(f"**📜 Patentes ({len(analisis['patentes'])}):**")
+                        for pat in analisis["patletes"] if False else analisis["patentes"]:
+                            st.caption(f"• {pat.get('titulo', '?')} {pat.get('numero', '')} [{pat.get('anio', '')}]")
+                    
+                    # Spin-offs
+                    if analisis.get("spin_offs"):
+                        st.markdown(f"**🚀 Spin-offs ({len(analisis['spin_offs'])}):**")
+                        for spin in analisis["spin_offs"]:
+                            actual = " [ACTUAL]" if spin.get("es_actual") else ""
+                            st.markdown(f"- **{spin.get('nombre', '?')}**{actual} - {spin.get('rol', '')}")
+                            if spin.get("descripcion"):
+                                st.caption(f"  _{spin['descripcion']}_")
+                    
+                    # Empresas
                     if analisis.get("empresas"):
+                        st.markdown(f"**🏢 Empresas ({len(analisis['empresas'])}):**")
                         for emp in analisis["empresas"]:
-                            tipo = "🚀 **SPIN-OFF**" if emp.get("es_spinoff") else "🏢 Empresa"
-                            st.markdown(f"- {tipo}: **{emp.get('nombre', '?')}** ({emp.get('rol', 'N/A')})")
-                            if emp.get("descripcion"):
-                                st.caption(f"   _{emp['descripcion']}_")
-                    else:
-                        st.caption("Sin actividad industrial.")
-                    if analisis.get("resumen_industrial"):
-                        st.info(analisis["resumen_industrial"])
+                            actual = " [ACTUAL]" if emp.get("es_actual") else ""
+                            st.markdown(f"- {emp.get('nombre', '?')}{actual} - {emp.get('rol', '')}")
+                    
+                    # Roles múltiples
+                    if analisis.get("roles_actuales_multiples"):
+                        st.warning("⚡ Múltiples roles actuales detectados")
+                    
+                    # Sector
+                    st.info(f"**Sector:** {analisis.get('sector_principal', '?')}")
+                    
+                    # Resumen
+                    if analisis.get("resumen_ejecutivo"):
+                        st.markdown(f"**📋 Resumen:** {analisis['resumen_ejecutivo']}")
+                    
                     st.divider()
 
-        # STEP 4: Excel final
+        # STEP 4: Excel
         st.markdown("### 4️⃣ Generar Excel")
 
         if st.session_state.analisis:
-            if st.button("📊 Generar Excel final", type="primary", use_container_width=True):
+            if st.button("📊 Generar Excel", type="primary", use_container_width=True):
                 df_out = df.copy()
                 col_industrial = col_map.get("industrial", "INDUSTRIAL info")
                 if col_industrial not in df_out.columns:
@@ -1068,15 +1283,15 @@ def main():
                 st.success("✅ Excel generado")
 
                 st.markdown("### 📈 Resumen")
+                total_pat = sum(len(a.get("patentes", [])) for a in st.session_state.analisis.values())
+                total_spin = sum(len(a.get("spin_offs", [])) for a in st.session_state.analisis.values())
                 total_emp = sum(len(a.get("empresas", [])) for a in st.session_state.analisis.values())
-                total_spin = sum(
-                    sum(1 for e in a.get("empresas", []) if e.get("es_spinoff"))
-                    for a in st.session_state.analisis.values()
-                )
-                c1, c2, c3 = st.columns(3)
+                
+                c1, c2, c3, c4 = st.columns(4)
                 c1.metric("👥 Investigadores", len(st.session_state.analisis))
-                c2.metric("🏢 Empresas", total_emp)
+                c2.metric("📜 Patentes", total_pat)
                 c3.metric("🚀 Spin-offs", total_spin)
+                c4.metric("🏢 Empresas", total_emp)
 
         elif st.session_state.cvs:
             st.info("👉 Pulsa 'Analizar con IA'")
