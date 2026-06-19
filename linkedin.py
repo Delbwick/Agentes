@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión con DEBUG completo de Puppeteer
+Versión Streamlit Cloud + Browserless /content (sin /function)
 """
 
 import os
@@ -48,25 +48,12 @@ st.markdown("""
         border-radius: 5px;
         margin: 1rem 0;
     }
-    .debug-box {
-        background-color: #f8f9fa;
-        border: 1px solid #dee2e6;
-        padding: 1rem;
-        border-radius: 5px;
-        margin: 1rem 0;
-        font-family: monospace;
-        font-size: 0.85rem;
-        max-height: 600px;
-        overflow-y: auto;
-        white-space: pre-wrap;
-        word-wrap: break-word;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ============================================================================
-# CLASE: BROWSERLESS API REST
+# CLASE: BROWSERLESS API REST (solo /content)
 # ============================================================================
 class BrowserlessAPI:
     def __init__(self, token: str):
@@ -93,6 +80,7 @@ class BrowserlessAPI:
             return False, f"❌ Error: {str(e)[:100]}"
 
     def get_content(self, url: str, cookies: list = None) -> dict:
+        """Endpoint /content: devuelve HTML completo."""
         payload = {"url": url}
         if cookies:
             payload["cookies"] = cookies
@@ -111,35 +99,15 @@ class BrowserlessAPI:
         except Exception as e:
             return {"ok": False, "error": str(e), "html": "", "final_url": url}
 
-    def run_puppeteer(self, script_code: str, cookies: list = None) -> dict | None:
-        payload = {"code": script_code, "context": {}}
-        if cookies:
-            payload["cookies"] = cookies
-        try:
-            resp = requests.post(
-                f"{self.base_url}/function",
-                params={"token": self.token},
-                json=payload,
-                timeout=90
-            )
-            self.credits_used += 1
-            if resp.status_code == 200:
-                return resp.json()
-            else:
-                return None
-        except Exception as e:
-            print(f"Error en run_puppeteer: {e}")
-            return None
-
 
 # ============================================================================
-# CLASE: LINKEDIN SCRAPER
+# CLASE: LINKEDIN SCRAPER (solo /content)
 # ============================================================================
 class LinkedInScraper:
     def __init__(self, api: BrowserlessAPI, cookies: list):
         self.api = api
         self.cookies = cookies
-        self.debug_info = {}  # Almacena info de debug
+        self.debug_info = {}
 
     def test_linkedin_session(self) -> dict:
         result = {
@@ -189,7 +157,6 @@ class LinkedInScraper:
             soup.select_one("nav.global-nav"),
             soup.select_one("div.feed-shared-update-v2"),
             soup.select_one("header"),
-            soup.select_one("meta[name='linkedin-knowledge-graph-person-id']"),
         ]
 
         active_count = sum(1 for x in session_indicators if x)
@@ -209,155 +176,9 @@ class LinkedInScraper:
         return result
 
     def search_person(self, full_name: str, institution: str = "", debug_mode: bool = False) -> str | None:
-        """Busca persona con debug completo."""
-        self.debug_info = {}  # Reset debug info
+        """Busca persona usando /content."""
+        self.debug_info = {}
         
-        query = full_name
-        if institution:
-            inst_clean = re.sub(r'[;|,()\[\]]', ' ', institution)
-            words = [w for w in inst_clean.split() if len(w) > 3]
-            if words:
-                query += " " + " ".join(words[:2])
-
-        # Script Puppeteer MEJORADO con más logging
-        puppeteer_code = f"""
-        module.exports = async ({{ page }}) => {{
-            const searchUrl = "https://www.linkedin.com/search/results/people/?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER";
-            
-            const debug = {{
-                searchUrl,
-                steps: [],
-                errors: [],
-                results: [],
-                finalUrl: '',
-                pageTitle: '',
-                pageContent: {{}}
-            }};
-            
-            try {{
-                debug.steps.push("1. Navegando a URL de búsqueda...");
-                await page.goto(searchUrl, {{ waitUntil: 'networkidle2', timeout: 30000 }});
-                debug.finalUrl = page.url();
-                debug.pageTitle = await page.title();
-                debug.steps.push("2. URL cargada: " + debug.finalUrl);
-                
-                // Esperar a que carguen los resultados
-                debug.steps.push("3. Esperando resultados...");
-                const resultsContainer = await page.waitForSelector('ul.reusable-search__result-container, a.app-aware-link[href*="/in/"]', {{ timeout: 10000 }}).catch(() => null);
-                
-                if (!resultsContainer) {{
-                    debug.steps.push("⚠️ No se encontró el contenedor de resultados");
-                    debug.errors.push("No results container found");
-                }} else {{
-                    debug.steps.push("4. Contenedor de resultados encontrado");
-                }}
-                
-                // Pequeña espera adicional
-                await new Promise(r => setTimeout(r, 2000));
-                
-                // Verificar si hay redirect a login
-                const currentUrl = page.url();
-                if (currentUrl.includes('login') || currentUrl.includes('checkpoint')) {{
-                    debug.steps.push("❌ Redirigido a login/challenge");
-                    debug.errors.push("Redirected to login");
-                    return {{ debug, results: [], url: currentUrl }};
-                }}
-                
-                // Extraer resultados
-                debug.steps.push("5. Extrayendo resultados...");
-                const results = await page.evaluate(() => {{
-                    const links = Array.from(document.querySelectorAll('a.app-aware-link[href*="/in/"]'));
-                    debug.steps.push(`Encontrados ${{links.length}} enlaces`);
-                    
-                    return links.slice(0, 10).map((link, index) => {{
-                        const href = link.getAttribute('href');
-                        const nameSpan = link.querySelector("span[aria-hidden='true']");
-                        const name = nameSpan ? nameSpan.innerText.trim() : '';
-                        const parent = link.closest('li');
-                        const subtitle = parent ? parent.innerText : '';
-                        const headline = link.querySelector('.entity-result__title-line')?.innerText || '';
-                        
-                        return {{ 
-                            index,
-                            href: href ? href.split('?')[0] : '',
-                            name,
-                            headline,
-                            subtitle: subtitle.substring(0, 200)
-                        }};
-                    }});
-                }});
-                
-                debug.results = results;
-                debug.steps.push(`6. Extraídos ${{results.length}} resultados`);
-                debug.pageContent = {{
-                    hasResults: results.length > 0,
-                    totalLinks: document.querySelectorAll('a').length,
-                    bodyLength: document.body.innerText.length
-                }};
-                
-            }} catch (error) {{
-                debug.steps.push("❌ Error: " + error.message);
-                debug.errors.push(error.message);
-            }}
-            
-            return {{ debug, results, url: page.url() }};
-        }};
-        """
-
-        result = self.api.run_puppeteer(puppeteer_code, cookies=self.cookies)
-        
-        # Guardar debug info
-        if result and result.get("debug"):
-            self.debug_info = result["debug"]
-        
-        if debug_mode and self.debug_info:
-            st.session_state.last_search_debug = self.debug_info
-        
-        if not result:
-            if debug_mode:
-                st.error("❌ Puppeteer no devolvió respuesta")
-            return self._search_person_fallback(full_name, institution)
-
-        results = result.get("results", [])
-        if not results:
-            if debug_mode:
-                st.warning(f"⚠️ No se encontraron resultados para '{full_name}'")
-                if self.debug_info.get("errors"):
-                    st.error(f"Errores: {', '.join(self.debug_info['errors'])}")
-            return None
-
-        # Elegir el mejor resultado
-        target_words = set(full_name.lower().split())
-        best_url = None
-        best_score = -1
-
-        for r in results:
-            href = r.get("href", "")
-            if "/in/" not in href:
-                continue
-
-            name = r.get("name", "").lower()
-            name_words = set(name.split())
-            score = len(target_words & name_words) * 10
-
-            if institution:
-                subtitle = r.get("subtitle", "").lower()
-                inst_lower = institution.lower()
-                if any(w in subtitle for w in inst_lower.split() if len(w) > 3):
-                    score += 5
-
-            if score > best_score:
-                best_score = score
-                best_url = href
-
-        if debug_mode:
-            st.success(f"✅ Encontrado: {best_url} (score: {best_score})")
-            st.json(results[:3])  # Mostrar top 3 resultados
-
-        return best_url
-
-    def _search_person_fallback(self, full_name: str, institution: str = "") -> str | None:
-        """Fallback: búsqueda con /content."""
         query = full_name
         if institution:
             inst_clean = re.sub(r'[;|,()\[\]]', ' ', institution)
@@ -370,181 +191,168 @@ class LinkedInScraper:
             f"?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER"
         )
 
+        self.debug_info["search_url"] = search_url
+        self.debug_info["query"] = query
+
         response = self.api.get_content(search_url, cookies=self.cookies)
-        if not response["ok"] or not response["html"]:
+        
+        if not response["ok"]:
+            self.debug_info["error"] = response.get("error")
+            if debug_mode:
+                st.error(f"❌ Error en /content: {response.get('error')}")
             return None
 
-        soup = BeautifulSoup(response["html"], "html.parser")
-        links = soup.select("a[href*='/in/']")
+        html = response["html"]
+        self.debug_info["html_length"] = len(html)
+        self.debug_info["final_url"] = response.get("final_url", "")
 
-        if not links:
+        if not html:
+            self.debug_info["error"] = "HTML vacío"
+            if debug_mode:
+                st.error("❌ HTML vacío devuelto")
             return None
 
+        # Detectar si nos redirigieron a login
+        if "signin" in html.lower()[:1000] or "login" in html.lower()[:1000]:
+            self.debug_info["error"] = "Redirigido a login"
+            if debug_mode:
+                st.error("❌ Sesión expirada durante la búsqueda")
+            return None
+
+        soup = BeautifulSoup(html, "html.parser")
+        self.debug_info["page_title"] = soup.title.string if soup.title else ""
+
+        # Buscar enlaces a perfiles con múltiples selectores
+        all_links = soup.select("a[href*='/in/']")
+        self.debug_info["total_links_in"] = len(all_links)
+
+        # Filtrar solo enlaces válidos a perfiles
+        profile_links = []
+        for link in all_links:
+            href = link.get("href", "")
+            if "/in/" in href and "login" not in href and "challenge" not in href:
+                # Limpiar URL
+                href = href.split("?")[0]
+                
+                # Extraer nombre
+                name_span = link.select_one("span[aria-hidden='true']")
+                name = name_span.get_text().strip() if name_span else ""
+                
+                # Extraer contexto (padre)
+                parent = link.find_parent("li") or link.find_parent("div")
+                context = parent.get_text()[:300] if parent else ""
+                
+                profile_links.append({
+                    "href": href,
+                    "name": name,
+                    "context": context
+                })
+
+        self.debug_info["profile_links_found"] = len(profile_links)
+
+        if not profile_links:
+            self.debug_info["error"] = "No se encontraron enlaces a perfiles"
+            if debug_mode:
+                st.warning("⚠️ No se encontraron enlaces a perfiles en el HTML")
+                st.info(f"Total enlaces en página: {len(all_links)}")
+            return None
+
+        # Elegir el mejor resultado
         target_words = set(full_name.lower().split())
         best_url = None
         best_score = -1
+        best_name = ""
 
-        for link in links[:10]:
-            href = link.get("href", "").split("?")[0]
-            if "/in/" not in href:
-                continue
+        for pl in profile_links[:20]:
+            href = pl["href"]
+            name = pl["name"].lower()
+            context = pl["context"].lower()
+            
+            name_words = set(name.split())
+            score = len(target_words & name_words) * 10
 
-            name_span = link.select_one("span[aria-hidden='true']")
-            if name_span:
-                name = name_span.get_text().lower()
-                name_words = set(name.split())
-                score = len(target_words & name_words) * 10
+            # Bonus por institución
+            if institution:
+                inst_lower = institution.lower()
+                if any(w in context for w in inst_lower.split() if len(w) > 3):
+                    score += 5
 
-                if institution:
-                    parent = link.find_parent("li")
-                    if parent:
-                        text = parent.get_text().lower()
-                        inst_lower = institution.lower()
-                        if any(w in text for w in inst_lower.split() if len(w) > 3):
-                            score += 5
+            if score > best_score:
+                best_score = score
+                best_url = href
+                best_name = pl["name"]
 
-                if score > best_score:
-                    best_score = score
-                    best_url = href
+        self.debug_info["best_match"] = {
+            "url": best_url,
+            "name": best_name,
+            "score": best_score
+        }
+
+        if debug_mode:
+            st.success(f"✅ Mejor resultado: {best_name} (score: {best_score})")
+            st.write(f"**URL:** {best_url}")
+            with st.expander(f"📋 Top 5 resultados ({len(profile_links)} encontrados)"):
+                for i, pl in enumerate(profile_links[:5]):
+                    st.markdown(f"**{i+1}. {pl['name']}**")
+                    st.caption(f"URL: {pl['href']}")
+                    st.caption(f"Contexto: {pl['context'][:150]}...")
 
         return best_url
 
     def extract_full_cv(self, profile_url: str, debug_mode: bool = False) -> dict | None:
-        """Extrae CV completo usando Puppeteer con scroll."""
-        puppeteer_code = f"""
-        module.exports = async ({{ page }}) => {{
-            const debug = {{ steps: [] }};
-            
-            try {{
-                debug.steps.push("Navegando al perfil...");
-                await page.goto('{profile_url}', {{ waitUntil: 'networkidle2', timeout: 30000 }});
-                
-                debug.steps.push("Esperando h1...");
-                await page.waitForSelector('h1', {{ timeout: 10000 }}).catch(() => {{
-                    debug.steps.push("⚠️ No se encontró h1");
-                }});
-                
-                debug.steps.push("Haciendo scroll...");
-                await page.evaluate(async () => {{
-                    await new Promise((resolve) => {{
-                        let totalHeight = 0;
-                        const distance = 300;
-                        const timer = setInterval(() => {{
-                            const scrollHeight = document.body.scrollHeight;
-                            window.scrollBy(0, distance);
-                            totalHeight += distance;
-                            if (totalHeight >= scrollHeight) {{
-                                clearInterval(timer);
-                                resolve();
-                            }}
-                        }}, 100);
-                    }});
-                }});
-                
-                await new Promise(r => setTimeout(r, 2000));
-                await page.evaluate(() => window.scrollTo(0, 0));
-                await new Promise(r => setTimeout(r, 500));
-                
-                debug.steps.push("Extrayendo datos...");
-                const data = await page.evaluate(() => {{
-                    const getText = (sel) => {{
-                        const el = document.querySelector(sel);
-                        return el ? el.innerText.trim() : '';
-                    }};
-                    
-                    return {{
-                        nombre: getText('h1'),
-                        headline: getText('.text-body-medium.break-words'),
-                        ubicacion: getText('.text-body-small.inline'),
-                        about: getText('section#about') || '',
-                        experience: getText('section#experience') || '',
-                        education: getText('section#education') || '',
-                        publications: getText('section#publications') || '',
-                        patents: getText('section#patents') || '',
-                        projects: getText('section#projects') || '',
-                        languages: getText('section#languages') || '',
-                        honors: getText('section#honors') || '',
-                        fullText: document.querySelector('main') ? document.querySelector('main').innerText : document.body.innerText
-                    }};
-                }});
-                
-                debug.steps.push("Extracción completada");
-                return {{ debug, data }};
-                
-            }} catch (error) {{
-                debug.steps.push("❌ Error: " + error.message);
-                return {{ debug, data: null, error: error.message }};
-            }}
-        }};
-        """
-
-        result = self.api.run_puppeteer(puppeteer_code, cookies=self.cookies)
-
-        if debug_mode and result and result.get("debug"):
-            st.session_state.last_cv_debug = result["debug"]
-            if result.get("debug", {}).get("steps"):
-                st.info("📋 Pasos de extracción:\n" + "\n".join(result["debug"]["steps"]))
-
-        if not result:
-            return self._extract_simple(profile_url)
-
-        if result.get("error"):
-            if debug_mode:
-                st.error(f"Error en Puppeteer: {result['error']}")
-            return self._extract_simple(profile_url)
-
-        data = result.get("data")
-        if not data:
-            return None
-
-        cv = {
-            "url": profile_url,
-            "nombre": data.get("nombre", ""),
-            "headline": data.get("headline", ""),
-            "ubicacion": data.get("ubicacion", ""),
-            "sections": {},
-        }
-
-        sections = {
-            "Acerca de": data.get("about"),
-            "Experiencia": data.get("experience"),
-            "Educación": data.get("education"),
-            "Publicaciones": data.get("publications"),
-            "Patentes": data.get("patents"),
-            "Proyectos": data.get("projects"),
-            "Idiomas": data.get("languages"),
-            "Premios": data.get("honors"),
-        }
-
-        for nombre, texto in sections.items():
-            if texto and len(texto) > 10:
-                cv["sections"][nombre] = texto
-
-        if not cv["sections"] and data.get("fullText"):
-            cv["texto_completo"] = data["fullText"]
-
-        return cv
-
-    def _extract_simple(self, profile_url: str) -> dict | None:
+        """Extrae CV completo usando /content."""
         response = self.api.get_content(profile_url, cookies=self.cookies)
 
         if not response["ok"] or not response["html"]:
+            if debug_mode:
+                st.error(f"❌ Error extrayendo CV: {response.get('error')}")
             return None
 
-        soup = BeautifulSoup(response["html"], "html.parser")
+        html = response["html"]
+        soup = BeautifulSoup(html, "html.parser")
+        
         cv = {"url": profile_url, "sections": {}}
 
+        # Nombre
         h1 = soup.select_one("h1")
         cv["nombre"] = h1.get_text().strip() if h1 else ""
 
+        # Headline
         headline = soup.select_one(".text-body-medium.break-words")
         cv["headline"] = headline.get_text().strip() if headline else ""
 
+        # Ubicación
+        ubicacion = soup.select_one(".text-body-small.inline")
+        cv["ubicacion"] = ubicacion.get_text().strip() if ubicacion else ""
+
+        # Secciones
+        section_ids = {
+            "Acerca de": "about",
+            "Experiencia": "experience",
+            "Educación": "education",
+            "Publicaciones": "publications",
+            "Patentes": "patents",
+            "Proyectos": "projects",
+            "Idiomas": "languages",
+            "Premios": "honors",
+        }
+
+        for nombre_seccion, section_id in section_ids.items():
+            section = soup.select_one(f"section#{section_id}")
+            if section:
+                cv["sections"][nombre_seccion] = section.get_text(separator="\n", strip=True)
+
+        # Texto completo como fallback
         main = soup.select_one("main")
         if main:
             cv["texto_completo"] = main.get_text(separator="\n", strip=True)
         else:
             cv["texto_completo"] = soup.get_text(separator="\n", strip=True)
+
+        if debug_mode:
+            st.info(f"📄 CV extraído: {cv['nombre']}")
+            st.write(f"**Headline:** {cv['headline']}")
+            st.write(f"**Secciones encontradas:** {', '.join(cv['sections'].keys())}")
 
         return cv
 
@@ -696,10 +504,6 @@ def main():
         st.session_state.cookies = None
     if "debug_mode" not in st.session_state:
         st.session_state.debug_mode = False
-    if "last_search_debug" not in st.session_state:
-        st.session_state.last_search_debug = {}
-    if "last_cv_debug" not in st.session_state:
-        st.session_state.last_cv_debug = {}
 
     # ========================================================================
     # SIDEBAR
@@ -712,12 +516,9 @@ def main():
         debug_mode = st.checkbox(
             "🔍 Activar modo debug",
             value=False,
-            help="Muestra información detallada de Puppeteer en cada búsqueda"
+            help="Muestra información detallada en cada búsqueda"
         )
         st.session_state.debug_mode = debug_mode
-
-        if debug_mode:
-            st.info("💡 El debug se mostrará después de cada búsqueda")
 
         st.divider()
 
@@ -928,7 +729,7 @@ def main():
             seleccion = st.multiselect(
                 "Selecciona investigadores",
                 df[col_nombre].tolist(),
-                default=df[col_nombre].tolist()[:1]  # Solo 1 por defecto para debug
+                default=df[col_nombre].tolist()[:1]
             )
 
         if st.button(
@@ -961,22 +762,10 @@ def main():
                             )
 
                     # Mostrar debug de búsqueda si está activado
-                    if st.session_state.debug_mode and hasattr(st.session_state, 'last_search_debug'):
-                        with st.expander("🐛 Debug de búsqueda Puppeteer", expanded=True):
-                            debug = st.session_state.last_search_debug
-                            if debug.get("steps"):
-                                st.markdown("**📋 Pasos ejecutados:**")
-                                for step in debug["steps"]:
-                                    st.text(step)
-                            if debug.get("errors"):
-                                st.error(f"**❌ Errores:** {', '.join(debug['errors'])}")
-                            st.markdown(f"**🔗 URL final:** {debug.get('finalUrl', 'N/A')}")
-                            st.markdown(f"**📄 Título:** {debug.get('pageTitle', 'N/A')}")
-                            if debug.get("results"):
-                                st.markdown(f"**📊 Resultados encontrados:** {len(debug['results'])}")
-                                st.json(debug["results"][:5])
-                            if debug.get("pageContent"):
-                                st.json(debug["pageContent"])
+                    if st.session_state.debug_mode and st.session_state.scraper.debug_info:
+                        with st.expander("🐛 Debug de búsqueda", expanded=True):
+                            debug = st.session_state.scraper.debug_info
+                            st.json(debug)
 
                     if url:
                         with status_container:
@@ -988,14 +777,6 @@ def main():
                                     st.session_state.cvs[nombre] = cv
                                     save_cv_cache(nombre, cv)
                                     st.success(f"✅ {nombre}: {cv.get('headline', 'OK')[:80]}")
-                                    
-                                    # Mostrar debug de CV si está activado
-                                    if st.session_state.debug_mode and hasattr(st.session_state, 'last_cv_debug'):
-                                        with st.expander("🐛 Debug de extracción de CV", expanded=False):
-                                            if st.session_state.last_cv_debug.get("steps"):
-                                                st.markdown("**📋 Pasos:**")
-                                                for step in st.session_state.last_cv_debug["steps"]:
-                                                    st.text(step)
                                 else:
                                     st.warning(f"⚠️ {nombre}: no se pudo extraer CV")
                     else:
