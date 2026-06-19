@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión Streamlit Cloud + Browserless API REST (con Puppeteer para búsquedas)
+Versión con DEBUG completo de Puppeteer
 """
 
 import os
@@ -48,6 +48,19 @@ st.markdown("""
         border-radius: 5px;
         margin: 1rem 0;
     }
+    .debug-box {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        padding: 1rem;
+        border-radius: 5px;
+        margin: 1rem 0;
+        font-family: monospace;
+        font-size: 0.85rem;
+        max-height: 600px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -56,8 +69,6 @@ st.markdown("""
 # CLASE: BROWSERLESS API REST
 # ============================================================================
 class BrowserlessAPI:
-    """Cliente de la API REST de Browserless."""
-
     def __init__(self, token: str):
         self.token = token
         self.base_url = "https://chrome.browserless.io"
@@ -71,18 +82,17 @@ class BrowserlessAPI:
                 timeout=15
             )
             if resp.status_code == 200:
-                return True, "✅ Token válido. Conexión establecida."
+                return True, "✅ Token válido"
             elif resp.status_code == 401:
                 return False, "❌ Token inválido"
             elif resp.status_code == 429:
                 return False, "⚠️ Límite de créditos alcanzado"
             else:
-                return False, f"❌ Error {resp.status_code}: {resp.text[:100]}"
+                return False, f"❌ Error {resp.status_code}"
         except Exception as e:
             return False, f"❌ Error: {str(e)[:100]}"
 
     def get_content(self, url: str, cookies: list = None) -> dict:
-        """Endpoint /content: HTML rápido (sin esperar JS)."""
         payload = {"url": url}
         if cookies:
             payload["cookies"] = cookies
@@ -102,7 +112,6 @@ class BrowserlessAPI:
             return {"ok": False, "error": str(e), "html": "", "final_url": url}
 
     def run_puppeteer(self, script_code: str, cookies: list = None) -> dict | None:
-        """Endpoint /function: ejecuta Puppeteer custom (renderiza JS completo)."""
         payload = {"code": script_code, "context": {}}
         if cookies:
             payload["cookies"] = cookies
@@ -117,7 +126,6 @@ class BrowserlessAPI:
             if resp.status_code == 200:
                 return resp.json()
             else:
-                print(f"Error en /function: {resp.status_code} - {resp.text[:200]}")
                 return None
         except Exception as e:
             print(f"Error en run_puppeteer: {e}")
@@ -128,14 +136,12 @@ class BrowserlessAPI:
 # CLASE: LINKEDIN SCRAPER
 # ============================================================================
 class LinkedInScraper:
-    """Scraper de LinkedIn usando Browserless API."""
-
     def __init__(self, api: BrowserlessAPI, cookies: list):
         self.api = api
         self.cookies = cookies
+        self.debug_info = {}  # Almacena info de debug
 
     def test_linkedin_session(self) -> dict:
-        """DIAGNÓSTICO: Verifica si las cookies funcionan en LinkedIn."""
         result = {
             "ok": False,
             "final_url": "",
@@ -166,41 +172,31 @@ class LinkedInScraper:
         soup = BeautifulSoup(html, "html.parser")
         result["title"] = soup.title.string if soup.title else ""
 
-        # Detectar página de login
         if "signin" in html.lower()[:2000] or "login" in html.lower()[:2000]:
             result["is_login_page"] = True
             result["debug_info"] = "⚠️ LinkedIn redirigió a login."
             return result
 
-        # Detectar challenge/captcha
         if "challenge" in html.lower()[:2000]:
             result["is_challenge"] = True
             result["debug_info"] = "⚠️ LinkedIn muestra captcha."
             return result
 
-        # ✅ DETECCIÓN MEJORADA DE SESIÓN ACTIVA
-        # LinkedIn usa estos indicadores en el feed cuando hay sesión:
         session_indicators = [
-            # URL contiene /feed/ (ya estamos logueados)
             "/feed/" in result["final_url"].lower(),
-            # Título es "Feed | LinkedIn"
             "feed" in result["title"].lower(),
-            # HTML tiene más de 1MB (página completa, no login)
             len(html) > 500000,
-            # Hay elementos de navegación del feed
             soup.select_one("nav.global-nav"),
             soup.select_one("div.feed-shared-update-v2"),
             soup.select_one("header"),
-            # Metadatos de sesión
             soup.select_one("meta[name='linkedin-knowledge-graph-person-id']"),
         ]
 
-        # Si al menos 2 indicadores son verdaderos, sesión activa
         active_count = sum(1 for x in session_indicators if x)
         
         if active_count >= 2:
             result["ok"] = True
-            result["debug_info"] = f"✅ Sesión LinkedIn activa. ({active_count} indicadores detectados)"
+            result["debug_info"] = f"✅ Sesión LinkedIn activa. ({active_count} indicadores)"
         else:
             result["debug_info"] = (
                 f"⚠️ No se detectó sesión activa.\n"
@@ -212,8 +208,10 @@ class LinkedInScraper:
 
         return result
 
-    def search_person(self, full_name: str, institution: str = "") -> str | None:
-        """Busca persona usando Puppeteer (renderiza JS completo)."""
+    def search_person(self, full_name: str, institution: str = "", debug_mode: bool = False) -> str | None:
+        """Busca persona con debug completo."""
+        self.debug_info = {}  # Reset debug info
+        
         query = full_name
         if institution:
             inst_clean = re.sub(r'[;|,()\[\]]', ' ', institution)
@@ -221,45 +219,111 @@ class LinkedInScraper:
             if words:
                 query += " " + " ".join(words[:2])
 
-        # Script Puppeteer para búsqueda
+        # Script Puppeteer MEJORADO con más logging
         puppeteer_code = f"""
         module.exports = async ({{ page }}) => {{
             const searchUrl = "https://www.linkedin.com/search/results/people/?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER";
             
-            await page.goto(searchUrl, {{ waitUntil: 'networkidle2', timeout: 30000 }});
+            const debug = {{
+                searchUrl,
+                steps: [],
+                errors: [],
+                results: [],
+                finalUrl: '',
+                pageTitle: '',
+                pageContent: {{}}
+            }};
             
-            // Esperar a que carguen los resultados
-            await page.waitForSelector('ul.reusable-search__result-container, a.app-aware-link[href*="/in/"]', {{ timeout: 10000 }}).catch(() => {{}});
-            
-            // Pequeña espera adicional
-            await new Promise(r => setTimeout(r, 2000));
-            
-            // Extraer resultados
-            const results = await page.evaluate(() => {{
-                const links = Array.from(document.querySelectorAll('a.app-aware-link[href*="/in/"]'));
-                return links.slice(0, 10).map(link => {{
-                    const href = link.getAttribute('href');
-                    const nameSpan = link.querySelector("span[aria-hidden='true']");
-                    const name = nameSpan ? nameSpan.innerText.trim() : '';
-                    const parent = link.closest('li');
-                    const subtitle = parent ? parent.innerText : '';
-                    return {{ href: href.split('?')[0], name, subtitle }};
+            try {{
+                debug.steps.push("1. Navegando a URL de búsqueda...");
+                await page.goto(searchUrl, {{ waitUntil: 'networkidle2', timeout: 30000 }});
+                debug.finalUrl = page.url();
+                debug.pageTitle = await page.title();
+                debug.steps.push("2. URL cargada: " + debug.finalUrl);
+                
+                // Esperar a que carguen los resultados
+                debug.steps.push("3. Esperando resultados...");
+                const resultsContainer = await page.waitForSelector('ul.reusable-search__result-container, a.app-aware-link[href*="/in/"]', {{ timeout: 10000 }}).catch(() => null);
+                
+                if (!resultsContainer) {{
+                    debug.steps.push("⚠️ No se encontró el contenedor de resultados");
+                    debug.errors.push("No results container found");
+                }} else {{
+                    debug.steps.push("4. Contenedor de resultados encontrado");
+                }}
+                
+                // Pequeña espera adicional
+                await new Promise(r => setTimeout(r, 2000));
+                
+                // Verificar si hay redirect a login
+                const currentUrl = page.url();
+                if (currentUrl.includes('login') || currentUrl.includes('checkpoint')) {{
+                    debug.steps.push("❌ Redirigido a login/challenge");
+                    debug.errors.push("Redirected to login");
+                    return {{ debug, results: [], url: currentUrl }};
+                }}
+                
+                // Extraer resultados
+                debug.steps.push("5. Extrayendo resultados...");
+                const results = await page.evaluate(() => {{
+                    const links = Array.from(document.querySelectorAll('a.app-aware-link[href*="/in/"]'));
+                    debug.steps.push(`Encontrados ${{links.length}} enlaces`);
+                    
+                    return links.slice(0, 10).map((link, index) => {{
+                        const href = link.getAttribute('href');
+                        const nameSpan = link.querySelector("span[aria-hidden='true']");
+                        const name = nameSpan ? nameSpan.innerText.trim() : '';
+                        const parent = link.closest('li');
+                        const subtitle = parent ? parent.innerText : '';
+                        const headline = link.querySelector('.entity-result__title-line')?.innerText || '';
+                        
+                        return {{ 
+                            index,
+                            href: href ? href.split('?')[0] : '',
+                            name,
+                            headline,
+                            subtitle: subtitle.substring(0, 200)
+                        }};
+                    }});
                 }});
-            }});
+                
+                debug.results = results;
+                debug.steps.push(`6. Extraídos ${{results.length}} resultados`);
+                debug.pageContent = {{
+                    hasResults: results.length > 0,
+                    totalLinks: document.querySelectorAll('a').length,
+                    bodyLength: document.body.innerText.length
+                }};
+                
+            }} catch (error) {{
+                debug.steps.push("❌ Error: " + error.message);
+                debug.errors.push(error.message);
+            }}
             
-            return {{ results, url: page.url() }};
+            return {{ debug, results, url: page.url() }};
         }};
         """
 
         result = self.api.run_puppeteer(puppeteer_code, cookies=self.cookies)
         
+        # Guardar debug info
+        if result and result.get("debug"):
+            self.debug_info = result["debug"]
+        
+        if debug_mode and self.debug_info:
+            st.session_state.last_search_debug = self.debug_info
+        
         if not result:
-            # Fallback a /content
+            if debug_mode:
+                st.error("❌ Puppeteer no devolvió respuesta")
             return self._search_person_fallback(full_name, institution)
 
         results = result.get("results", [])
         if not results:
-            print(f"⚠️ No se encontraron resultados para {full_name}")
+            if debug_mode:
+                st.warning(f"⚠️ No se encontraron resultados para '{full_name}'")
+                if self.debug_info.get("errors"):
+                    st.error(f"Errores: {', '.join(self.debug_info['errors'])}")
             return None
 
         # Elegir el mejor resultado
@@ -276,7 +340,6 @@ class LinkedInScraper:
             name_words = set(name.split())
             score = len(target_words & name_words) * 10
 
-            # Bonus por institución
             if institution:
                 subtitle = r.get("subtitle", "").lower()
                 inst_lower = institution.lower()
@@ -287,10 +350,14 @@ class LinkedInScraper:
                 best_score = score
                 best_url = href
 
+        if debug_mode:
+            st.success(f"✅ Encontrado: {best_url} (score: {best_score})")
+            st.json(results[:3])  # Mostrar top 3 resultados
+
         return best_url
 
     def _search_person_fallback(self, full_name: str, institution: str = "") -> str | None:
-        """Fallback: búsqueda con /content (sin JS rendering)."""
+        """Fallback: búsqueda con /content."""
         query = full_name
         if institution:
             inst_clean = re.sub(r'[;|,()\[\]]', ' ', institution)
@@ -342,97 +409,123 @@ class LinkedInScraper:
 
         return best_url
 
-    def extract_full_cv(self, profile_url: str) -> dict | None:
+    def extract_full_cv(self, profile_url: str, debug_mode: bool = False) -> dict | None:
         """Extrae CV completo usando Puppeteer con scroll."""
         puppeteer_code = f"""
         module.exports = async ({{ page }}) => {{
-            await page.goto('{profile_url}', {{ waitUntil: 'networkidle2', timeout: 30000 }});
+            const debug = {{ steps: [] }};
             
-            // Esperar a que cargue el perfil
-            await page.waitForSelector('h1', {{ timeout: 10000 }}).catch(() => {{}});
-            
-            // Scroll para cargar contenido lazy-loaded
-            await page.evaluate(async () => {{
-                await new Promise((resolve) => {{
-                    let totalHeight = 0;
-                    const distance = 300;
-                    const timer = setInterval(() => {{
-                        const scrollHeight = document.body.scrollHeight;
-                        window.scrollBy(0, distance);
-                        totalHeight += distance;
-                        if (totalHeight >= scrollHeight) {{
-                            clearInterval(timer);
-                            resolve();
-                        }}
-                    }}, 100);
-                }});
-            }});
-            
-            await new Promise(r => setTimeout(r, 2000));
-            await page.evaluate(() => window.scrollTo(0, 0));
-            await new Promise(r => setTimeout(r, 500));
-            
-            const data = await page.evaluate(() => {{
-                const getText = (sel) => {{
-                    const el = document.querySelector(sel);
-                    return el ? el.innerText.trim() : '';
-                }};
+            try {{
+                debug.steps.push("Navegando al perfil...");
+                await page.goto('{profile_url}', {{ waitUntil: 'networkidle2', timeout: 30000 }});
                 
-                return {{
-                    nombre: getText('h1'),
-                    headline: getText('.text-body-medium.break-words'),
-                    ubicacion: getText('.text-body-small.inline'),
-                    about: getText('section#about') || '',
-                    experience: getText('section#experience') || '',
-                    education: getText('section#education') || '',
-                    publications: getText('section#publications') || '',
-                    patents: getText('section#patents') || '',
-                    projects: getText('section#projects') || '',
-                    languages: getText('section#languages') || '',
-                    honors: getText('section#honors') || '',
-                    fullText: document.querySelector('main') ? document.querySelector('main').innerText : document.body.innerText
-                }};
-            }});
-            
-            return data;
+                debug.steps.push("Esperando h1...");
+                await page.waitForSelector('h1', {{ timeout: 10000 }}).catch(() => {{
+                    debug.steps.push("⚠️ No se encontró h1");
+                }});
+                
+                debug.steps.push("Haciendo scroll...");
+                await page.evaluate(async () => {{
+                    await new Promise((resolve) => {{
+                        let totalHeight = 0;
+                        const distance = 300;
+                        const timer = setInterval(() => {{
+                            const scrollHeight = document.body.scrollHeight;
+                            window.scrollBy(0, distance);
+                            totalHeight += distance;
+                            if (totalHeight >= scrollHeight) {{
+                                clearInterval(timer);
+                                resolve();
+                            }}
+                        }}, 100);
+                    }});
+                }});
+                
+                await new Promise(r => setTimeout(r, 2000));
+                await page.evaluate(() => window.scrollTo(0, 0));
+                await new Promise(r => setTimeout(r, 500));
+                
+                debug.steps.push("Extrayendo datos...");
+                const data = await page.evaluate(() => {{
+                    const getText = (sel) => {{
+                        const el = document.querySelector(sel);
+                        return el ? el.innerText.trim() : '';
+                    }};
+                    
+                    return {{
+                        nombre: getText('h1'),
+                        headline: getText('.text-body-medium.break-words'),
+                        ubicacion: getText('.text-body-small.inline'),
+                        about: getText('section#about') || '',
+                        experience: getText('section#experience') || '',
+                        education: getText('section#education') || '',
+                        publications: getText('section#publications') || '',
+                        patents: getText('section#patents') || '',
+                        projects: getText('section#projects') || '',
+                        languages: getText('section#languages') || '',
+                        honors: getText('section#honors') || '',
+                        fullText: document.querySelector('main') ? document.querySelector('main').innerText : document.body.innerText
+                    }};
+                }});
+                
+                debug.steps.push("Extracción completada");
+                return {{ debug, data }};
+                
+            }} catch (error) {{
+                debug.steps.push("❌ Error: " + error.message);
+                return {{ debug, data: null, error: error.message }};
+            }}
         }};
         """
 
         result = self.api.run_puppeteer(puppeteer_code, cookies=self.cookies)
 
+        if debug_mode and result and result.get("debug"):
+            st.session_state.last_cv_debug = result["debug"]
+            if result.get("debug", {}).get("steps"):
+                st.info("📋 Pasos de extracción:\n" + "\n".join(result["debug"]["steps"]))
+
         if not result:
             return self._extract_simple(profile_url)
 
+        if result.get("error"):
+            if debug_mode:
+                st.error(f"Error en Puppeteer: {result['error']}")
+            return self._extract_simple(profile_url)
+
+        data = result.get("data")
+        if not data:
+            return None
+
         cv = {
             "url": profile_url,
-            "nombre": result.get("nombre", ""),
-            "headline": result.get("headline", ""),
-            "ubicacion": result.get("ubicacion", ""),
+            "nombre": data.get("nombre", ""),
+            "headline": data.get("headline", ""),
+            "ubicacion": data.get("ubicacion", ""),
             "sections": {},
         }
 
         sections = {
-            "Acerca de": result.get("about"),
-            "Experiencia": result.get("experience"),
-            "Educación": result.get("education"),
-            "Publicaciones": result.get("publications"),
-            "Patentes": result.get("patents"),
-            "Proyectos": result.get("projects"),
-            "Idiomas": result.get("languages"),
-            "Premios": result.get("honors"),
+            "Acerca de": data.get("about"),
+            "Experiencia": data.get("experience"),
+            "Educación": data.get("education"),
+            "Publicaciones": data.get("publications"),
+            "Patentes": data.get("patents"),
+            "Proyectos": data.get("projects"),
+            "Idiomas": data.get("languages"),
+            "Premios": data.get("honors"),
         }
 
         for nombre, texto in sections.items():
             if texto and len(texto) > 10:
                 cv["sections"][nombre] = texto
 
-        if not cv["sections"] and result.get("fullText"):
-            cv["texto_completo"] = result["fullText"]
+        if not cv["sections"] and data.get("fullText"):
+            cv["texto_completo"] = data["fullText"]
 
         return cv
 
     def _extract_simple(self, profile_url: str) -> dict | None:
-        """Fallback: extracción simple con /content."""
         response = self.api.get_content(profile_url, cookies=self.cookies)
 
         if not response["ok"] or not response["html"]:
@@ -601,12 +694,32 @@ def main():
         st.session_state.linkedin_ok = False
     if "cookies" not in st.session_state:
         st.session_state.cookies = None
+    if "debug_mode" not in st.session_state:
+        st.session_state.debug_mode = False
+    if "last_search_debug" not in st.session_state:
+        st.session_state.last_search_debug = {}
+    if "last_cv_debug" not in st.session_state:
+        st.session_state.last_cv_debug = {}
 
     # ========================================================================
     # SIDEBAR
     # ========================================================================
     with st.sidebar:
         st.markdown("## ⚙️ Configuración")
+
+        # --- MODO DEBUG ---
+        st.markdown("### 🐛 Modo Debug")
+        debug_mode = st.checkbox(
+            "🔍 Activar modo debug",
+            value=False,
+            help="Muestra información detallada de Puppeteer en cada búsqueda"
+        )
+        st.session_state.debug_mode = debug_mode
+
+        if debug_mode:
+            st.info("💡 El debug se mostrará después de cada búsqueda")
+
+        st.divider()
 
         # --- Browserless ---
         st.markdown("### 🌐 Browserless API")
@@ -815,7 +928,7 @@ def main():
             seleccion = st.multiselect(
                 "Selecciona investigadores",
                 df[col_nombre].tolist(),
-                default=df[col_nombre].tolist()[:3]
+                default=df[col_nombre].tolist()[:1]  # Solo 1 por defecto para debug
             )
 
         if st.button(
@@ -843,16 +956,46 @@ def main():
                 try:
                     with status_container:
                         with st.spinner(f"🔍 {nombre}..."):
-                            url = st.session_state.scraper.search_person(nombre, inst)
+                            url = st.session_state.scraper.search_person(
+                                nombre, inst, debug_mode=st.session_state.debug_mode
+                            )
+
+                    # Mostrar debug de búsqueda si está activado
+                    if st.session_state.debug_mode and hasattr(st.session_state, 'last_search_debug'):
+                        with st.expander("🐛 Debug de búsqueda Puppeteer", expanded=True):
+                            debug = st.session_state.last_search_debug
+                            if debug.get("steps"):
+                                st.markdown("**📋 Pasos ejecutados:**")
+                                for step in debug["steps"]:
+                                    st.text(step)
+                            if debug.get("errors"):
+                                st.error(f"**❌ Errores:** {', '.join(debug['errors'])}")
+                            st.markdown(f"**🔗 URL final:** {debug.get('finalUrl', 'N/A')}")
+                            st.markdown(f"**📄 Título:** {debug.get('pageTitle', 'N/A')}")
+                            if debug.get("results"):
+                                st.markdown(f"**📊 Resultados encontrados:** {len(debug['results'])}")
+                                st.json(debug["results"][:5])
+                            if debug.get("pageContent"):
+                                st.json(debug["pageContent"])
 
                     if url:
                         with status_container:
                             with st.spinner(f"📄 {nombre}..."):
-                                cv = st.session_state.scraper.extract_full_cv(url)
+                                cv = st.session_state.scraper.extract_full_cv(
+                                    url, debug_mode=st.session_state.debug_mode
+                                )
                                 if cv:
                                     st.session_state.cvs[nombre] = cv
                                     save_cv_cache(nombre, cv)
                                     st.success(f"✅ {nombre}: {cv.get('headline', 'OK')[:80]}")
+                                    
+                                    # Mostrar debug de CV si está activado
+                                    if st.session_state.debug_mode and hasattr(st.session_state, 'last_cv_debug'):
+                                        with st.expander("🐛 Debug de extracción de CV", expanded=False):
+                                            if st.session_state.last_cv_debug.get("steps"):
+                                                st.markdown("**📋 Pasos:**")
+                                                for step in st.session_state.last_cv_debug["steps"]:
+                                                    st.text(step)
                                 else:
                                     st.warning(f"⚠️ {nombre}: no se pudo extraer CV")
                     else:
