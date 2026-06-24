@@ -1328,7 +1328,6 @@ Confianza global: **B** — fuentes consolidadas, ajuste fino según vertical ac
 """)
 
 
-
 # =====================================================
 # FOOTER KAIBOT
 # =====================================================
