@@ -431,7 +431,7 @@ class LinkedInScraper:
         
         # RONDA 1: Solo nombre
         if progress_callback:
-            progress_callback(f" Ronda 1: Buscando '{search_name}'...")
+            progress_callback(f"🔍 Ronda 1: Buscando '{search_name}'...")
         
         round1_results = self._search_single_query(search_name, target_words, institution, orcid)
         
@@ -519,6 +519,7 @@ class LinkedInScraper:
         return all_results
 
     def search_person(self, full_name: str, institution: str = "", orcid: str = "", debug_mode: bool = False) -> list:
+        """Método wrapper para compatibilidad."""
         return self.search_person_multi_round(full_name, institution, orcid, debug_mode)
 
     def extract_full_cv(self, profile_url: str, debug_mode: bool = False) -> dict:
@@ -740,9 +741,9 @@ def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
         if cv.get("headline"):
             lineas.append(f"🎯 {cv['headline']}")
         if cv.get("ubicacion"):
-            lineas.append(f" {cv['ubicacion']}")
+            lineas.append(f"📍 {cv['ubicacion']}")
         if cv.get("url"):
-            lineas.append(f" {cv['url']}")
+            lineas.append(f"🔗 {cv['url']}")
         
         for seccion, texto in cv.get("sections", {}).items():
             if texto and len(texto) > 50:
@@ -801,7 +802,7 @@ def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
     
     sector = analisis.get("sector_principal", "")
     if sector:
-        lineas.append(f"\n SECTOR PRINCIPAL: {sector}")
+        lineas.append(f"\n🏭 SECTOR PRINCIPAL: {sector}")
     
     if analisis.get("resumen_ejecutivo"):
         lineas.append(f"\n📋 RESUMEN EJECUTIVO:\n{analisis['resumen_ejecutivo']}")
@@ -854,25 +855,44 @@ def save_cv_cache(nombre: str, cv: dict):
 
 
 def extraer_datos_excel_para_ia(row, col_map: dict) -> dict:
+    """Extrae datos relevantes del Excel para pasar al LLM como contexto."""
     datos = {}
     
-    if "patentes" in col_map:
-        datos["patentes"] = str(row.get(col_map["patentes"], ""))
+    # Patentes
+    if "patentes" in col_map and col_map["patentes"]:
+        val = row.get(col_map["patentes"], "")
+        if pd.notna(val):
+            datos["patentes"] = str(val)
     elif "Representative_Patent_Titles" in row.index:
-        datos["patentes"] = str(row.get("Representative_Patent_Titles", ""))
+        val = row.get("Representative_Patent_Titles", "")
+        if pd.notna(val):
+            datos["patentes"] = str(val)
     
-    if "publicaciones" in col_map:
-        datos["publicaciones"] = str(row.get(col_map["publicaciones"], ""))
+    # Publicaciones
+    if "publicaciones" in col_map and col_map["publicaciones"]:
+        val = row.get(col_map["publicaciones"], "")
+        if pd.notna(val):
+            datos["publicaciones"] = str(val)
     elif "Publication_Articles_Total_Area" in row.index:
-        datos["publicaciones"] = str(row.get("Publication_Articles_Total_Area", ""))
+        val = row.get("Publication_Articles_Total_Area", "")
+        if pd.notna(val):
+            datos["publicaciones"] = str(val)
     
-    if "institucion" in col_map:
-        datos["institucion"] = str(row.get(col_map["institucion"], ""))
+    # Institución
+    if "institucion" in col_map and col_map["institucion"]:
+        val = row.get(col_map["institucion"], "")
+        if pd.notna(val):
+            datos["institucion"] = str(val)
     
-    if "score" in col_map:
-        datos["score"] = str(row.get(col_map["score"], ""))
+    # Score
+    if "score" in col_map and col_map["score"]:
+        val = row.get(col_map["score"], "")
+        if pd.notna(val):
+            datos["score"] = str(val)
     elif "Score_10xPatents_plus_Articles" in row.index:
-        datos["score"] = str(row.get("Score_10xPatents_plus_Articles", ""))
+        val = row.get("Score_10xPatents_plus_Articles", "")
+        if pd.notna(val):
+            datos["score"] = str(val)
     
     return datos
 
@@ -914,7 +934,7 @@ def main():
         st.markdown("## ⚙️ Configuración")
 
         st.markdown("### 🐛 Modo Debug")
-        debug_mode = st.checkbox(" Activar modo debug", value=False)
+        debug_mode = st.checkbox("🔍 Activar modo debug", value=False)
         st.session_state.debug_mode = debug_mode
 
         st.divider()
@@ -945,13 +965,13 @@ def main():
                         st.error(msg)
 
         if st.session_state.api:
-            st.success(" Browserless conectado")
+            st.success("🟢 Browserless conectado")
         else:
             st.warning("🟡 Browserless no conectado")
 
         st.divider()
 
-        st.markdown("###  LinkedIn Cookies")
+        st.markdown("### 🔐 LinkedIn Cookies")
         cookies_text = st.text_area("Pega cookies (JSON)", height=150, label_visibility="collapsed")
 
         if cookies_text and st.button("🔑 Cargar cookies"):
@@ -996,7 +1016,7 @@ def main():
         if st.session_state.linkedin_ok:
             st.success("🟢 LinkedIn listo")
         else:
-            st.warning(" LinkedIn no verificado")
+            st.warning("🟡 LinkedIn no verificado")
 
         st.divider()
 
@@ -1035,15 +1055,15 @@ def main():
         st.divider()
 
         st.markdown("### 📊 Estado")
-        st.write(f"🌐 Browserless: {' OK' if st.session_state.api else ''}")
-        st.write(f" LinkedIn: {'🟢 OK' if st.session_state.linkedin_ok else '🟡'}")
-        st.write(f"🤖 OpenAI: {' OK' if st.session_state.openai_ok else '🟡'}")
+        st.write(f"🌐 Browserless: {'🟢 OK' if st.session_state.api else '🟡'}")
+        st.write(f"🔗 LinkedIn: {'🟢 OK' if st.session_state.linkedin_ok else '🟡'}")
+        st.write(f"🤖 OpenAI: {'🟢 OK' if st.session_state.openai_ok else '🟡'}")
         st.write(f"👥 CVs: {len(st.session_state.cvs)}")
         st.write(f"🏭 Análisis: {len(st.session_state.analisis)}")
         if st.session_state.api:
             st.write(f"💳 Créditos: {st.session_state.api.credits_used}")
 
-        if st.button(" Reiniciar"):
+        if st.button("🔄 Reiniciar"):
             for k in list(st.session_state.keys()):
                 del st.session_state[k]
             st.rerun()
@@ -1066,6 +1086,7 @@ def main():
             st.error(f"❌ Error: {e}")
             st.stop()
 
+        # Detectar columnas
         col_map = {}
         for col in df.columns:
             cl = str(col).lower()
@@ -1084,7 +1105,7 @@ def main():
             elif "publication" in cl and "total" in cl:
                 col_map["publicaciones"] = col
 
-        # Variables seguras
+        # Variables seguras para columnas
         col_nombre = col_map.get("nombre")
         col_inst = col_map.get("institucion")
         col_orcid = col_map.get("orcid")
@@ -1096,24 +1117,26 @@ def main():
         # ========== VISTA PREVIA DEL DATASET ==========
         st.markdown("#### 📊 Vista previa del dataset")
         
+        # Métricas resumen (seguras)
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("👥 Investigadores", len(df))
         
-        if col_inst:
-            c2.metric("🏛️ Con institución", df[col_inst].notna().sum())
+        if col_inst and col_inst in df.columns:
+            c2.metric("🏛️ Con institución", int(df[col_inst].notna().sum()))
         else:
             c2.metric("🏛️ Con institución", 0)
         
-        if col_orcid:
-            c3.metric("🆔 Con ORCID", df[col_orcid].notna().sum())
+        if col_orcid and col_orcid in df.columns:
+            c3.metric("🆔 Con ORCID", int(df[col_orcid].notna().sum()))
         else:
             c3.metric("🆔 Con ORCID", 0)
         
-        if col_industrial:
-            c4.metric("🏭 Con info industrial", df[col_industrial].notna().sum())
+        if col_industrial and col_industrial in df.columns:
+            c4.metric("🏭 Con info industrial", int(df[col_industrial].notna().sum()))
         else:
-            c4.metric(" Con info industrial", 0)
+            c4.metric("🏭 Con info industrial", 0)
         
+        # Mostrar columnas detectadas
         with st.expander("🔍 Columnas detectadas", expanded=False):
             if col_map:
                 col_list = []
@@ -1131,23 +1154,24 @@ def main():
             if not col_orcid:
                 missing.append("⚠️ ORCID")
             if not col_industrial:
-                missing.append("️ INDUSTRIAL info (se creará)")
+                missing.append("ℹ️ INDUSTRIAL info (se creará)")
             if missing:
                 st.warning("Columnas faltantes: " + ", ".join(missing))
         
+        # Tabla completa del dataset
         with st.expander("📋 Ver dataset completo", expanded=False):
             display_cols = []
-            if col_nombre:
+            if col_nombre and col_nombre in df.columns:
                 display_cols.append(col_nombre)
-            if col_inst:
+            if col_inst and col_inst in df.columns:
                 display_cols.append(col_inst)
-            if col_orcid:
+            if col_orcid and col_orcid in df.columns:
                 display_cols.append(col_orcid)
-            if col_score:
+            if col_score and col_score in df.columns:
                 display_cols.append(col_score)
-            if col_patentes:
+            if col_patentes and col_patentes in df.columns:
                 display_cols.append(col_patentes)
-            if col_industrial:
+            if col_industrial and col_industrial in df.columns:
                 display_cols.append(col_industrial)
             
             if display_cols:
@@ -1155,7 +1179,8 @@ def main():
             else:
                 st.dataframe(df, use_container_width=True, height=400)
         
-        if col_inst:
+        # Estadísticas por institución
+        if col_inst and col_inst in df.columns:
             with st.expander("📈 Distribución por institución", expanded=False):
                 try:
                     inst_counts = df[col_inst].value_counts().head(10)
@@ -1166,7 +1191,8 @@ def main():
                 except Exception as e:
                     st.warning(f"No se pudo generar el gráfico: {e}")
 
-        if not col_nombre:
+        # Verificación crítica
+        if not col_nombre or col_nombre not in df.columns:
             st.error("❌ No se detectó columna de nombres.")
             st.stop()
 
@@ -1176,7 +1202,7 @@ def main():
         if not st.session_state.linkedin_ok:
             st.warning("⚠️ Primero verifica sesión LinkedIn")
         else:
-            tab1, tab2 = st.tabs([" Búsqueda automática (multi-ronda)", " URL manual"])
+            tab1, tab2 = st.tabs(["🔍 Búsqueda automática (multi-ronda)", "🔗 URL manual"])
             
             with tab1:
                 st.info("""
@@ -1193,13 +1219,19 @@ Los resultados se combinan y ordenan por relevancia.
                     default=df[col_nombre].tolist()[:1]
                 )
 
-                if st.button(" Buscar candidatos (multi-ronda)", type="primary", use_container_width=True):
+                if st.button("🔍 Buscar candidatos (multi-ronda)", type="primary", use_container_width=True):
                     progress = st.progress(0)
                     status_container = st.container()
                     
                     for i, nombre in enumerate(seleccion):
-                        inst = str(df[df[col_nombre] == nombre][col_inst].iloc[0]) if col_inst else ""
-                        orcid = str(df[df[col_nombre] == nombre][col_orcid].iloc[0]) if col_orcid else ""
+                        # Obtener datos de forma segura
+                        row_match = df[df[col_nombre] == nombre]
+                        if len(row_match) == 0:
+                            continue
+                        
+                        row = row_match.iloc[0]
+                        inst = str(row.get(col_inst, "")) if col_inst and col_inst in df.columns and pd.notna(row.get(col_inst, "")) else ""
+                        orcid = str(row.get(col_orcid, "")) if col_orcid and col_orcid in df.columns and pd.notna(row.get(col_orcid, "")) else ""
 
                         with status_container:
                             with st.spinner(f"🔍 {nombre}..."):
@@ -1207,14 +1239,14 @@ Los resultados se combinan y ordenan por relevancia.
                                     st.caption(msg)
                                 
                                 results = st.session_state.scraper.search_person_multi_round(
-                                    nombre, inst, orcid, 
+                                    str(nombre), str(inst), str(orcid), 
                                     debug_mode=st.session_state.debug_mode,
                                     progress_callback=update_progress
                                 )
                                 
                                 if results:
-                                    st.session_state.search_results[nombre] = results
-                                    st.session_state.search_debug[nombre] = {
+                                    st.session_state.search_results[str(nombre)] = results
+                                    st.session_state.search_debug[str(nombre)] = {
                                         "institution": inst,
                                         "orcid": orcid,
                                         "rounds": st.session_state.scraper.debug_info.get("rounds", []),
@@ -1258,8 +1290,15 @@ Los resultados se combinan y ordenan por relevancia.
                     rounds = debug_info.get("rounds", [])
                     
                     with st.expander(f"👤 {nombre} ({len(results)} candidatos)", expanded=True):
-                        inst_excel = str(df[df[col_nombre] == nombre][col_inst].iloc[0]) if col_inst else ""
-                        orcid_excel = str(df[df[col_nombre] == nombre][col_orcid].iloc[0]) if col_orcid else ""
+                        # Info del Excel (segura)
+                        row_match = df[df[col_nombre] == nombre]
+                        if len(row_match) > 0:
+                            row = row_match.iloc[0]
+                            inst_excel = str(row.get(col_inst, "")) if col_inst and col_inst in df.columns and pd.notna(row.get(col_inst, "")) else ""
+                            orcid_excel = str(row.get(col_orcid, "")) if col_orcid and col_orcid in df.columns and pd.notna(row.get(col_orcid, "")) else ""
+                        else:
+                            inst_excel = ""
+                            orcid_excel = ""
                         
                         col_info1, col_info2 = st.columns(2)
                         with col_info1:
@@ -1273,6 +1312,7 @@ Los resultados se combinan y ordenan por relevancia.
                             else:
                                 st.markdown("**🔗 ORCID:** No disponible")
                         
+                        # Mostrar resumen de rondas
                         if rounds:
                             st.markdown("**🔄 Resumen de búsquedas:**")
                             cols = st.columns(min(len(rounds), 3))
@@ -1348,7 +1388,7 @@ Los resultados se combinan y ordenan por relevancia.
                     cached = get_cached_cv(nombre)
                     if cached:
                         st.session_state.cvs[nombre] = cached
-                        st.info(f" {nombre}: de caché")
+                        st.info(f"⚡ {nombre}: de caché")
                     else:
                         with st.spinner(f"📄 {nombre}..."):
                             cv = st.session_state.scraper.extract_full_cv(url)
@@ -1368,7 +1408,7 @@ Los resultados se combinan y ordenan por relevancia.
 
         # Mostrar CVs
         if st.session_state.cvs:
-            with st.expander(f" CVs ({len(st.session_state.cvs)})", expanded=False):
+            with st.expander(f"📄 CVs ({len(st.session_state.cvs)})", expanded=False):
                 for nombre, cv in st.session_state.cvs.items():
                     st.markdown(f"**👤 {nombre}**")
                     st.caption(f"🎯 {cv.get('headline', 'N/A')}")
@@ -1387,7 +1427,7 @@ Los resultados se combinan y ordenan por relevancia.
                     st.divider()
 
         # STEP 3: Analizar con IA
-        st.markdown("### 3️ Analizar con IA (Patentes + Spin-offs + Actividad Industrial)")
+        st.markdown("### 3️⃣ Analizar con IA (Patentes + Spin-offs + Actividad Industrial)")
 
         if not st.session_state.openai_ok:
             st.warning("⚠️ Configura OpenAI")
@@ -1414,8 +1454,13 @@ Los resultados se combinan y ordenan por relevancia.
                         
                         cv_text = "\n".join(cv_text_parts)
                         
-                        row = df[df[col_nombre] == nombre].iloc[0] if nombre in df[col_nombre].values else None
-                        datos_excel = extraer_datos_excel_para_ia(row, col_map) if row is not None else None
+                        # Obtener datos del Excel de forma segura
+                        row_match = df[df[col_nombre] == nombre]
+                        if len(row_match) > 0:
+                            row = row_match.iloc[0]
+                            datos_excel = extraer_datos_excel_para_ia(row, col_map)
+                        else:
+                            datos_excel = None
                         
                         analisis = analyzer.analizar_cv(nombre, cv_text, datos_excel)
                         st.session_state.analisis[nombre] = analisis
@@ -1437,7 +1482,7 @@ Los resultados se combinan y ordenan por relevancia.
                     st.markdown(f"**👤 {nombre}**")
                     
                     if analisis.get("patentes"):
-                        st.markdown(f"** Patentes ({len(analisis['patentes'])}):**")
+                        st.markdown(f"**📜 Patentes ({len(analisis['patentes'])}):**")
                         for pat in analisis["patentes"]:
                             st.caption(f"• {pat.get('titulo', '?')} {pat.get('numero', '')} [{pat.get('anio', '')}]")
                     
@@ -1480,7 +1525,7 @@ Los resultados se combinan y ordenan por relevancia.
                     cv = st.session_state.cvs.get(nombre, {})
                     analisis = st.session_state.analisis.get(nombre, {})
                     if cv or analisis:
-                        df_out.at[idx, col_industrial_out] = formatear_para_excel(nombre, cv, analisis)
+                        df_out.at[idx, col_industrial_out] = formatear_para_excel(str(nombre), cv, analisis)
 
                 buffer = BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
