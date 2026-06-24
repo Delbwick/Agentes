@@ -1243,185 +1243,517 @@ with tab3:
 # TAB 4 - MONITOR DE CONTENIDOS (FUENTES FIDEDIGNAS + WORKFLOW SEMANAL)
 # =====================================================
 
-# =====================================================
-# TAB 4 - MONITOR DE CONTENIDOS (MEJORADO v2.0)
-# =====================================================
-
 with tab4:
     st.markdown("## 📡 Monitor de Contenidos LifeSciences")
-    st.markdown("*Fuentes fidedignas, sugerencias formateadas y guardado automático en GCS*")
+    st.markdown("*Fuentes fidedignas que revisan cada 24h y sugieren contenido relevante para tus verticales*")
     
     # =====================================================
-    # 1. GESTIÓN DE FUENTES (Predefinidas + Personalizadas)
+    # DEFINICIÓN DE FUENTES FIDEDIGNAS (Tu brief estructurado)
     # =====================================================
-    st.markdown("### 🔗 Gestión de Fuentes")
     
-    # Fuentes adicionales recomendadas
-    st.markdown("#### 📚 Fuentes adicionales recomendadas")
-    additional_sources = {
-        "applied_clinical": {"name": "Applied Clinical Trials", "url": "https://appliedclinicaltrialsonline.com", "type": "market", "confidence": "B", "category": "DCT/eClinical", "why": "Operativo y técnico para ensayos descentralizados, endpoints digitales y operaciones clínicas."},
-        "medtech_dive": {"name": "MedTech Dive", "url": "https://www.medtechdive.com", "type": "market", "confidence": "B", "category": "MedTech/Dispositivos", "why": "Radar rápido para regulación de dispositivos, reembolsos y lanzamientos en MedTech."},
-        "fierce_biotech": {"name": "Fierce Biotech", "url": "https://www.fiercebiotech.com", "type": "market", "confidence": "B", "category": "Biotech/Inversión", "why": "Rondas de financiación, M&A, prioridades de big pharma y señales de mercado early-stage."}
+    TRUSTED_SOURCES = {
+        # 🔬 CIENTÍFICAS (Confianza A/B)
+        "clinicaltrials": {
+            "id": "clinicaltrials",
+            "name": "ClinicalTrials.gov",
+            "url": "https://clinicaltrials.gov",
+            "type": "scientific",
+            "confidence": "A",
+            "category": "Clinical Development",
+            "why": "Mejor 'early signal' de adopción real: qué tecnologías entran en protocolos (liquid biopsy/MRD, ePRO/eCOA, DCT). Reduce sesgo de 'paper hype'.",
+            "watch_queries": [
+                {"name": "MRD/Liquid Biopsy", "query": '"ctDNA MRD" OR "minimal residual disease" OR "liquid biopsy monitoring"', "vertical": "Liquid Biopsy"},
+                {"name": "eClinical/DCT", "query": '"ePRO" OR "eCOA" OR "decentralized trial" OR "telemedicine" OR "home nursing"', "vertical": "DCT/eClinical"},
+                {"name": "QC/ATMP", "query": '"rapid sterility testing" OR "rapid microbiology" OR "ATMP QC" OR "cell therapy release testing"', "vertical": "QC/ATMP"},
+                {"name": "RWE", "query": '"real-world evidence" OR "external control arm"', "vertical": "RWE/Data"},
+            ],
+            "weekly_focus": ["Nuevos trials fase II/III", "Sponsors emergentes", "Endpoints innovadores", "Vendors tecnológicos"],
+            "tips": ["Guardar búsquedas por vertical + alertas email", "Revisar: nuevos trials, cambios de estado, sponsors repetidos", "Exportar a CSV y cruzar con fuentes de mercado"]
+        },
+        "pubmed": {
+            "id": "pubmed",
+            "name": "PubMed / NCBI",
+            "url": "https://pubmed.ncbi.nlm.nih.gov",
+            "type": "scientific",
+            "confidence": "B",
+            "category": "Technical Evidence",
+            "why": "Cobertura masiva de avances técnicos: LoD, interferencias, estabilidad, bioinformática. Permite 'matchear' señales de mercado con evidencia.",
+            "watch_queries": [
+                {"name": "Dx/POC", "query": '"point-of-care molecular" OR "sample-to-answer" OR "invalid rate" OR "HL7 FHIR LIS integration"', "vertical": "Dx/POC"},
+                {"name": "Liquid Biopsy", "query": '"ctDNA longitudinal" OR "MRD PPV NPV" OR "tumor-informed vs tumor-agnostic" OR "clonal hematopoesis"', "vertical": "Liquid Biopsy"},
+                {"name": "QC/ATMP", "query": '"rapid sterility" OR "mycoplasma rapid" OR "potency assay automation" OR "comparability"', "vertical": "QC/ATMP"},
+                {"name": "Lab Automation", "query": '"self-driving lab" OR "closed-loop experimentation" OR "Lab OS" OR "DOE automation"', "vertical": "Automation"},
+                {"name": "Reactivos", "query": '"ambient stabilization enzymes" OR "lyophilization alternatives" OR "freeze-thaw stability"', "vertical": "Reagents"},
+            ],
+            "weekly_focus": ["Nuevas metodologías", "Validaciones técnicas", "Limitaciones reportadas", "Comparativas multi-site"],
+            "tips": ["6-10 queries guardadas (una por segmento)", "Digest semanal de 'top 10 nuevos' por query", "Regla: si claim aparece en mercado, buscar 2-3 papers que lo soporten/invaliden"]
+        },
+        "nature_biotech": {
+            "id": "nature_biotech",
+            "name": "Nature Biotechnology",
+            "url": "https://www.nature.com/nbt",
+            "type": "scientific",
+            "confidence": "A",
+            "category": "Frontier Innovation",
+            "why": "Frontier translation: herramientas que pasan de academia a producto. Detecta tendencias antes de mainstream con contexto técnico suficiente.",
+            "watch_queries": [
+                {"name": "Nuevas Plataformas Dx", "query": "diagnostic platforms sample-to-answer", "vertical": "Dx Innovation"},
+                {"name": "Biofabricación/QC", "query": "biofabrication standardization automation digitalization GMP", "vertical": "QC/ATMP"},
+                {"name": "RWE/Data Infra", "query": "real-world data standardization governance methodologies", "vertical": "RWE/Data"},
+            ],
+            "weekly_focus": ["Plataformas diagnósticas emergentes", "Automatización GMP", "Infraestructura de datos"],
+            "tips": ["Alertas por Collections/TOC", "1-2 lecturas profundas/semana + 3 bullets: qué habilita, qué bloquea, qué prueba faltaría", "Cross-referenciar con ClinicalTrials"]
+        },
+        # 📊 MERCADO (Confianza B)
+        "genomeweb": {
+            "id": "genomeweb",
+            "name": "GenomeWeb",
+            "url": "https://www.genomeweb.com",
+            "type": "market",
+            "confidence": "B",
+            "category": "Market Intelligence",
+            "why": "Radar fuerte para IVD, secuenciación, liquid biopsy, reimbursement, M&A. Detecta lanzamientos, cambios de estrategia, pricing/canal antes que otros.",
+            "watch_queries": [
+                {"name": "Deals/Partnerships", "query": "liquid biopsy partnership acquisition", "vertical": "Market Moves"},
+                {"name": "Reimbursement", "query": "reimbursement guideline coverage decision", "vertical": "Market Access"},
+                {"name": "POC Platforms", "query": "point-of-care platform launch", "vertical": "Dx/POC"},
+            ],
+            "weekly_focus": ["Lanzamientos de productos", "Cambios de pricing", "M&A", "Decisiones de reembolso"],
+            "tips": ["Revisar 'Deals' y 'Regulatory' cada lunes", "Taggear por vertical y marcar 'movimientos de incumbente'", "Cruzar con ClinicalTrials para ver adopción real"]
+        },
+        "endpoints": {
+            "id": "endpoints",
+            "name": "Endpoints News",
+            "url": "https://endpts.com",
+            "type": "market",
+            "confidence": "B",
+            "category": "Business Intelligence",
+            "why": "Biopharma + deals + vendors: conecta tendencia técnica con capex real. Detecta quién compra qué, rondas, partnerships, prioridades de pharma.",
+            "watch_queries": [
+                {"name": "Pharma-Vendor Contracts", "query": "pharma vendor contract RWE eClinical", "vertical": "Partnerships"},
+                {"name": "Platform Acquisitions", "query": "acquisition platform technology", "vertical": "M&A"},
+                {"name": "Clinical Development Shifts", "query": "clinical development focus CMC", "vertical": "Strategy"},
+            ],
+            "weekly_focus": ["Contratos pharma↔️vendors", "Adquisiciones de plataformas", "Cambios de foco en desarrollo"],
+            "tips": ["Filtrar por tags: 'Diagnostics', 'Digital Health', 'Clinical Trials'", "Seguir movimientos de pharma top-20 en matriz", "Notar timing: ¿anuncio antes/después de datos de trials?"]
+        },
+        "bioprocess": {
+            "id": "bioprocess",
+            "name": "BioProcess International",
+            "url": "https://www.bioprocessintl.com",
+            "type": "market",
+            "confidence": "B",
+            "category": "Industrial Operations",
+            "why": "Cubre parte industrial: QC en terapias avanzadas, microbiología rápida, single-use, QA/GMP, supply chain. Casos prácticos de implementación en planta.",
+            "watch_queries": [
+                {"name": "QC Release Time", "query": "QC release time rapid testing validation", "vertical": "QC/ATMP"},
+                {"name": "Supply Chain", "query": "supply chain reagents materials single-use", "vertical": "Operations"},
+                {"name": "Regulatory Shifts", "query": "regulatory requirement operational GMP", "vertical": "Compliance"},
+            ],
+            "weekly_focus": ["Tendencias de QC release", "Validación rápida", "Problemas de supply", "Shifts regulatorios"],
+            "tips": ["Focalizar en secciones: 'Analytical', 'Downstream', 'Facilities'", "Buscar 'case study' e 'implementation' para adopción real", "Cruzar con PubMed para validar claims técnicos"]
+        }
     }
+    
+    # Workflow semanal recomendado
+    WEEKLY_WORKFLOW = {
+        "Monday": {"duration": "30 min", "activity": "Market Sweep", "sources": ["genomeweb", "endpoints", "bioprocess"], "deliverable": "10 titulares, tag por vertical, marcar 1-2 'movimientos de incumbente'"},
+        "Wednesday": {"duration": "45 min", "activity": "Science Sweep", "sources": ["clinicaltrials", "pubmed"], "deliverable": "5 señales: nuevos trials, nuevas evidencias, 1 'paper que mata un claim'"},
+        "Friday": {"duration": "30 min", "activity": "Implications Memo", "sources": [], "deliverable": "5 bullets: (i) tech que acelera, (ii) tech que muere, (iii) oportunidad (who pays), (iv) riesgo regulatorio/QA, (v) próximos bets"}
+    }
+    
+    COVERAGE_NOTES = """
+    Con estas 6 fuentes cubres muy bien: **Dx/Genómica/Liquid biopsy**, **bioproceso/QC/ATMP**, y una parte relevante de **RWE/DCT**.
+    
+    Si en 4 semanas ves que **DCT/eClinical** se queda corto en señal, el swap más eficiente (sin añadir más fuentes) suele ser:
+    • Sustituir *Endpoints* por **Applied Clinical Trials** (más operativo DCT/eClinical), o
+    • Sustituir *BioProcess International* si esa línea baja prioridad.
+    
+    **Nivel de confianza global: B** (fuentes consolidadas; ajuste fino según segmentos activos este trimestre).
+    """
+    
+    # =====================================================
+    # INICIALIZACIÓN DE ESTADO
+    # =====================================================
+    if "monitor_active_sources" not in st.session_state:
+        # Por defecto, activar las 6 fuentes del brief
+        st.session_state.monitor_active_sources = list(TRUSTED_SOURCES.keys())
+    if "monitor_suggestions" not in st.session_state:
+        st.session_state.monitor_suggestions = []
+    if "monitor_last_check" not in st.session_state:
+        st.session_state.monitor_last_check = None
+    if "monitor_config" not in st.session_state:
+        st.session_state.monitor_config = {"model": "sonar", "auto_check": True, "notify_email": ""}
+    
+    # =====================================================
+    # SECCIÓN 1: FUENTES FIDEDIGNAS (Tu brief integrado)
+    # =====================================================
+    st.markdown("### 🔗 Fuentes Fidedignas (3 científicas + 3 de mercado)")
+    
+    tab_sci, tab_mkt = st.tabs(["🔬 Científicas (Confianza A/B)", "📊 Mercado (Confianza B)"])
+    
+    with tab_sci:
+        st.markdown("*Fuentes para detectar early signals y evidencia técnica reproducible*")
+        for src_id, src in TRUSTED_SOURCES.items():
+            if src["type"] == "scientific":
+                with st.expander(f"{'🟢' if src['confidence']=='A' else '🟡'} {src['name']} — {src['category']}", expanded=False):
+                    st.markdown(f"**URL:** [{src['url']}]({src['url']})")
+                    st.markdown(f"*{src['why']}*")
+                    
+                    st.markdown("#### 🔍 Queries de monitor semanal")
+                    for q in src["watch_queries"]:
+                        st.code(f"{q['vertical']}: {q['query']}", language="text")
+                    
+                    st.markdown("#### 💡 Cómo instrumentar")
+                    for tip in src["tips"]:
+                        st.markdown(f"• {tip}")
+                    
+                    st.markdown(f"#### 🎯 Enfoque semanal: {', '.join(src['weekly_focus'])}")
+                    
+                    if src_id not in st.session_state.monitor_active_sources:
+                        if st.button(f"➕ Activar {src['name']}", key=f"activate_{src_id}", use_container_width=True):
+                            st.session_state.monitor_active_sources.append(src_id)
+                            st.rerun()
+                    else:
+                        st.success(f"✅ {src['name']} está activa en tu monitor")
+    
+    with tab_mkt:
+        st.markdown("*Fuentes para detectar movimientos de incumbentes y oportunidades comerciales*")
+        for src_id, src in TRUSTED_SOURCES.items():
+            if src["type"] == "market":
+                with st.expander(f"🟡 {src['name']} — {src['category']}", expanded=False):
+                    st.markdown(f"**URL:** [{src['url']}]({src['url']})")
+                    st.markdown(f"*{src['why']}*")
+                    
+                    st.markdown("#### 🔍 Queries de monitor semanal")
+                    for q in src["watch_queries"]:
+                        st.code(f"{q['vertical']}: {q['query']}", language="text")
+                    
+                    st.markdown("#### 💡 Cómo instrumentar")
+                    for tip in src["tips"]:
+                        st.markdown(f"• {tip}")
+                    
+                    st.markdown(f"#### 🎯 Enfoque semanal: {', '.join(src['weekly_focus'])}")
+                    
+                    if src_id not in st.session_state.monitor_active_sources:
+                        if st.button(f"➕ Activar {src['name']}", key=f"activate_{src_id}", use_container_width=True):
+                            st.session_state.monitor_active_sources.append(src_id)
+                            st.rerun()
+                    else:
+                        st.success(f"✅ {src['name']} está activa en tu monitor")
+    
+    # Fuentes personalizadas adicionales
+    st.markdown("---")
+    st.markdown("### ➕ Añadir fuente personalizada")
     
     col_add1, col_add2 = st.columns(2)
     with col_add1:
-        for sid, src in additional_sources.items():
-            if sid not in st.session_state.get("monitor_active_sources", []):
-                if st.button(f"➕ Activar {src['name']}", key=f"activate_{sid}", use_container_width=True):
-                    if "monitor_active_sources" not in st.session_state: st.session_state.monitor_active_sources = []
-                    st.session_state.monitor_active_sources.append(sid)
-                    st.rerun()
-            else:
-                st.success(f"✅ {src['name']} activa")
-    
+        custom_name = st.text_input("Nombre de la fuente", placeholder="Ej: Applied Clinical Trials", key="tab4_custom_name")
+        custom_url = st.text_input("URL", placeholder="https://...", key="tab4_custom_url")
+        custom_type = st.selectbox("Tipo", ["scientific", "market"], key="tab4_custom_type")
     with col_add2:
-        st.markdown("**➕ Añadir fuente personalizada**")
-        cust_name = st.text_input("Nombre", placeholder="Ej: PharmaTimes", key="tab4_cust_name")
-        cust_url = st.text_input("URL", placeholder="https://...", key="tab4_cust_url")
-        cust_type = st.selectbox("Tipo", ["scientific", "market"], key="tab4_cust_type")
-        cust_cat = st.text_input("Categoría", placeholder="Ej: Regulatory", key="tab4_cust_cat")
-        
-        if st.button("➕ Añadir personalizada", key="tab4_add_cust", use_container_width=True):
-            if cust_name and cust_url:
-                new_id = f"custom_{datetime.now().strftime('%Y%m%d_%H%M')}"
-                additional_sources[new_id] = {"name": cust_name, "url": cust_url, "type": cust_type, "confidence": "B", "category": cust_cat or "Personalizada", "why": "Fuente manual"}
-                if "monitor_active_sources" not in st.session_state: st.session_state.monitor_active_sources = []
-                st.session_state.monitor_active_sources.append(new_id)
-                st.success(f"✅ {cust_name} añadida")
-                st.rerun()
-
+        custom_cat = st.text_input("Categoría", placeholder="Ej: DCT/eClinical", key="tab4_custom_cat")
+        custom_conf = st.selectbox("Confianza", ["A", "B", "C"], key="tab4_custom_conf")
+    
+    if st.button("➕ Añadir fuente personalizada", key="tab4_add_custom", use_container_width=True):
+        if custom_name and custom_url:
+            new_id = f"custom_{datetime.now().strftime('%Y%m%d_%H%M')}"
+            TRUSTED_SOURCES[new_id] = {
+                "id": new_id, "name": custom_name, "url": custom_url, "type": custom_type,
+                "confidence": custom_conf, "category": custom_cat or "Personalizada",
+                "why": "Fuente añadida manualmente por el usuario",
+                "watch_queries": [], "weekly_focus": [], "tips": []
+            }
+            st.session_state.monitor_active_sources.append(new_id)
+            st.success(f"✅ {custom_name} añadida y activada")
+            st.rerun()
+    
     # =====================================================
-    # 2. REVISIÓN + AUTO-GUARDADO EN GCS
+    # SECCIÓN 2: WORKFLOW SEMANAL + REVISIÓN
     # =====================================================
     st.markdown("---")
-    st.markdown("### 🔄 Revisión y Generación")
+    st.markdown("### 🔄 Workflow Semanal Recomendado")
     
-    if st.button(" Revisar fuentes ahora", type="primary", use_container_width=True, key="tab4_run_check"):
-        with st.spinner(" Analizando fuentes y generando sugerencias..."):
-            suggestions = []
-            active_ids = st.session_state.get("monitor_active_sources", [])
-            all_srcs = {**additional_sources} # Combine predefined + custom if needed
+    # Timeline visual
+    days = ["Monday", "Wednesday", "Friday"]
+    cols = st.columns(3)
+    today = datetime.now().strftime("%A")
+    
+    for i, day in enumerate(days):
+        with cols[i]:
+            wf = WEEKLY_WORKFLOW[day]
+            is_today = today == day
             
-            # Simulación de análisis (en producción: loop real con Perplexity)
-            for sid in active_ids:
-                src = all_srcs.get(sid, {})
-                if not src: continue
-                try:
-                    # Aquí iría la llamada real a Perplexity. Para demo, generamos estructura válida
-                    suggestion = {
-                        "id": f"{sid}_{datetime.now().strftime('%H%M%S')}",
-                        "source": {"name": src["name"], "url": src["url"], "type": src["type"], "category": src["category"]},
-                        "analysis": {"trends": ["Tendencia detectada automáticamente", "Movimiento de mercado relevante"], "opportunities": ["Crear guía técnica", "Análisis comparativo"], "hot_topics": [f"Novadades en {src['category']}"], "urgency": "media"},
-                        "suggestion": {"title": f"Análisis sobre {src['name']}", "format": "Artículo Web / Blog", "audience": "B2B", "tab1_query": f"Analiza las últimas novedades de {src['name']} para audiencia B2B.", "role": "Responsable de Marketing B2B", "context": f"Fuente: {src['url']}", "sources": src["url"]},
-                        "created_at": datetime.utcnow().isoformat(),
-                        "status": "new"
-                    }
-                    suggestions.append(suggestion)
-                except Exception as e:
-                    st.warning(f"⚠️ Error en {src.get('name','?')}: {str(e)[:50]}")
+            st.markdown(f"**{'✅ ' if is_today else ''}{day}**")
+            st.markdown(f"*{wf['duration']}*")
+            st.markdown(f"**{wf['activity']}**")
             
-            st.session_state.monitor_suggestions = suggestions
-            st.session_state.monitor_last_check = datetime.now()
+            if wf["sources"]:
+                src_names = [TRUSTED_SOURCES[sid]["name"] for sid in wf["sources"] if sid in TRUSTED_SOURCES]
+                with st.expander(f"Fuentes ({len(src_names)})"):
+                    for name in src_names:
+                        st.markdown(f"• {name}")
             
-            # ✅ PUNTO 3: Auto-guardado en GCS
-            if suggestions:
-                try:
-                    monitor_folder = "monitor_contenidos/"
-                    # GCS no crea carpetas vacías, pero usamos el prefijo. Subimos un JSON de resultados.
-                    filename = f"{monitor_folder}revision_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                    payload = {"checked_at": datetime.now().isoformat(), "sources_count": len(active_ids), "suggestions": suggestions}
-                    upload_json_to_gcs(client, bucket_name, "", filename, payload) # "" folder because filename includes path
-                    st.success(f"✅ Revisión completada: {len(suggestions)} sugerencias generadas y guardadas en `monitor_contenidos/`")
-                except Exception as e:
-                    st.warning(f"⚠️ Sugerencias generadas, pero auto-guardado GCS falló: {str(e)[:100]}")
-            
-            st.rerun()
+            st.caption(f"📋 {wf['deliverable'][:80]}...")
+    
+    # Panel de revisión
+    st.markdown("---")
+    col_check, col_info = st.columns([2, 3])
+    
+    with col_check:
+        active_srcs = [TRUSTED_SOURCES[sid] for sid in st.session_state.monitor_active_sources if sid in TRUSTED_SOURCES]
+        
+        if st.button("🔍 Revisar fuentes ahora", type="primary", use_container_width=True, key="tab4_run_check"):
+            with st.spinner(f" Analizando {len(active_srcs)} fuentes con Perplexity..."):
+                suggestions = []
+                
+                for src in active_srcs:
+                    try:
+                        pplx = OpenAI(api_key=st.session_state.perplexity_key, base_url="https://api.perplexity.ai")
+                        
+                        # Construir prompt específico
+                        queries_text = "\n".join([f"- {q['name']}: `{q['query']}`" for q in src["watch_queries"][:5]])
+                        focus = "evidencia técnica, nuevos trials, validaciones" if src["type"]=="scientific" else "movimientos de mercado, M&A, pricing, partnerships"
+                        
+                        prompt = f"""Eres analista experto en LifeSciences monitorizando {src['name']}.
 
-    # Info de última revisión
-    if st.session_state.get("monitor_last_check"):
-        next_check = st.session_state.monitor_last_check + timedelta(hours=24)
-        st.info(f"🕒 Última: {st.session_state.monitor_last_check.strftime('%d/%m %H:%M')} | Próxima: {next_check.strftime('%d/%m %H:%M')}")
+FUENTE: {src['name']} ({src['url']}) | CONFIANZA: {src['confidence']} | CATEGORÍA: {src['category']}
 
+QUERIES ACTIVAS:
+{queries_text if queries_text else "Sin queries configuradas"}
+
+ENFOQUE: Detectar {focus}. Extrae insights accionables en JSON:
+{{
+  "trends": ["tendencia con contexto específico"],
+  "opportunities": ["oportunidad de contenido B2B"],
+  "hot_topics": ["tema candente"],
+  "content_angles": [{{"angle": "ángulo", "format": "email|linkedin|blog", "audience": "B2B|técnico|inversores"}}],
+  "validation_needed": ["claim que requiere verificación"],
+  "urgency": "baja|media|alta|crítica",
+  "vertical_impact": ["Liquid Biopsy", "QC/ATMP", "Dx/POC", "RWE"]
+}}
+
+Reglas: Sé específico (tecnologías, empresas, metodologías), prioriza lo accionable, marca "hype" sin evidencia."""
+                        
+                        response = pplx.chat.completions.create(model=st.session_state.monitor_config["model"], messages=[{"role": "user", "content": prompt}], temperature=0.3)
+                        
+                        # Parsear
+                        content = response.choices[0].message.content.strip()
+                        if "```json" in content: content = content.split("```json")[1].split("```")[0].strip()
+                        elif "```" in content: content = content.split("```")[1].split("```")[0].strip()
+                        
+                        try: analysis = json.loads(content)
+                        except:
+                            m = re.search(r'\{.*\}', content, re.DOTALL)
+                            analysis = json.loads(m.group()) if m else {"trends": ["Análisis no disponible"], "opportunities": [], "hot_topics": [], "content_angles": [], "urgency": "media", "vertical_impact": []}
+                        
+                        # Crear sugerencia
+                        angles = analysis.get("content_angles", [{}])
+                        best = angles[0] if angles else {"angle": f"Análisis sobre {analysis.get('hot_topics', ['tendencias'])[0]}", "format": "blog", "audience": "B2B"}
+                        
+                        suggestion = {
+                            "id": f"{src['id']}_{datetime.now().strftime('%Y%m%d_%H%M')}",
+                            "source": {"id": src["id"], "name": src["name"], "url": src["url"], "type": src["type"], "confidence": src["confidence"], "category": src["category"]},
+                            "analysis": analysis,
+                            "suggestion": {
+                                "title": best.get("angle", "Análisis de tendencia"),
+                                "format": best.get("format", "blog"),
+                                "audience": best.get("audience", "B2B"),
+                                "urgency": analysis.get("urgency", "media"),
+                                "verticals": analysis.get("vertical_impact", []),
+                                "tab1_query": f"Basándome en {src['name']} ({src['url']}):\n\n🔍 Tendencias: {', '.join(analysis.get('trends', [])[:3])}\n\n🎯 Oportunidades: {', '.join(analysis.get('opportunities', [])[:2])}\n\nGenera análisis en formato {best.get('format', 'blog')} para {best.get('audience', 'B2B')} sobre: {best.get('angle')}\n\nIncluye: datos verificables, fuentes citadas, recomendaciones accionables con ROI.",
+                                "key_points": analysis.get("trends", [])[:3],
+                                "validation_claims": analysis.get("validation_needed", [])
+                            },
+                            "created_at": datetime.utcnow().isoformat(),
+                            "status": "new"
+                        }
+                        suggestions.append(suggestion)
+                        
+                    except Exception as e:
+                        st.warning(f"⚠️ Error analizando {src['name']}: {str(e)[:80]}")
+                
+                # Guardar y actualizar
+                st.session_state.monitor_suggestions = suggestions
+                st.session_state.monitor_last_check = datetime.now()
+                
+                # Generar memo si es viernes
+                if today == "Friday" and suggestions:
+                    memo = f"""# 📋 Implications Memo — {datetime.now().strftime('%d/%m/%Y')}
+
+## 🔥 Tech que acelera
+"""
+                    for s in [x for x in suggestions if x["suggestion"]["urgency"] in ["alta", "crítica"]][:3]:
+                        memo += f"- **{s['source']['name']}**: {s['suggestion']['title']}\n"
+                    
+                    memo += """
+## 💰 Oportunidad (who pays)
+"""
+                    for s in suggestions[:2]:
+                        memo += f"- {s['suggestion']['title']} → {', '.join(s['suggestion']['verticals'][:2])}\n"
+                    
+                    memo += """
+## ⚠️ Riesgo regulatorio / QA
+- [Espacio para riesgos detectados]
+
+## 🎯 Próximos bets a explorar
+"""
+                    for s in suggestions[:2]:
+                        memo += f"- {s['suggestion']['title']} (formato: {s['suggestion']['format']})\n"
+                    
+                    with st.expander("📋 Implications Memo (viernes)", expanded=True):
+                        st.markdown(memo)
+                        if st.button("📋 Copiar memo", key="copy_memo_btn"):
+                            st.code(memo, language="markdown")
+                
+                st.success(f"✅ Revisión completada: {len(suggestions)} sugerencias")
+                st.rerun()
+    
+    with col_info:
+        if st.session_state.monitor_last_check:
+            next_check = st.session_state.monitor_last_check + timedelta(hours=24)
+            remaining = next_check - datetime.now()
+            
+            st.info(f"""
+            **Última revisión:** {st.session_state.monitor_last_check.strftime('%d/%m/%Y %H:%M')}
+            **Próxima automática:** {next_check.strftime('%d/%m/%Y %H:%M')}
+            **Tiempo restante:** {remaining.seconds // 3600}h {(remaining.seconds % 3600) // 60}m
+            """)
+        else:
+            st.info("🔍 Sin revisiones programadas. Haz clic en 'Revisar fuentes ahora' para comenzar.")
+    
     # =====================================================
-    # 3. SUGERENCIAS CON PREVIEW FORMATEADO + BOTONES
+    # SECCIÓN 3: SUGERENCIAS GENERADAS
     # =====================================================
-    if st.session_state.get("monitor_suggestions"):
+    if st.session_state.monitor_suggestions:
         st.markdown("---")
         st.markdown(f"### 💡 Sugerencias de Contenido ({len(st.session_state.monitor_suggestions)})")
         
-        #  Función de formateado neutro (reutilizable para preview)
-        def fmt_suggestion(sug, format_type):
-            s = sug["suggestion"]
-            trends = sug["analysis"].get("trends", [])
-            actions = sug["analysis"].get("opportunities", [])
-            if format_type == "📧 Email Corporativo":
-                return f"Asunto: {s['title']}\n\n{s['title']}\n\nPuntos clave:\n" + "\n".join(f"• {t}" for t in trends[:3]) + f"\n\nAcciones:\n" + "\n".join(f"→ {a}" for a in actions[:2]) + f"\n\n---\nFuente: {sug['source']['url']}"
-            elif format_type == "💼 Post LinkedIn":
-                return f"{s['title']}\n\n🔍 Insights:\n" + "\n".join(f"• {t}" for t in trends[:3]) + f"\n\n✅ Acciones:\n" + "\n".join(f"→ {a}" for a in actions[:2]) + f"\n\n Fuente: {sug['source']['url']}\n\n#B2B #KaiBot"
-            elif format_type == "🌐 Artículo Web/Blog":
-                return f"<h1>{s['title']}</h1><p>Analizado: {datetime.now().strftime('%d/%m/%Y')}</p><h2>Puntos Clave</h2><ul>{''.join(f'<li>{t}</li>' for t in trends[:3])}</ul><h2>Acciones</h2><ul>{''.join(f'<li>{a}</li>' for a in actions[:2])}</ul><p><small>Fuente: <a href='{sug['source']['url']}'>{sug['source']['name']}</a></small></p>"
-            return f"{s['title']}\n\n{'-'*40}\n" + "\n".join(f"• {t}" for t in trends[:3]) + "\n\n" + "\n".join(f"→ {a}" for a in actions[:2])
-
-        for sug in st.session_state.monitor_suggestions:
-            with st.expander(f"{'🔴' if sug['suggestion']['urgency']=='alta' else '🟡'} {sug['source']['name']} — {sug['suggestion']['title']}", expanded=False):
-                col_meta, col_actions = st.columns([3, 1])
-                with col_meta:
-                    st.caption(f"Fuente: {sug['source']['name']} | Categoría: {sug['source']['category']} | Generado: {sug['created_at'][:16]}")
+        # Filtros
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            filter_cat = st.multiselect("Categoría", list(set(s["source"]["category"] for s in st.session_state.monitor_suggestions)), key="tab4_f_cat")
+        with col_f2:
+            filter_urg = st.selectbox("Urgencia", ["Todas", "crítica", "alta", "media", "baja"], key="tab4_f_urg")
+        with col_f3:
+            filter_type = st.selectbox("Tipo fuente", ["Todas", "scientific", "market"], key="tab4_f_type")
+        
+        # Aplicar filtros
+        filtered = st.session_state.monitor_suggestions
+        if filter_cat: filtered = [s for s in filtered if s["source"]["category"] in filter_cat]
+        if filter_urg != "Todas": filtered = [s for s in filtered if s["suggestion"]["urgency"] == filter_urg]
+        if filter_type != "Todas": filtered = [s for s in filtered if s["source"]["type"] == filter_type]
+        
+        # Mostrar sugerencias
+        for sug in filtered:
+            urgency_colors = {"crítica": "🔴", "alta": "🟠", "media": "🟡", "baja": "🟢"}
+            with st.expander(f"{urgency_colors.get(sug['suggestion']['urgency'], '⚪')} {sug['source']['name']} — {sug['suggestion']['title']}", expanded=(sug["suggestion"]["urgency"] in ["crítica", "alta"])):
                 
-                # ✅ PUNTO 2: Preview formateado por formato
-                st.markdown("**👁️ Vista previa del contenido:**")
-                fmt_tabs = st.tabs(["📧 Email", "💼 LinkedIn", " Web", "📝 Texto"])
-                formats = ["📧 Email Corporativo", "💼 Post LinkedIn", "🌐 Artículo Web/Blog", "📝 Texto Plano"]
+                col_s1, col_s2 = st.columns([3, 1])
                 
-                for i, tab in enumerate(fmt_tabs):
-                    with tab:
-                        content = fmt_suggestion(sug, formats[i])
-                        if formats[i] == "🌐 Artículo Web/Blog":
-                            st.components.v1.html(content, height=400, scrolling=True)
-                        else:
-                            st.code(content, language="text")
-
-                # ✅ PUNTO 5: Enviar a Tab 1 con campos pre-rellenados
-                with col_actions:
-                    if st.button(" Enviar al Tab 1", key=f"send_{sug['id']}", type="primary", use_container_width=True):
-                        # Pre-llenar sesión del Tab 1
-                        st.session_state.tab1_query_mode = "🔧 Flexible"
-                        st.session_state.tab1_role = sug["suggestion"].get("role", "Responsable de Marketing B2B")
-                        st.session_state.tab1_context = sug["suggestion"].get("context", "")
-                        st.session_state.tab1_format = sug["suggestion"].get("format", "Artículo Web / Blog")
-                        st.session_state.tab1_sources = sug["suggestion"].get("sources", "")
-                        st.session_state.tab1_custom_query = sug["suggestion"].get("tab1_query", "")
+                with col_s1:
+                    st.markdown(f"**Fuente:** [{sug['source']['name']}]({sug['source']['url']})")
+                    st.caption(f"Confianza: {sug['source']['confidence']} | Categoría: {sug['source']['category']}")
+                    st.caption(f"Generado: {sug['created_at'][:16]}")
+                    
+                    st.markdown("---")
+                    
+                    if sug["analysis"].get("trends"):
+                        st.markdown("**📈 Tendencias:**")
+                        for t in sug["analysis"]["trends"][:3]:
+                            st.markdown(f"• {t}")
+                    
+                    if sug["analysis"].get("opportunities"):
+                        st.markdown("**🎯 Oportunidades:**")
+                        for o in sug["analysis"]["opportunities"][:2]:
+                            st.markdown(f"✓ {o}")
+                    
+                    if sug["suggestion"].get("validation_claims"):
+                        st.warning(f"**⚠️ Claims a validar:** {', '.join(sug['suggestion']['validation_claims'][:2])}")
+                
+                with col_s2:
+                    st.markdown(f"**Formato:** `{sug['suggestion']['format']}`")
+                    st.markdown(f"**Audiencia:** `{sug['suggestion']['audience']}`")
+                    st.markdown(f"**Verticales:** {', '.join(sug['suggestion']['verticals'][:2])}")
+                    
+                    st.markdown("---")
+                    
+                    if st.button("✍️ Crear contenido (NO ACTIVO DE MOMENTO)", key=f"create_{sug['id']}", type="primary", use_container_width=True):
+                        # Pasar al Tab 1 con query pre-cargada
+                        st.session_state.tab1_query_mode = "📝 Personalizada"
+                        st.session_state.tab1_custom_query = sug["suggestion"]["tab1_query"]
                         st.session_state.tab1_from_monitor = True
-                        st.success("✅ Enviado. Cambia a la pestaña '🎯 Generar Contenido' para continuar.")
-
-                # ✅ PUNTO 4: Guardado manual individual
-                if st.button("💾 Guardar este contenido en GCS", key=f"save_{sug['id']}", use_container_width=True):
-                    try:
-                        filename = f"monitor_contenidos/sugerencia_{sug['id']}.json"
-                        upload_json_to_gcs(client, bucket_name, "", filename, sug)
-                        st.success(f"✅ Guardado: {filename}")
-                    except Exception as e:
-                        st.error(f" Error guardando: {str(e)}")
-                
-                st.markdown("---")
-
+                        st.success("📋 Query copiada al Tab 1. Haz clic en '🎯 Generar Contenido' para continuar.")
+                    
+                    if st.button("📋 Copiar query", key=f"copy_{sug['id']}", use_container_width=True):
+                        st.code(sug["suggestion"]["tab1_query"], language="text")
+                        st.caption("✅ Copiado. Pégalo en el Tab 1.")
+                    
+                    if st.button("⭐ Marcar como vista", key=f"mark_{sug['id']}", use_container_width=True):
+                        sug["status"] = "reviewed"
+                        st.rerun()
+                    
+                    if st.button("🗑️ Descartar", key=f"discard_{sug['id']}", use_container_width=True):
+                        st.session_state.monitor_suggestions.remove(sug)
+                        st.rerun()
+    
     # =====================================================
-    # 4. WORKFLOW SEMANAL + CONFIGURACIÓN
+    # SECCIÓN 4: COBERTURA Y CONFIGURACIÓN
     # =====================================================
     st.markdown("---")
-    with st.expander("🔄 Workflow Semanal & Configuración", expanded=False):
-        days = ["Lunes: Market Sweep", "Miércoles: Science Sweep", "Viernes: Implications Memo"]
-        cols = st.columns(3)
-        for i, day in enumerate(days):
-            with cols[i]:
-                st.markdown(f"**{day}**")
-                st.caption("Revisión automática + generación de memo")
+    
+    with st.expander("🗺️ Cobertura y configuración avanzada", expanded=False):
+        st.markdown(COVERAGE_NOTES)
         
-        st.markdown("#### ⚙️ Preferencias")
-        st.checkbox("🔄 Auto-revisión cada 24h (requiere app activa)", value=True, key="tab4_auto")
-        st.text_input(" Email para alertas críticas", placeholder="tu@email.com", key="tab4_email")
-        st.info("💡 Las carpetas en GCS son prefijos. `monitor_contenidos/` se creará automáticamente al guardar.")
+        st.markdown("#### 🎯 Matriz de cobertura actual")
+        coverage_data = {
+            "Vertical": ["Liquid Biopsy", "QC/ATMP", "Dx/POC", "RWE/DCT", "Automation"],
+            "ClinicalTrials": ["✅ MRD/ctDNA", "✅ Release testing", "⚪", "✅ External control", "⚪"],
+            "PubMed": ["✅ Bioinformática", "✅ Comparabilidad", "✅ Invalid rate", "✅ Metodologías", "✅ Lab OS"],
+            "Nature Biotech": ["✅ Nuevas plataformas", "✅ Digitalización GMP", "⚪", "✅ Data infra", "⚪"],
+            "GenomeWeb": ["✅ Lanzamientos", "⚪", "✅ POC platforms", "⚪", "⚪"],
+            "Endpoints": ["✅ M&A", "✅ Partnerships", "⚪", "✅ RWE contracts", "⚪"],
+            "BioProcess": ["⚪", "✅ QC release", "⚪", "⚪", "✅ Supply chain"]
+        }
+        st.dataframe(coverage_data, use_container_width=True, hide_index=True)
+        
+        st.markdown("#### ⚙️ Configuración del Monitor")
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            st.session_state.monitor_config["model"] = st.selectbox("Modelo Perplexity", ["sonar", "sonar-pro", "llama-3.1-70b-instruct"], index=0 if st.session_state.monitor_config["model"]=="sonar" else 1, key="tab4_cfg_model")
+            st.session_state.monitor_config["auto_check"] = st.checkbox("🔄 Revisión automática cada 24h (requiere app activa)", value=st.session_state.monitor_config.get("auto_check", True), key="tab4_cfg_auto")
+        with col_c2:
+            st.session_state.monitor_config["notify_email"] = st.text_input("📧 Email para notificaciones (opcional)", value=st.session_state.monitor_config.get("notify_email", ""), placeholder="tu@email.com", key="tab4_cfg_email")
+            if st.button("💾 Guardar configuración", key="tab4_save_cfg"):
+                st.success("✅ Configuración guardada")
+        
+        st.info("💡 **Nota:** Las revisiones automáticas cada 24h requieren que la app esté activa. En Streamlit Cloud, considera usar GitHub Actions + webhook para trigger externo.")
+    
+    # =====================================================
+    # EXPORTAR CONFIGURACIÓN
+    # =====================================================
+    st.markdown("---")
+    if st.button("📤 Exportar configuración del monitor", key="tab4_export_btn"):
+        export_data = {
+            "version": "1.0",
+            "exported_at": datetime.utcnow().isoformat(),
+            "active_sources": st.session_state.monitor_active_sources,
+            "suggestions_count": len(st.session_state.monitor_suggestions),
+            "config": st.session_state.monitor_config
+        }
+        st.download_button("⬇️ Descargar JSON", json.dumps(export_data, indent=2, ensure_ascii=False), file_name=f"kaibot_monitor_config_{datetime.now().strftime('%Y%m%d')}.json", mime="application/json", key="tab4_dl_config")
+    
+    # =====================================================
+    # FOOTER EDUCATIVO
+    # =====================================================
+    st.markdown("---")
+    st.caption(f"""
+    📚 **Metodología KaiBot**: Combinamos fuentes científicas (ClinicalTrials, PubMed, Nature Biotech) 
+    con inteligencia de mercado (GenomeWeb, Endpoints, BioProcess) para generar contenido B2B validado. 
+    Confianza global: **B** — fuentes consolidadas, ajuste fino según vertical activo.
+    
+    *Brief actualizado: {datetime.now().strftime('%B %Y')} | Fuentes: {len(st.session_state.monitor_active_sources)} activas*
+    """)
 
 
 # =====================================================
