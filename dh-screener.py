@@ -20,8 +20,19 @@ from bs4 import BeautifulSoup
 from openai import OpenAI
 
 # ============================================================================
-# CONFIGURACIÓN
+# CONFIGURACIÓN DE BRANDING
 # ============================================================================
+BRANDING = {
+    "logo_url": "https://doublehelix.vc/wp-content/uploads/2023/03/cropped-DH-Logo-1.png",
+    "primary_color": "#00A6A6",      # Teal Double Helix
+    "secondary_color": "#1A1A2E",     # Dark navy
+    "accent_color": "#16213E",        # Deep blue
+    "text_light": "#FFFFFF",
+    "text_dark": "#333333",
+    "bg_light": "#F8F9FA",
+    "bg_dark": "#0F172A",
+}
+
 CACHE_DIR = Path("dealflow_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
@@ -32,38 +43,343 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.markdown("""
+# ============================================================================
+# CSS PERSONALIZADO - ESTILO DOUBLE HELIX
+# ============================================================================
+st.markdown(f"""
 <style>
-    .stButton>button { width: 100%; }
-    .big-header { font-size: 2.2rem; font-weight: 700; margin-bottom: 0.5rem; }
-    .opportunity-card {
-        padding: 1rem;
-        border: 1px solid #e0e0e0;
+    /* ===== VARIABLES DE TEMA ===== */
+    :root {{
+        --dh-primary: {BRANDING['primary_color']};
+        --dh-secondary: {BRANDING['secondary_color']};
+        --dh-accent: {BRANDING['accent_color']};
+        --dh-text-light: {BRANDING['text_light']};
+        --dh-text-dark: {BRANDING['text_dark']};
+        --dh-bg-light: {BRANDING['bg_light']};
+        --dh-bg-dark: {BRANDING['bg_dark']};
+    }}
+    
+    /* ===== HEADER & LOGO ===== */
+    .main-header {{
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem 0;
+        border-bottom: 2px solid var(--dh-primary);
+        margin-bottom: 2rem;
+    }}
+    
+    .logo-container {{
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }}
+    
+    .logo-img {{
+        height: 50px;
+        width: auto;
+        object-fit: contain;
+    }}
+    
+    .logo-text {{
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--dh-secondary);
+        margin: 0;
+    }}
+    
+    .logo-subtitle {{
+        font-size: 0.9rem;
+        color: var(--dh-primary);
+        margin: 0;
+        font-weight: 500;
+    }}
+    
+    /* ===== BOTONES ===== */
+    .stButton>button {{
+        background: linear-gradient(135deg, var(--dh-secondary) 0%, var(--dh-accent) 100%);
+        color: white !important;
+        border: 2px solid var(--dh-primary);
         border-radius: 8px;
-        margin: 0.5rem 0;
-        background: #fafafa;
-    }
-    .opportunity-card:hover {
-        border-color: #0073b1;
-        box-shadow: 0 2px 4px rgba(0,115,177,0.1);
-    }
-    .match-score {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 0.5rem 1.5rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }}
+    
+    .stButton>button:hover {{
+        background: linear-gradient(135deg, var(--dh-accent) 0%, var(--dh-secondary) 100%);
+        border-color: var(--dh-primary);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 166, 166, 0.3);
+    }}
+    
+    .stButton>button:active {{
+        transform: translateY(0);
+    }}
+    
+    /* ===== TARJETAS DE OPORTUNIDAD ===== */
+    .opportunity-card {{
+        padding: 1.25rem;
+        border: 1px solid #e0e0e0;
+        border-left: 4px solid var(--dh-primary);
+        border-radius: 12px;
+        margin: 0.75rem 0;
+        background: white;
+        transition: all 0.3s ease;
+    }}
+    
+    .opportunity-card:hover {{
+        border-color: var(--dh-primary);
+        box-shadow: 0 4px 20px rgba(0, 166, 166, 0.15);
+        transform: translateX(4px);
+    }}
+    
+    /* ===== BADGES & TAGS ===== */
+    .match-score {{
+        background: linear-gradient(135deg, var(--dh-primary) 0%, #008B8B 100%);
+        color: white;
+        padding: 0.3rem 0.8rem;
+        border-radius: 20px;
+        font-weight: 700;
+        font-size: 0.9rem;
+        display: inline-block;
+        box-shadow: 0 2px 8px rgba(0, 166, 166, 0.3);
+    }}
+    
+    .vertical-tag {{
+        background: var(--dh-secondary);
         color: white;
         padding: 0.2rem 0.6rem;
-        border-radius: 12px;
-        font-weight: bold;
-        font-size: 0.85rem;
-    }
-    .vertical-tag {
-        background: #28a745;
-        color: white;
-        padding: 0.15rem 0.5rem;
-        border-radius: 8px;
+        border-radius: 6px;
         font-size: 0.8rem;
-    }
+        font-weight: 500;
+        display: inline-block;
+        margin-right: 0.4rem;
+    }}
+    
+    .type-tag {{
+        background: #E8F4F4;
+        color: var(--dh-secondary);
+        padding: 0.15rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        display: inline-block;
+        margin-right: 0.3rem;
+        border: 1px solid var(--dh-primary);
+    }}
+    
+    /* ===== SIDEBAR ===== */
+    .sidebar-header {{
+        text-align: center;
+        padding: 1rem 0;
+        border-bottom: 1px solid #e0e0e0;
+        margin-bottom: 1rem;
+    }}
+    
+    .sidebar-logo {{
+        height: 40px;
+        margin-bottom: 0.5rem;
+    }}
+    
+    /* ===== EXPANDERS ===== */
+    .streamlit-expanderHeader {{
+        background: linear-gradient(90deg, var(--dh-bg-light) 0%, white 100%);
+        border-left: 3px solid var(--dh-primary);
+        border-radius: 8px !important;
+    }}
+    
+    .streamlit-expanderHeader:hover {{
+        background: linear-gradient(90deg, #E8F4F4 0%, #F0F9F9 100%);
+    }}
+    
+    /* ===== MÉTRICAS ===== */
+    .stMetric {{
+        background: white;
+        padding: 0.75rem;
+        border-radius: 8px;
+        border: 1px solid #e0e0e0;
+        border-left: 3px solid var(--dh-primary);
+    }}
+    
+    .stMetricLabel {{
+        color: var(--dh-secondary) !important;
+        font-weight: 600;
+    }}
+    
+    .stMetricValue {{
+        color: var(--dh-primary) !important;
+        font-weight: 700;
+    }}
+    
+    /* ===== TABS ===== */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 0.5rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid var(--dh-primary);
+    }}
+    
+    .stTabs [data-baseweb="tab"] {{
+        padding: 0.75rem 1.5rem;
+        font-weight: 600;
+        color: var(--dh-secondary);
+        border-radius: 8px 8px 0 0;
+        transition: all 0.2s ease;
+    }}
+    
+    .stTabs [aria-selected="true"] {{
+        background: var(--dh-primary);
+        color: white !important;
+    }}
+    
+    /* ===== ALERTAS & MENSAJES ===== */
+    .stSuccess {{
+        background: #E8F4F4 !important;
+        border-left: 4px solid var(--dh-primary) !important;
+        color: var(--dh-secondary) !important;
+    }}
+    
+    .stWarning {{
+        background: #FFF4E5 !important;
+        border-left: 4px solid #FF9800 !important;
+    }}
+    
+    .stError {{
+        background: #FEE2E2 !important;
+        border-left: 4px solid #EF4444 !important;
+    }}
+    
+    /* ===== PROGRESS BAR ===== */
+    .stProgress > div > div > div > div {{
+        background: linear-gradient(90deg, var(--dh-primary), #008B8B);
+    }}
+    
+    /* ===== FOOTER ===== */
+    .footer {{
+        text-align: center;
+        padding: 2rem 0 1rem;
+        color: #666;
+        font-size: 0.85rem;
+        border-top: 1px solid #e0e0e0;
+        margin-top: 3rem;
+    }}
+    
+    .footer-logo {{
+        height: 30px;
+        opacity: 0.7;
+        margin-bottom: 0.5rem;
+    }}
+    
+    /* ===== UTILS ===== */
+    .big-header {{
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--dh-secondary);
+        margin-bottom: 0.5rem;
+    }}
+    
+    .section-title {{
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--dh-secondary);
+        margin: 1.5rem 0 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid var(--dh-primary);
+    }}
+    
+    .info-box {{
+        background: linear-gradient(135deg, #E8F4F4 0%, #F0F9F9 100%);
+        border-left: 4px solid var(--dh-primary);
+        padding: 1rem;
+        border-radius: 0 8px 8px 0;
+        margin: 1rem 0;
+    }}
+    
+    /* ===== RESPONSIVE ===== */
+    @media (max-width: 768px) {{
+        .main-header {{
+            flex-direction: column;
+            text-align: center;
+        }}
+        .logo-img {{
+            height: 40px;
+        }}
+    }}
 </style>
 """, unsafe_allow_html=True)
+
+
+# ============================================================================
+# COMPONENTES DE UI REUTILIZABLES
+# ============================================================================
+def render_header():
+    """Renderiza el header con logo y branding de Double Helix."""
+    st.markdown(f"""
+    <div class="main-header">
+        <div class="logo-container">
+            <img src="{BRANDING['logo_url']}" class="logo-img" alt="Double Helix">
+        </div>
+        <div>
+            <h1 class="logo-text">Double Helix</h1>
+            <p class="logo-subtitle">Dealflow Finder 🔬</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_sidebar_header():
+    """Renderiza el header de la sidebar."""
+    st.markdown(f"""
+    <div class="sidebar-header">
+        <img src="{BRANDING['logo_url']}" class="sidebar-logo" alt="DH">
+        <p style="margin: 0; color: {BRANDING['primary_color']}; font-weight: 600;">Dealflow Finder</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_opportunity_card(opp: dict):
+    """Renderiza una tarjeta de oportunidad con styling DH."""
+    score = opp.get("score", 0)
+    score_color = "#00A6A6" if score >= 80 else "#FF9800" if score >= 65 else "#EF4444"
+    
+    tags_html = ""
+    if opp.get("vertical"):
+        tags_html += f'<span class="vertical-tag">{opp["vertical"]}</span>'
+    if opp.get("tipo"):
+        tags_html += f'<span class="type-tag">{opp["tipo"].upper()}</span>'
+    
+    st.markdown(f"""
+    <div class="opportunity-card">
+        <div style="display: flex; justify-content: space-between; align-items: start; gap: 1rem;">
+            <div style="flex: 1;">
+                <h4 style="margin: 0 0 0.5rem 0; color: {BRANDING['secondary_color']};">
+                    {opp.get('nombre', 'Sin nombre')}
+                </h4>
+                {tags_html}
+                <p style="margin: 0.5rem 0; color: #555; font-style: italic;">
+                    {opp.get('descripcion', '')}
+                </p>
+                {f'<p style="margin: 0.25rem 0; font-size: 0.9rem; color: #666;">🎯 {opp.get("problema_resuelto", "")}</p>' if opp.get('problema_resuelto') else ''}
+            </div>
+            <div style="text-align: right; min-width: 80px;">
+                <span class="match-score" style="background: linear-gradient(135deg, {score_color} 0%, {score_color}cc 100%);">
+                    {score}/100
+                </span>
+                {f'<br><a href="{opp["referencia"]}" target="_blank" style="font-size: 0.8rem; color: {BRANDING["primary_color"]}; text-decoration: none;">🔗 Ver</a>' if opp.get('referencia') else ''}
+            </div>
+        </div>
+        {f'''
+        <details style="margin-top: 0.75rem; font-size: 0.9rem;">
+            <summary style="cursor: pointer; color: {BRANDING['primary_color']}; font-weight: 500;">
+                🔗 Por qué coincide con nuestras temáticas
+            </summary>
+            <p style="margin: 0.5rem 0 0; color: #555; padding-left: 0.5rem;">
+                {opp.get('matching_rationale', '')}
+            </p>
+        </details>
+        ''' if opp.get('matching_rationale') else ''}
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ============================================================================
@@ -80,7 +396,6 @@ class WebScraper:
     def fetch_page(self, url: str, timeout: int = 30) -> dict:
         """Extrae contenido de una URL."""
         try:
-            # Normalizar URL
             if not url.startswith(("http://", "https://")):
                 url = f"https://{url}"
             
@@ -91,9 +406,7 @@ class WebScraper:
             resp = self.session.get(url, timeout=timeout)
             
             if resp.status_code == 200:
-                # Detectar encoding
                 resp.encoding = resp.apparent_encoding
-                
                 return {
                     "ok": True,
                     "url": resp.url,
@@ -110,7 +423,6 @@ class WebScraper:
             return {"ok": False, "error": str(e)[:100], "url": url}
     
     def _extract_title(self, html: str) -> str:
-        """Extrae el título de la página."""
         soup = BeautifulSoup(html, "html.parser")
         title = soup.title
         if title and title.string:
@@ -118,7 +430,6 @@ class WebScraper:
         return ""
     
     def _extract_meta(self, html: str, name: str) -> str:
-        """Extrae meta tags."""
         soup = BeautifulSoup(html, "html.parser")
         meta = soup.find("meta", attrs={"name": name}) or soup.find("meta", attrs={"property": f"og:{name}"})
         if meta and meta.get("content"):
@@ -126,27 +437,18 @@ class WebScraper:
         return ""
     
     def extract_links(self, html: str, base_url: str) -> list:
-        """Extrae enlaces internos de una página."""
         soup = BeautifulSoup(html, "html.parser")
         links = []
         
         for a in soup.find_all("a", href=True):
             href = a["href"]
-            # Filtrar enlaces internos relevantes
             if href.startswith(("#", "javascript:", "mailto:")):
                 continue
-            
-            # Normalizar URL
             full_url = urljoin(base_url, href)
-            
-            # Solo enlaces del mismo dominio
             if urlparse(full_url).netloc == urlparse(base_url).netloc:
-                links.append({
-                    "url": full_url,
-                    "text": a.get_text().strip()[:100],
-                })
+                links.append({"url": full_url, "text": a.get_text().strip()[:100]})
         
-        return links[:20]  # Limitar a 20 enlaces
+        return links[:20]
 
 
 # ============================================================================
@@ -215,13 +517,11 @@ Si no hay oportunidades relevantes (score >= 60), devuelve:
                        url_origen: str = "", max_tokens: int = 4000) -> dict:
         """Analiza el contenido de un centro buscando oportunidades."""
         
-        # Preparar temáticas para el prompt
         tematicas_text = "\n".join([
             f"- {t.get('segmento', '')}: {t.get('definicion', '')[:200]} (Problema: {t.get('problema_no_resuelto', '')[:150]})"
-            for t in tematicas[:10]  # Limitar a 10 temáticas para no exceder tokens
+            for t in tematicas[:10]
         ])
         
-        # Preparar contenido (limitar longitud)
         contenido_limpio = self._clean_content(contenido)
         contenido_truncado = contenido_limpio[:max_tokens]
         
@@ -245,7 +545,7 @@ Identifica oportunidades de inversión para Double Helix."""
                     {"role": "system", "content": self.SYSTEM_PROMPT.format(tematicas=tematicas_text)},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.1,  # Bajo para respuestas consistentes
+                temperature=0.1,
                 response_format={"type": "json_object"}
             )
             return json.loads(resp.choices[0].message.content)
@@ -257,47 +557,34 @@ Identifica oportunidades de inversión para Double Helix."""
             }
     
     def _clean_content(self, content: str) -> str:
-        """Limpia contenido HTML para análisis."""
-        # Eliminar scripts, styles, etc.
         soup = BeautifulSoup(content, "html.parser")
-        
-        # Remover elementos no relevantes
         for elem in soup(["script", "style", "nav", "footer", "header"]):
             elem.decompose()
-        
-        # Extraer texto con estructura básica
         text = soup.get_text(separator="\n", strip=True)
-        
-        # Limpiar líneas vacías múltiples
         text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
-        
         return text.strip()
 
 
 # ============================================================================
 # HELPERS
 # ============================================================================
-def load_excel_files(uploaded_files: list) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_excel_files(uploaded_files: list) -> tuple:
     """Carga y procesa los archivos Excel."""
     centros_df = None
     tematicas_df = None
     
     for uploaded_file in uploaded_files:
         try:
-            # Leer todas las hojas
             xls = pd.ExcelFile(uploaded_file)
-            
-            # Buscar hoja de centros (primera hoja o por nombre)
             sheet_names = xls.sheet_names
+            
             if "ENLACES" in sheet_names or "Sheet1" in sheet_names:
                 centros_sheet = "ENLACES" if "ENLACES" in sheet_names else sheet_names[0]
                 centros_df = pd.read_excel(xls, sheet_name=centros_sheet)
             
-            # Buscar hoja de temáticas
             if "TEMÁTICAS" in sheet_names:
                 tematicas_df = pd.read_excel(xls, sheet_name="TEMÁTICAS")
             elif len(sheet_names) > 1:
-                # Segunda hoja como temáticas
                 tematicas_df = pd.read_excel(xls, sheet_name=sheet_names[1])
                 
         except Exception as e:
@@ -320,7 +607,6 @@ def prepare_tematicas(tematicas_df: pd.DataFrame) -> list:
             "problema_no_resuelto": str(row.get("Problema no resuelto que ataca", "")),
         })
     
-    # Filtrar vacíos
     return [t for t in tematicas if t["segmento"] and len(t["segmento"]) > 5]
 
 
@@ -335,10 +621,9 @@ def prepare_centros(centros_df: pd.DataFrame) -> list:
         if not nombre or nombre == "nan":
             continue
         
-        # Buscar URLs en columnas WEB
         urls = []
         for col in centros_df.columns:
-            if col.upper().startswith("WEB") and pd.notna(row.get(col)):
+            if str(col).upper().startswith("WEB") and pd.notna(row.get(col)):
                 url = str(row.get(col)).strip()
                 if url and url.startswith("http"):
                     urls.append(url)
@@ -355,12 +640,10 @@ def prepare_centros(centros_df: pd.DataFrame) -> list:
 
 
 def cache_key(centro_nombre: str, url: str) -> str:
-    """Genera clave de caché para un centro+URL."""
     return f"{centro_nombre}_{url}".replace(" ", "_").replace("/", "_").replace(":", "_")
 
 
-def get_cached_analysis(centro_nombre: str, url: str) -> dict | None:
-    """Obtiene análisis desde caché si existe."""
+def get_cached_analysis(centro_nombre: str, url: str) -> dict:
     cache_file = CACHE_DIR / f"{cache_key(centro_nombre, url)}.json"
     if cache_file.exists():
         try:
@@ -372,7 +655,6 @@ def get_cached_analysis(centro_nombre: str, url: str) -> dict | None:
 
 
 def save_cached_analysis(centro_nombre: str, url: str, result: dict):
-    """Guarda análisis en caché."""
     cache_file = CACHE_DIR / f"{cache_key(centro_nombre, url)}.json"
     with open(cache_file, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
@@ -402,10 +684,12 @@ def main():
     # SIDEBAR
     # ========================================================================
     with st.sidebar:
-        st.markdown("## ⚙️ Configuración")
+        render_sidebar_header()
+        
+        st.markdown("### ⚙️ Configuración")
         
         # OpenAI API Key
-        st.markdown("### 🤖 OpenAI API")
+        st.markdown("#### 🤖 OpenAI API")
         
         api_from_secrets = ""
         try:
@@ -415,7 +699,7 @@ def main():
         
         if api_from_secrets:
             st.session_state.api_key = api_from_secrets
-            st.success("✅ API key cargada desde secrets")
+            st.success("✅ API key cargada")
         else:
             api_key_input = st.text_input("API Key OpenAI", type="password")
             if api_key_input:
@@ -441,9 +725,9 @@ def main():
         st.divider()
         
         # Carga de archivos
-        st.markdown("### 📁 Archivos Excel")
+        st.markdown("#### 📁 Archivos Excel")
         uploaded_files = st.file_uploader(
-            "Sube archivos Excel con centros y temáticas",
+            "Sube archivos con centros y temáticas",
             type=["xlsx", "xls"],
             accept_multiple_files=True
         )
@@ -456,21 +740,21 @@ def main():
                     if centros_df is not None:
                         st.session_state.centros_df = centros_df
                         st.session_state.centros_list = prepare_centros(centros_df)
-                        st.success(f"✅ {len(st.session_state.centros_list)} centros cargados")
+                        st.success(f"✅ {len(st.session_state.centros_list)} centros")
                     else:
-                        st.error("❌ No se pudo cargar la hoja de centros")
+                        st.error("❌ No se cargó la hoja de centros")
                     
                     if tematicas_df is not None:
                         st.session_state.tematicas_df = tematicas_df
                         st.session_state.tematicas_list = prepare_tematicas(tematicas_df)
-                        st.success(f"✅ {len(st.session_state.tematicas_list)} temáticas cargadas")
+                        st.success(f"✅ {len(st.session_state.tematicas_list)} temáticas")
                     else:
-                        st.warning("⚠️ No se pudo cargar la hoja de temáticas")
+                        st.warning("⚠️ No se cargaron temáticas")
         
         st.divider()
         
         # Estado
-        st.markdown("### 📊 Estado")
+        st.markdown("#### 📊 Estado")
         st.write(f"🏢 Centros: {len(st.session_state.centros_list)}")
         st.write(f"🎯 Temáticas: {len(st.session_state.tematicas_list)}")
         st.write(f"✅ Resultados: {len(st.session_state.results)}")
@@ -485,10 +769,11 @@ def main():
     # ========================================================================
     # MAIN
     # ========================================================================
-    st.markdown('<p class="big-header">🧬 Double Helix Dealflow Finder</p>', unsafe_allow_html=True)
+    render_header()
+    
     st.markdown("""
     Identifica **oportunidades de inversión en healthtech** analizando centros tecnológicos, 
-    universidades y hubs de innovación.
+    universidades y hubs de innovación en España.
     """)
     
     # Verificar configuración mínima
@@ -512,7 +797,7 @@ def main():
     # TAB 1: Analizar Centros
     # ------------------------------------------------------------------------
     with tab1:
-        st.markdown("### 🔍 Selecciona centros para analizar")
+        st.markdown('<p class="section-title">🔍 Selecciona centros para analizar</p>', unsafe_allow_html=True)
         
         # Filtros
         col_f1, col_f2 = st.columns(2)
@@ -533,20 +818,20 @@ def main():
         
         st.caption(f"{len(centros_filtrados)} centros disponibles")
         
-        # Selección múltiple de centros
+        # Selección múltiple
         centro_options = {f"{c['nombre']} ({c['region']})": c for c in centros_filtrados}
         selected_centros = st.multiselect(
             "Selecciona centros para analizar",
             options=list(centro_options.keys()),
-            default=list(centro_options.keys())[:3]  # Seleccionar primeros 3 por defecto
+            default=list(centro_options.keys())[:3]
         )
         
         # Configurar análisis
         with st.expander("⚙️ Configuración del análisis", expanded=False):
-            max_pages = st.slider("Máx. páginas por centro a analizar", 1, 5, 2)
+            max_pages = st.slider("Máx. páginas por centro", 1, 5, 2)
             timeout = st.slider("Timeout por página (segundos)", 10, 60, 30)
             min_score = st.slider("Score mínimo para incluir oportunidad", 50, 90, 60)
-            st.info(f"💡 Las temáticas usadas para búsqueda: {len(st.session_state.tematicas_list)}")
+            st.info(f"💡 Temáticas activas: {len(st.session_state.tematicas_list)}")
         
         # Botón de análisis
         if st.button("🚀 Iniciar análisis", type="primary", use_container_width=True):
@@ -565,13 +850,11 @@ def main():
                     centro_results = []
                     
                     for url_idx, url in enumerate(centro["urls"][:max_pages]):
-                        # Verificar caché
                         cached = get_cached_analysis(centro["nombre"], url)
                         if cached:
                             centro_results.append(cached)
                             continue
                         
-                        # Fetch página
                         status_text.text(f"🌐 Descargando {url[:50]}...")
                         page = scraper.fetch_page(url, timeout=timeout)
                         
@@ -579,7 +862,6 @@ def main():
                             st.warning(f"⚠️ No se pudo acceder a {url}: {page['error']}")
                             continue
                         
-                        # Analizar con IA
                         status_text.text(f"🧠 Analizando contenido...")
                         result = analyzer.analizar_centro(
                             nombre_centro=centro["nombre"],
@@ -588,13 +870,11 @@ def main():
                             url_origen=url
                         )
                         
-                        # Añadir metadata
                         result["centro"] = centro["nombre"]
                         result["region"] = centro["region"]
                         result["url_analizada"] = url
                         result["page_title"] = page["title"]
                         
-                        # Filtrar por score mínimo
                         if "oportunidades" in result:
                             result["oportunidades"] = [
                                 o for o in result["oportunidades"] 
@@ -602,21 +882,16 @@ def main():
                             ]
                             result["total_oportunidades"] = len(result["oportunidades"])
                         
-                        # Guardar en caché
                         save_cached_analysis(centro["nombre"], url, result)
                         centro_results.append(result)
-                        
-                        # Pequeña pausa para no saturar
                         time.sleep(1)
                     
-                    # Guardar resultados del centro
                     st.session_state.results[centro["nombre"]] = {
                         "centro": centro,
                         "analisis": centro_results,
                         "total_oportunidades": sum(r.get("total_oportunidades", 0) for r in centro_results)
                     }
                     
-                    # Actualizar progreso
                     progress_bar.progress((idx + 1) / len(selected_centros))
                 
                 status_text.text("✅ Análisis completado")
@@ -627,16 +902,15 @@ def main():
     # TAB 2: Resultados
     # ------------------------------------------------------------------------
     with tab2:
-        st.markdown("### 📋 Oportunidades identificadas")
+        st.markdown('<p class="section-title">📋 Oportunidades identificadas</p>', unsafe_allow_html=True)
         
         if not st.session_state.results:
-            st.info("👉 Ejecuta un análisis en la pestaña 'Analizar Centros' para ver resultados")
+            st.info("👉 Ejecuta un análisis en 'Analizar Centros' para ver resultados")
         else:
-            # Resumen global
             total_opp = sum(r["total_oportunidades"] for r in st.session_state.results.values())
             st.metric("🎯 Total oportunidades", total_opp)
             
-            # Filtros de resultados
+            # Filtros
             col_f1, col_f2, col_f3 = st.columns(3)
             with col_f1:
                 vertical_filter = st.multiselect(
@@ -661,7 +935,7 @@ def main():
             with col_f3:
                 score_min = st.slider("Score mínimo", 60, 100, 60)
             
-            # Mostrar resultados por centro
+            # Resultados por centro
             for centro_nombre, centro_data in st.session_state.results.items():
                 centro = centro_data["centro"]
                 analisis_list = centro_data["analisis"]
@@ -677,10 +951,9 @@ def main():
                         if not analysis.get("oportunidades"):
                             continue
                         
-                        st.markdown(f"**🌐 Página analizada:** [{analysis.get('page_title', analysis.get('url_analizada', 'N/A'))[:80]}]({analysis.get('url_analizada', '#')})")
+                        st.markdown(f"**🌐 Página:** [{analysis.get('page_title', analysis.get('url_analizada', 'N/A'))[:60]}]({analysis.get('url_analizada', '#')})")
                         
                         for opp in analysis["oportunidades"]:
-                            # Aplicar filtros
                             if vertical_filter and opp.get("vertical") not in vertical_filter:
                                 continue
                             if tipo_filter and opp.get("tipo") not in tipo_filter:
@@ -688,52 +961,17 @@ def main():
                             if opp.get("score", 0) < score_min:
                                 continue
                             
-                            # Card de oportunidad
-                            with st.container():
-                                col1, col2 = st.columns([4, 1])
-                                
-                                with col1:
-                                    st.markdown(f"#### {opp.get('nombre', 'Sin nombre')}")
-                                    
-                                    # Tags
-                                    tags = []
-                                    if opp.get("vertical"):
-                                        tags.append(f"<span class='vertical-tag'>{opp['vertical']}</span>")
-                                    if opp.get("tipo"):
-                                        tags.append(f"`{opp['tipo']}`")
-                                    if opp.get("segmento"):
-                                        tags.append(f"📦 {opp['segmento']}")
-                                    st.markdown(" ".join(tags), unsafe_allow_html=True)
-                                    
-                                    # Descripción
-                                    st.markdown(f"*{opp.get('descripcion', '')}*")
-                                    
-                                    # Problema resuelto
-                                    if opp.get("problema_resuelto"):
-                                        st.caption(f"🎯 Problema: {opp['problema_resuelto']}")
-                                    
-                                    # Matching rationale
-                                    if opp.get("matching_rationale"):
-                                        with st.expander("🔗 Por qué coincide con nuestras temáticas"):
-                                            st.markdown(opp["matching_rationale"])
-                                
-                                with col2:
-                                    st.markdown(f"<div style='text-align:center'><span class='match-score'>{opp.get('score', 0)}/100</span></div>", unsafe_allow_html=True)
-                                    if opp.get("referencia"):
-                                        st.markdown(f"[🔗 Ver]({opp['referencia']})", unsafe_allow_html=True)
-                                
-                                st.divider()
+                            render_opportunity_card(opp)
     
     # ------------------------------------------------------------------------
     # TAB 3: Exportar
     # ------------------------------------------------------------------------
     with tab3:
-        st.markdown("### 📊 Exportar resultados")
+        st.markdown('<p class="section-title">📊 Exportar resultados</p>', unsafe_allow_html=True)
         
         if not st.session_state.results:
             st.info("👉 Ejecuta un análisis primero para poder exportar")
         else:
-            # Preparar DataFrame para exportar
             rows = []
             for centro_nombre, centro_data in st.session_state.results.items():
                 centro = centro_data["centro"]
@@ -760,19 +998,15 @@ def main():
             if rows:
                 df_export = pd.DataFrame(rows)
                 
-                # Vista previa
                 st.markdown("#### Vista previa")
                 st.dataframe(df_export, use_container_width=True)
                 
-                # Botones de descarga
                 col_dl1, col_dl2 = st.columns(2)
                 
                 with col_dl1:
-                    # Excel
                     buffer = BytesIO()
                     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
                         df_export.to_excel(writer, index=False, sheet_name="Oportunidades")
-                        # Ajustar columnas
                         worksheet = writer.sheets["Oportunidades"]
                         for i, col in enumerate(df_export.columns):
                             max_len = max(df_export[col].astype(str).map(len).max(), len(col))
@@ -787,7 +1021,6 @@ def main():
                     )
                 
                 with col_dl2:
-                    # CSV
                     csv = df_export.to_csv(index=False, encoding="utf-8-sig")
                     st.download_button(
                         label="📥 Descargar CSV",
@@ -796,7 +1029,6 @@ def main():
                         mime="text/csv"
                     )
                 
-                # Resumen estadístico
                 st.markdown("#### 📈 Resumen")
                 col_s1, col_s2, col_s3, col_s4 = st.columns(4)
                 col_s1.metric("Total oportunidades", len(df_export))
@@ -804,13 +1036,22 @@ def main():
                 col_s3.metric("Centros analizados", df_export["Centro"].nunique())
                 col_s4.metric("Verticales", df_export["Vertical"].nunique())
                 
-                # Distribución por vertical
                 if not df_export["Vertical"].empty:
                     st.markdown("#### Distribución por vertical")
                     vertical_counts = df_export["Vertical"].value_counts()
                     st.bar_chart(vertical_counts)
             else:
-                st.warning("⚠️ No hay oportunidades para exportar. Ajusta los filtros o ejecuta un nuevo análisis.")
+                st.warning("⚠️ No hay oportunidades para exportar. Ajusta filtros o ejecuta nuevo análisis.")
+    
+    # ========================================================================
+    # FOOTER
+    # ========================================================================
+    st.markdown(f"""
+    <div class="footer">
+        <img src="{BRANDING['logo_url']}" class="footer-logo" alt="Double Helix">
+        <p>Double Helix Dealflow Finder © {datetime.now().year} | Healthtech Venture Capital</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
