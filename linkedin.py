@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión final con filtrado estricto de nombres
+Versión con filtrado equilibrado y normalización robusta
 """
 
 import os
@@ -45,19 +45,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Apellidos muy comunes en España (para filtrado)
+# Apellidos muy comunes en España (solo los TOP 30 para no ser demasiado restrictivo)
 COMMON_SPANISH_SURNAMES = {
     'garcia', 'gonzalez', 'rodriguez', 'fernandez', 'lopez', 'martinez',
     'sanchez', 'perez', 'gomez', 'martin', 'jimenez', 'ruiz', 'hernandez',
     'diaz', 'moreno', 'alvarez', 'romero', 'alonso', 'gutierrez', 'navarro',
-    'torres', 'dominguez', 'vazquez', 'ramos', 'gil', 'ramirez', 'serrano',
+    'torres', 'dominguez', 'vazquez', 'ramos', 'ramirez', 'serrano',
     'blanco', 'suarez', 'molina', 'morales', 'ortiz', 'delgado', 'castro',
-    'ortega', 'rubio', 'marin', 'sanz', 'nuñez', 'soler', 'cortes',
-    'herrero', 'montero', 'hidalgo', 'garrido', 'lozano', 'guerrero',
-    'cano', 'prieto', 'pascual', 'santana', 'vega', 'flores', 'herrero',
-    'calvo', 'cruz', 'jurado', 'medina', 'izquierdo', 'campos', 'vega',
-    'mendez', 'leon', 'vargas', 'ferrer', 'sala', 'benitez', 'moya',
-    'esteban', 'pareja', 'herrera', 'diez', 'dies', 'dieguez'
+    'ortega', 'rubio', 'marin', 'sanz', 'nuñez', 'munoz', 'santos'
 }
 
 
@@ -198,36 +193,52 @@ class LinkedInScraper:
         return found
 
     def _normalize_name(self, name: str) -> str:
+        """Normaliza un nombre de forma robusta para comparación."""
+        # Convertir a minúsculas
         normalized = name.lower()
-        normalized = normalized.replace('ı́', 'i').replace('í', 'i').replace('á', 'a')
-        normalized = normalized.replace('é', 'e').replace('ó', 'o').replace('ú', 'u')
-        normalized = normalized.replace('ñ', 'n').replace('ç', 'c').replace('ü', 'u')
+        
+        # Normalizar caracteres acentuados y especiales
+        replacements = {
+            'ı́': 'i', 'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
+            'á': 'a', 'à': 'a', 'â': 'a', 'ä': 'a',
+            'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
+            'ó': 'o', 'ò': 'o', 'ô': 'o', 'ö': 'o',
+            'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
+            'ñ': 'n', 'ç': 'c',
+        }
+        for old, new in replacements.items():
+            normalized = normalized.replace(old, new)
+        
+        # Eliminar guiones, puntos, comas y otros caracteres no alfabéticos
         normalized = re.sub(r'[^a-z\s]', ' ', normalized)
+        
+        # Normalizar espacios
         normalized = ' '.join(normalized.split())
+        
         return normalized
 
     def _prepare_search_query(self, full_name: str) -> str:
-        search_name = full_name
-        search_name = search_name.replace('ı́', 'i').replace('í', 'i').replace('á', 'a')
-        search_name = search_name.replace('é', 'e').replace('ó', 'o').replace('ú', 'u')
-        search_name = search_name.replace('ñ', 'n').replace('ç', 'c').replace('ü', 'u')
+        """Prepara el nombre para búsqueda en LinkedIn."""
+        search_name = self._normalize_name(full_name)
+        
         # Eliminar iniciales (Ivan M. Fernandez → Ivan Fernandez)
-        search_name = re.sub(r'\b[A-Z]\.\s*', '', search_name)
-        # Eliminar caracteres especiales
-        search_name = re.sub(r'[^a-zA-Z\s]', ' ', search_name)
-        search_name = ' '.join(search_name.split())
+        search_name = re.sub(r'\b[a-z]\s+', '', search_name)
+        
+        # Eliminar palabras muy cortas (1-2 letras)
+        words = [w for w in search_name.split() if len(w) > 2]
+        search_name = ' '.join(words)
+        
         return search_name
 
-    def _is_strong_name_match(self, target_name: str, candidate_name: str) -> tuple:
+    def _is_name_match(self, target_name: str, candidate_name: str) -> tuple:
         """
-        Verifica si hay una coincidencia FUERTE entre nombres.
+        Verifica si hay coincidencia entre nombres.
         Devuelve (is_match: bool, score: int, match_details: str)
         
-        Criterios estrictos:
-        - Para nombres de 3+ palabras: exigir al menos 2 coincidencias
-        - Para nombres de 2 palabras: exigir al menos 1 coincidencia del nombre propio
-        - NO aceptar coincidencias solo en apellidos comunes (García, González, etc.)
-        - Dar bonus si las palabras coinciden en el mismo orden
+        Criterios equilibrados:
+        - RECHAZAR si solo coinciden apellidos muy comunes (García, González, etc.)
+        - ACEPTAR si coincide al menos 1 palabra única (nombre propio o apellido raro)
+        - BONUS por múltiples coincidencias y orden
         """
         target_norm = self._normalize_name(target_name)
         candidate_norm = self._normalize_name(candidate_name)
@@ -238,48 +249,46 @@ class LinkedInScraper:
         if not target_words or not candidate_words:
             return False, 0, "Sin palabras"
         
-        # Separar palabras comunes y no comunes
-        target_common = [w for w in target_words if w in COMMON_SPANISH_SURNAMES]
-        target_unique = [w for w in target_words if w not in COMMON_SPANISH_SURNAMES]
+        # Convertir a sets para comparación
+        target_set = set(target_words)
+        candidate_set = set(candidate_words)
         
-        candidate_common = [w for w in candidate_words if w in COMMON_SPANISH_SURNAMES]
-        candidate_unique = [w for w in candidate_words if w not in COMMON_SPANISH_SURNAMES]
+        # Coincidencias
+        common_words = target_set & candidate_set
         
-        # Coincidencias en palabras únicas (nombre propio, apellidos raros)
-        common_unique = set(target_unique) & set(candidate_unique)
-        # Coincidencias en apellidos comunes
-        common_surnames = set(target_common) & set(candidate_common)
+        if not common_words:
+            return False, 0, "Sin coincidencias"
         
-        # REGLA 1: Si solo coinciden apellidos comunes, RECHAZAR
-        if len(common_unique) == 0 and len(common_surnames) > 0:
+        # Separar en comunes y únicas
+        common_surnames = common_words & COMMON_SPANISH_SURNAMES
+        unique_matches = common_words - COMMON_SPANISH_SURNAMES
+        
+        # REGLA 1: Si solo coinciden apellidos comunes y NADA más, RECHAZAR
+        if len(unique_matches) == 0 and len(common_surnames) > 0:
             return False, 0, f"Solo apellidos comunes: {common_surnames}"
         
-        # REGLA 2: Para nombres de 3+ palabras, exigir al menos 2 coincidencias únicas
-        if len(target_words) >= 3 and len(common_unique) < 2:
-            return False, 0, f"Insuficientes coincidencias únicas ({len(common_unique)}/2)"
-        
-        # REGLA 3: Para nombres de 2 palabras, exigir al menos 1 coincidencia única
-        if len(target_words) == 2 and len(common_unique) < 1:
-            return False, 0, "Sin coincidencia en nombre único"
+        # REGLA 2: Si hay al menos 1 coincidencia única, ACEPTAR
+        if len(unique_matches) == 0:
+            return False, 0, "Sin coincidencias únicas"
         
         # Calcular score
-        score = len(common_unique) * 20  # 20 puntos por cada palabra única coincidente
+        score = len(unique_matches) * 20  # 20 puntos por cada palabra única
         score += len(common_surnames) * 5  # 5 puntos por apellidos comunes
         
-        # Bonus por coincidencia en el mismo orden
-        if target_words[0] == candidate_words[0]:
-            score += 15  # Bonus por primer nombre
+        # Bonus por coincidencia del primer nombre
+        if target_words and candidate_words and target_words[0] == candidate_words[0]:
+            score += 15
         
-        # Bonus por coincidencia del apellido principal
+        # Bonus por coincidencia del último apellido
         if len(target_words) > 1 and len(candidate_words) > 1:
             if target_words[-1] == candidate_words[-1]:
                 score += 10
         
-        # Penalización si el candidato tiene muchas más palabras (posible homónimo)
-        if len(candidate_words) > len(target_words) + 2:
-            score -= 10
+        # Bonus por proporción de coincidencia
+        match_ratio = len(common_words) / max(len(target_words), len(candidate_words))
+        score += int(match_ratio * 20)
         
-        match_details = f"Únicas: {common_unique}, Comunes: {common_surnames}"
+        match_details = f"Únicas: {unique_matches}, Comunes: {common_surnames if common_surnames else 'ninguna'}"
         
         return True, score, match_details
 
@@ -390,7 +399,6 @@ class LinkedInScraper:
         cleaned_text = re.sub(r'\n\s+', '\n', cleaned_text)
         cleaned_text = cleaned_text.strip()
         
-        # Si queda muy poco, extracción conservadora
         if len(cleaned_text) < 100 and len(text) > 500:
             lines = text.split('\n')
             useful_lines = []
@@ -415,7 +423,7 @@ class LinkedInScraper:
         return cleaned_text
 
     def _search_single_query(self, query: str, target_name: str, institution: str = "", orcid: str = "") -> list:
-        """Ejecuta una búsqueda individual con filtrado estricto de nombres."""
+        """Ejecuta una búsqueda individual con filtrado equilibrado."""
         search_url = (
             f"https://www.linkedin.com/search/results/people/"
             f"?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER"
@@ -450,11 +458,11 @@ class LinkedInScraper:
             
             name = self._extract_name_from_link(link)
             
-            # FILTRADO ESTRICTO: Verificar coincidencia fuerte de nombres
-            is_match, score, details = self._is_strong_name_match(target_name, name)
+            # FILTRADO EQUILIBRADO
+            is_match, score, details = self._is_name_match(target_name, name)
             
             if not is_match:
-                continue  # Descartar resultados que no coinciden fuertemente
+                continue
             
             parent = link.find_parent("li") or link.find_parent("div", class_=re.compile("entity-result|search-result"))
             context = self._extract_headline_from_context(parent)
@@ -496,7 +504,7 @@ class LinkedInScraper:
 
     def search_person_multi_round(self, full_name: str, institution: str = "", orcid: str = "", 
                                    debug_mode: bool = False, progress_callback=None) -> list:
-        """Búsqueda en múltiples rondas con filtrado estricto."""
+        """Búsqueda en múltiples rondas con filtrado equilibrado."""
         self.debug_info = {"rounds": []}
         
         search_name = self._prepare_search_query(full_name)
@@ -823,7 +831,7 @@ def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
         for seccion, texto in cv.get("sections", {}).items():
             if texto and len(texto) > 50:
                 lineas.append(f"\n— {seccion.upper()} —")
-                lineas.append(texto[:500])  # Limitado a 500 chars
+                lineas.append(texto[:500])
     
     lineas.append("\n" + "=" * 70)
     lineas.append("🔬 ANÁLISIS SPIN-OFFS / PATENTES / ACTIVIDAD INDUSTRIAL:")
@@ -1259,15 +1267,14 @@ def main():
             
             with tab1:
                 st.info("""
-💡 **Búsqueda en 3 rondas automáticas con filtrado estricto:**
+💡 **Búsqueda en 3 rondas automáticas con filtrado equilibrado:**
 1. **Ronda 1**: Solo nombre
 2. **Ronda 2**: Nombre + institución (si hay < 3 resultados)
 3. **Ronda 3**: Nombre + ORCID (si hay < 3 resultados)
 
-**Filtrado estricto:**
-- Se descartan resultados que solo comparten apellidos comunes (García, González, etc.)
-- Para nombres de 3+ palabras: se exigen al menos 2 coincidencias únicas
-- Para nombres de 2 palabras: se exige al menos 1 coincidencia en nombre propio
+**Filtrado equilibrado:**
+- Se descartan resultados que SOLO comparten apellidos comunes (García, González, etc.)
+- Se acepta cualquier candidato con al menos 1 coincidencia en nombre propio o apellido raro
 """)
                 seleccion = st.multiselect(
                     "Selecciona investigadores",
@@ -1338,7 +1345,7 @@ def main():
             # Mostrar resultados
             if st.session_state.search_results:
                 st.markdown("### 📋 Selecciona el perfil correcto")
-                st.info("💡 Solo se muestran candidatos con coincidencia real de nombre. Apellidos comunes como García/González no son suficientes.")
+                st.info("💡 Solo se muestran candidatos con coincidencia real de nombre. Apellidos comunes como García/González por sí solos no son suficientes.")
                 
                 for nombre, results in st.session_state.search_results.items():
                     debug_info = st.session_state.search_debug.get(nombre, {})
@@ -1474,7 +1481,7 @@ def main():
                     if cv.get("sections"):
                         for sec, txt in cv.get("sections", {}).items():
                             with st.expander(f"  • {sec} ({len(txt)} chars)", expanded=False):
-                                st.text(txt[:500])  # Limitado a 500 chars
+                                st.text(txt[:500])
                     
                     if cv.get("texto_completo"):
                         with st.expander(f"  • Texto completo ({len(cv['texto_completo'])} chars)", expanded=False):
@@ -1503,7 +1510,7 @@ def main():
                             cv_text_parts.append(f"UBICACIÓN: {cv['ubicacion']}")
                         
                         for sec, txt in cv.get("sections", {}).items():
-                            cv_text_parts.append(f"\n=== {sec.upper()} ===\n{txt[:500]}")  # Limitado
+                            cv_text_parts.append(f"\n=== {sec.upper()} ===\n{txt[:500]}")
                         
                         if cv.get("texto_completo"):
                             cv_text_parts.append(f"\n=== TEXTO COMPLETO ===\n{cv['texto_completo'][:3000]}")
@@ -1573,11 +1580,10 @@ def main():
                 df_out = df.copy()
                 col_industrial_out = col_map.get("industrial", "INDUSTRIAL info")
                 
-                # FIX: Forzar tipo object/string en la columna para evitar TypeError
+                # FIX: Forzar tipo object/string
                 if col_industrial_out not in df_out.columns:
                     df_out[col_industrial_out] = ""
                 
-                # Asegurar que la columna sea de tipo string
                 df_out[col_industrial_out] = df_out[col_industrial_out].astype(object)
 
                 for idx, row in df_out.iterrows():
@@ -1586,7 +1592,6 @@ def main():
                     analisis = st.session_state.analisis.get(nombre, {})
                     if cv or analisis:
                         texto_formateado = formatear_para_excel(str(nombre), cv, analisis)
-                        # Usar .loc en lugar de .at para mayor compatibilidad
                         df_out.loc[idx, col_industrial_out] = str(texto_formateado)
 
                 buffer = BytesIO()
