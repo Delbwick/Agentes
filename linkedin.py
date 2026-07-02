@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión final: búsqueda multi-ronda + selectbox + análisis IA
+Versión final con verificación de nombre y selectbox corregido
 """
 
 import os
@@ -71,7 +71,7 @@ class BrowserlessAPI:
             else:
                 return False, f"❌ Error {resp.status_code}"
         except Exception as e:
-            return False, f"❌ Error: {str(e)[:100]}"
+            return False, f" Error: {str(e)[:100]}"
 
     def get_content(self, url: str, cookies: list = None) -> dict:
         payload = {"url": url}
@@ -475,7 +475,7 @@ class LinkedInScraper:
             query3 = f"{search_name} {orcid_id}"
             
             if progress_callback:
-                progress_callback(f"🔍 Ronda 3: Buscando con ORCID...")
+                progress_callback(f" Ronda 3: Buscando con ORCID...")
             
             round3_results = self._search_single_query(query3, target_words, institution, orcid)
             
@@ -753,7 +753,7 @@ def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
                 linea += f" [{anio}]"
             lineas.append(linea)
     else:
-        lineas.append("\n📜 PATENTES: No detectadas")
+        lineas.append("\n PATENTES: No detectadas")
     
     if analisis.get("spin_offs"):
         lineas.append("\n🚀 SPIN-OFFS:")
@@ -947,7 +947,7 @@ def main():
         if st.session_state.api:
             st.success("🟢 Browserless conectado")
         else:
-            st.warning("🟡 Browserless no conectado")
+            st.warning(" Browserless no conectado")
 
         st.divider()
 
@@ -1035,10 +1035,10 @@ def main():
         st.divider()
 
         st.markdown("### 📊 Estado")
-        st.write(f"🌐 Browserless: {'🟢 OK' if st.session_state.api else '🟡'}")
+        st.write(f"🌐 Browserless: {' OK' if st.session_state.api else ''}")
         st.write(f"🔗 LinkedIn: {'🟢 OK' if st.session_state.linkedin_ok else '🟡'}")
-        st.write(f"🤖 OpenAI: {'🟢 OK' if st.session_state.openai_ok else '🟡'}")
-        st.write(f"👥 CVs: {len(st.session_state.cvs)}")
+        st.write(f"🤖 OpenAI: {' OK' if st.session_state.openai_ok else '🟡'}")
+        st.write(f" CVs: {len(st.session_state.cvs)}")
         st.write(f"🏭 Análisis: {len(st.session_state.analisis)}")
         if st.session_state.api:
             st.write(f"💳 Créditos: {st.session_state.api.credits_used}")
@@ -1100,7 +1100,7 @@ def main():
         if col_inst and col_inst in df.columns:
             c2.metric("🏛️ Con institución", int(df[col_inst].notna().sum()))
         else:
-            c2.metric("🏛️ Con institución", 0)
+            c2.metric("️ Con institución", 0)
         
         if col_orcid and col_orcid in df.columns:
             c3.metric("🆔 Con ORCID", int(df[col_orcid].notna().sum()))
@@ -1133,7 +1133,7 @@ def main():
             if missing:
                 st.warning("Columnas faltantes: " + ", ".join(missing))
         
-        with st.expander("📋 Ver dataset completo", expanded=False):
+        with st.expander(" Ver dataset completo", expanded=False):
             display_cols = []
             if col_nombre and col_nombre in df.columns:
                 display_cols.append(col_nombre)
@@ -1154,7 +1154,7 @@ def main():
                 st.dataframe(df, use_container_width=True, height=400)
         
         if col_inst and col_inst in df.columns:
-            with st.expander("📈 Distribución por institución", expanded=False):
+            with st.expander(" Distribución por institución", expanded=False):
                 try:
                     inst_counts = df[col_inst].value_counts().head(10)
                     if len(inst_counts) > 0:
@@ -1169,12 +1169,12 @@ def main():
             st.stop()
 
         # STEP 2: Buscar CVs
-        st.markdown("### 2️⃣ Buscar CVs en LinkedIn")
+        st.markdown("### 2️ Buscar CVs en LinkedIn")
 
         if not st.session_state.linkedin_ok:
-            st.warning("⚠️ Primero verifica sesión LinkedIn")
+            st.warning("️ Primero verifica sesión LinkedIn")
         else:
-            tab1, tab2 = st.tabs(["🔍 Búsqueda automática (multi-ronda)", "🔗 URL manual"])
+            tab1, tab2 = st.tabs([" Búsqueda automática (multi-ronda)", " URL manual"])
             
             with tab1:
                 st.info("""
@@ -1251,16 +1251,16 @@ Los resultados se combinan y ordenan por relevancia.
                     st.session_state.selected_profiles[selected_name] = manual_url
                     st.success(f"✅ URL guardada")
 
-            # Mostrar resultados con SELECTBOX CORREGIDO
+            # Mostrar resultados con SELECTBOX
             if st.session_state.search_results:
-                st.markdown("### 📋 Selecciona el perfil correcto")
+                st.markdown("###  Selecciona el perfil correcto")
                 st.info("💡 Usa el desplegable para seleccionar el perfil. Verifica la URL antes de confirmar.")
                 
                 for nombre, results in st.session_state.search_results.items():
                     debug_info = st.session_state.search_debug.get(nombre, {})
                     rounds = debug_info.get("rounds", [])
                     
-                    with st.expander(f"👤 {nombre} ({len(results)} candidatos)", expanded=True):
+                    with st.expander(f" {nombre} ({len(results)} candidatos)", expanded=True):
                         row_match = df[df[col_nombre] == nombre]
                         if len(row_match) > 0:
                             row = row_match.iloc[0]
@@ -1308,7 +1308,6 @@ Los resultados se combinan y ordenan por relevancia.
                             
                             round_badge = f"[R{round_num}]"
                             
-                            # Construir label del selectbox CON SEPARADORES
                             label_parts = [f"{i+1}. {name} {round_badge} (score: {score})"]
                             
                             if common_words:
@@ -1320,13 +1319,11 @@ Los resultados se combinan y ordenan por relevancia.
                             if context and context != current_position:
                                 label_parts.append(f"| {context[:100]}")
                             
-                            # UNIR CON SEPARADOR
                             label = " ".join(label_parts)
                             options.append(label)
                             option_map[label] = r
                         
                         if options:
-                            # SELECTBOX
                             selected_label = st.selectbox(
                                 f"Selecciona el perfil de **{nombre}**:",
                                 options=options,
@@ -1334,16 +1331,11 @@ Los resultados se combinan y ordenan por relevancia.
                                 index=0
                             )
                             
-                            # Obtener resultado seleccionado
                             selected = option_map[selected_label]
-                            
-                            # Guardar automáticamente
                             st.session_state.selected_profiles[nombre] = selected["href"]
                             
-                            # Mostrar URL para verificar
                             st.caption(f"**🔗 URL seleccionada:** {selected['href']}")
                             
-                            # Botón para abrir en nueva pestaña
                             st.markdown(
                                 f'<a href="{selected["href"]}" target="_blank">'
                                 f'<button style="background-color:#0073b1;color:white;padding:5px 15px;'
@@ -1352,7 +1344,7 @@ Los resultados se combinan y ordenan por relevancia.
                                 unsafe_allow_html=True
                             )
 
-        # Extraer CVs
+        # Extraer CVs CON VERIFICACIÓN DE NOMBRE
         if st.session_state.selected_profiles:
             st.markdown("### 📄 Extraer CVs")
             st.write(f"**Perfiles seleccionados:** {len(st.session_state.selected_profiles)}")
@@ -1374,6 +1366,12 @@ Los resultados se combinan y ordenan por relevancia.
                             if cv:
                                 st.session_state.cvs[nombre] = cv
                                 save_cv_cache(nombre, cv)
+                                
+                                # VERIFICAR NOMBRE
+                                cv_nombre_real = cv.get("nombre", "")
+                                if cv_nombre_real and cv_nombre_real != nombre:
+                                    st.warning(f"⚠️ **Nombre en LinkedIn:** '{cv_nombre_real}' (diferente al Excel: '{nombre}')")
+                                
                                 secciones = len(cv.get("sections", {}))
                                 texto_len = len(cv.get("texto_completo", ""))
                                 st.success(f"✅ {nombre}: {secciones} secciones, {texto_len} chars")
@@ -1389,7 +1387,7 @@ Los resultados se combinan y ordenan por relevancia.
         if st.session_state.cvs:
             with st.expander(f"📄 CVs ({len(st.session_state.cvs)})", expanded=False):
                 for nombre, cv in st.session_state.cvs.items():
-                    st.markdown(f"**👤 {nombre}**")
+                    st.markdown(f"** {nombre}**")
                     st.caption(f"🎯 {cv.get('headline', 'N/A')}")
                     st.caption(f"📍 {cv.get('ubicacion', 'N/A')}")
                     st.caption(f"🔗 {cv.get('url', 'N/A')}")
@@ -1484,11 +1482,11 @@ Los resultados se combinan y ordenan por relevancia.
                     st.info(f"**Sector:** {analisis.get('sector_principal', '?')}")
                     
                     if analisis.get("resumen_ejecutivo"):
-                        st.markdown(f"**📋 Resumen:** {analisis['resumen_ejecutivo']}")
+                        st.markdown(f"** Resumen:** {analisis['resumen_ejecutivo']}")
                     
                     st.divider()
 
-        # STEP 4: Excel (CORREGIDO con .loc)
+        # STEP 4: Excel
         st.markdown("### 4️⃣ Generar Excel")
 
         if st.session_state.analisis:
@@ -1529,7 +1527,7 @@ Los resultados se combinan y ordenan por relevancia.
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 
                 st.download_button(
-                    label="⬇️ Descargar Excel",
+                    label="️ Descargar Excel",
                     data=buffer,
                     file_name=f"investigadores_spinoffs_{timestamp}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1537,7 +1535,7 @@ Los resultados se combinan y ordenan por relevancia.
                 )
                 st.success("✅ Excel generado")
 
-                st.markdown("### 📈 Resumen")
+                st.markdown("###  Resumen")
                 total_pat = sum(len(a.get("patentes", [])) for a in st.session_state.analisis.values())
                 total_spin = sum(len(a.get("spin_offs", [])) for a in st.session_state.analisis.values())
                 total_emp = sum(len(a.get("empresas", [])) for a in st.session_state.analisis.values())
@@ -1546,7 +1544,7 @@ Los resultados se combinan y ordenan por relevancia.
                 c1.metric("👥 Investigadores", len(st.session_state.analisis))
                 c2.metric("📜 Patentes", total_pat)
                 c3.metric("🚀 Spin-offs", total_spin)
-                c4.metric("🏢 Empresas", total_emp)
+                c4.metric(" Empresas", total_emp)
 
         elif st.session_state.cvs:
             st.info("👉 Pulsa 'Analizar con IA'")
