@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión con filtrado equilibrado y normalización robusta
+Versión final equilibrada: búsqueda funcional + selectbox + filtrado suave
 """
 
 import os
@@ -42,18 +42,11 @@ st.markdown("""
         font-size: 0.8rem;
         margin-right: 5px;
     }
+    div[data-testid="stSelectbox"] {
+        margin-bottom: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
-
-# Apellidos muy comunes en España (solo los TOP 30 para no ser demasiado restrictivo)
-COMMON_SPANISH_SURNAMES = {
-    'garcia', 'gonzalez', 'rodriguez', 'fernandez', 'lopez', 'martinez',
-    'sanchez', 'perez', 'gomez', 'martin', 'jimenez', 'ruiz', 'hernandez',
-    'diaz', 'moreno', 'alvarez', 'romero', 'alonso', 'gutierrez', 'navarro',
-    'torres', 'dominguez', 'vazquez', 'ramos', 'ramirez', 'serrano',
-    'blanco', 'suarez', 'molina', 'morales', 'ortiz', 'delgado', 'castro',
-    'ortega', 'rubio', 'marin', 'sanz', 'nuñez', 'munoz', 'santos'
-}
 
 
 # ============================================================================
@@ -193,104 +186,25 @@ class LinkedInScraper:
         return found
 
     def _normalize_name(self, name: str) -> str:
-        """Normaliza un nombre de forma robusta para comparación."""
-        # Convertir a minúsculas
+        """Normaliza un nombre para comparación."""
         normalized = name.lower()
-        
-        # Normalizar caracteres acentuados y especiales
-        replacements = {
-            'ı́': 'i', 'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
-            'á': 'a', 'à': 'a', 'â': 'a', 'ä': 'a',
-            'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
-            'ó': 'o', 'ò': 'o', 'ô': 'o', 'ö': 'o',
-            'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
-            'ñ': 'n', 'ç': 'c',
-        }
-        for old, new in replacements.items():
-            normalized = normalized.replace(old, new)
-        
-        # Eliminar guiones, puntos, comas y otros caracteres no alfabéticos
+        normalized = normalized.replace('ı́', 'i').replace('í', 'i').replace('á', 'a')
+        normalized = normalized.replace('é', 'e').replace('ó', 'o').replace('ú', 'u')
+        normalized = normalized.replace('ñ', 'n').replace('ç', 'c').replace('ü', 'u')
         normalized = re.sub(r'[^a-z\s]', ' ', normalized)
-        
-        # Normalizar espacios
         normalized = ' '.join(normalized.split())
-        
         return normalized
 
     def _prepare_search_query(self, full_name: str) -> str:
-        """Prepara el nombre para búsqueda en LinkedIn."""
-        search_name = self._normalize_name(full_name)
-        
-        # Eliminar iniciales (Ivan M. Fernandez → Ivan Fernandez)
-        search_name = re.sub(r'\b[a-z]\s+', '', search_name)
-        
-        # Eliminar palabras muy cortas (1-2 letras)
-        words = [w for w in search_name.split() if len(w) > 2]
-        search_name = ' '.join(words)
-        
+        """Prepara el nombre para búsqueda: elimina iniciales, normaliza caracteres."""
+        search_name = full_name
+        search_name = search_name.replace('ı́', 'i').replace('í', 'i').replace('á', 'a')
+        search_name = search_name.replace('é', 'e').replace('ó', 'o').replace('ú', 'u')
+        search_name = search_name.replace('ñ', 'n').replace('ç', 'c').replace('ü', 'u')
+        search_name = re.sub(r'\b[A-Z]\.\s*', '', search_name)
+        search_name = re.sub(r'[^a-zA-Z\s]', ' ', search_name)
+        search_name = ' '.join(search_name.split())
         return search_name
-
-    def _is_name_match(self, target_name: str, candidate_name: str) -> tuple:
-        """
-        Verifica si hay coincidencia entre nombres.
-        Devuelve (is_match: bool, score: int, match_details: str)
-        
-        Criterios equilibrados:
-        - RECHAZAR si solo coinciden apellidos muy comunes (García, González, etc.)
-        - ACEPTAR si coincide al menos 1 palabra única (nombre propio o apellido raro)
-        - BONUS por múltiples coincidencias y orden
-        """
-        target_norm = self._normalize_name(target_name)
-        candidate_norm = self._normalize_name(candidate_name)
-        
-        target_words = target_norm.split()
-        candidate_words = candidate_norm.split()
-        
-        if not target_words or not candidate_words:
-            return False, 0, "Sin palabras"
-        
-        # Convertir a sets para comparación
-        target_set = set(target_words)
-        candidate_set = set(candidate_words)
-        
-        # Coincidencias
-        common_words = target_set & candidate_set
-        
-        if not common_words:
-            return False, 0, "Sin coincidencias"
-        
-        # Separar en comunes y únicas
-        common_surnames = common_words & COMMON_SPANISH_SURNAMES
-        unique_matches = common_words - COMMON_SPANISH_SURNAMES
-        
-        # REGLA 1: Si solo coinciden apellidos comunes y NADA más, RECHAZAR
-        if len(unique_matches) == 0 and len(common_surnames) > 0:
-            return False, 0, f"Solo apellidos comunes: {common_surnames}"
-        
-        # REGLA 2: Si hay al menos 1 coincidencia única, ACEPTAR
-        if len(unique_matches) == 0:
-            return False, 0, "Sin coincidencias únicas"
-        
-        # Calcular score
-        score = len(unique_matches) * 20  # 20 puntos por cada palabra única
-        score += len(common_surnames) * 5  # 5 puntos por apellidos comunes
-        
-        # Bonus por coincidencia del primer nombre
-        if target_words and candidate_words and target_words[0] == candidate_words[0]:
-            score += 15
-        
-        # Bonus por coincidencia del último apellido
-        if len(target_words) > 1 and len(candidate_words) > 1:
-            if target_words[-1] == candidate_words[-1]:
-                score += 10
-        
-        # Bonus por proporción de coincidencia
-        match_ratio = len(common_words) / max(len(target_words), len(candidate_words))
-        score += int(match_ratio * 20)
-        
-        match_details = f"Únicas: {unique_matches}, Comunes: {common_surnames if common_surnames else 'ninguna'}"
-        
-        return True, score, match_details
 
     def _extract_name_from_link(self, link) -> str:
         name = ""
@@ -389,6 +303,7 @@ class LinkedInScraper:
             r"Más de \d+\s+contactos",
             r"·\s*\d+(?:er|º|ª)",
             r"•\s*\d+(?:er|º|ª)",
+            r"¿Por qué estoy viendo este anuncio\?",
         ]
         
         cleaned_text = text
@@ -422,8 +337,8 @@ class LinkedInScraper:
         
         return cleaned_text
 
-    def _search_single_query(self, query: str, target_name: str, institution: str = "", orcid: str = "") -> list:
-        """Ejecuta una búsqueda individual con filtrado equilibrado."""
+    def _search_single_query(self, query: str, target_words: set, institution: str = "", orcid: str = "") -> list:
+        """Ejecuta una búsqueda individual y devuelve resultados con score."""
         search_url = (
             f"https://www.linkedin.com/search/results/people/"
             f"?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER"
@@ -457,13 +372,6 @@ class LinkedInScraper:
             seen_urls.add(href)
             
             name = self._extract_name_from_link(link)
-            
-            # FILTRADO EQUILIBRADO
-            is_match, score, details = self._is_name_match(target_name, name)
-            
-            if not is_match:
-                continue
-            
             parent = link.find_parent("li") or link.find_parent("div", class_=re.compile("entity-result|search-result"))
             context = self._extract_headline_from_context(parent)
             location = self._extract_location(parent)
@@ -472,7 +380,12 @@ class LinkedInScraper:
             img = link.select_one("img")
             avatar_url = img.get("src", "") if img else ""
             
-            # Bonus adicionales
+            # Calcular score (sistema simple que funcionaba)
+            name_normalized = self._normalize_name(name)
+            name_words = set(name_normalized.split())
+            common_words = target_words & name_words
+            score = len(common_words) * 10
+            
             if institution:
                 inst_lower = institution.lower()
                 inst_words = [w for w in inst_lower.split() if len(w) > 3]
@@ -489,6 +402,10 @@ class LinkedInScraper:
             if location:
                 score += 2
             
+            # FILTRADO SUAVE: Solo descartar los que no tienen NINGUNA coincidencia
+            if score < 5:
+                continue
+            
             profile_links.append({
                 "href": href,
                 "name": name,
@@ -497,17 +414,18 @@ class LinkedInScraper:
                 "current_position": current_position,
                 "avatar_url": avatar_url,
                 "score": score,
-                "match_details": details,
+                "common_words": common_words,
             })
 
         return profile_links
 
     def search_person_multi_round(self, full_name: str, institution: str = "", orcid: str = "", 
                                    debug_mode: bool = False, progress_callback=None) -> list:
-        """Búsqueda en múltiples rondas con filtrado equilibrado."""
+        """Búsqueda en múltiples rondas."""
         self.debug_info = {"rounds": []}
         
         search_name = self._prepare_search_query(full_name)
+        target_words = set(self._normalize_name(full_name).split())
         
         all_results = []
         seen_urls = set()
@@ -516,7 +434,7 @@ class LinkedInScraper:
         if progress_callback:
             progress_callback(f"🔍 Ronda 1: Buscando '{search_name}'...")
         
-        round1_results = self._search_single_query(search_name, full_name, institution, orcid)
+        round1_results = self._search_single_query(search_name, target_words, institution, orcid)
         
         self.debug_info["rounds"].append({
             "round": 1,
@@ -531,7 +449,7 @@ class LinkedInScraper:
                 seen_urls.add(r["href"])
         
         if debug_mode:
-            st.info(f"**Ronda 1:** {len(round1_results)} resultados válidos con '{search_name}'")
+            st.info(f"**Ronda 1:** {len(round1_results)} resultados con '{search_name}'")
         
         # RONDA 2: Nombre + Institución
         if len(all_results) < 3 and institution:
@@ -544,7 +462,7 @@ class LinkedInScraper:
                 if progress_callback:
                     progress_callback(f"🔍 Ronda 2: Buscando '{query2}'...")
                 
-                round2_results = self._search_single_query(query2, full_name, institution, orcid)
+                round2_results = self._search_single_query(query2, target_words, institution, orcid)
                 
                 self.debug_info["rounds"].append({
                     "round": 2,
@@ -572,7 +490,7 @@ class LinkedInScraper:
             if progress_callback:
                 progress_callback(f"🔍 Ronda 3: Buscando con ORCID...")
             
-            round3_results = self._search_single_query(query3, full_name, institution, orcid)
+            round3_results = self._search_single_query(query3, target_words, institution, orcid)
             
             self.debug_info["rounds"].append({
                 "round": 3,
@@ -816,7 +734,6 @@ Cruza la información del CV con los datos del expediente si están disponibles.
 
 
 def formatear_para_excel(nombre_original: str, cv: dict, analisis: dict) -> str:
-    """Formatea el resultado para Excel. Limita texto a 500 chars por sección."""
     lineas = [f"=== {nombre_original} ===", ""]
     
     if cv:
@@ -944,9 +861,17 @@ def extraer_datos_excel_para_ia(row, col_map: dict) -> dict:
         val = row.get(col_map["patentes"], "")
         if pd.notna(val):
             datos["patentes"] = str(val)
+    elif "Representative_Patent_Titles" in row.index:
+        val = row.get("Representative_Patent_Titles", "")
+        if pd.notna(val):
+            datos["patentes"] = str(val)
     
     if "publicaciones" in col_map and col_map["publicaciones"]:
         val = row.get(col_map["publicaciones"], "")
+        if pd.notna(val):
+            datos["publicaciones"] = str(val)
+    elif "Publication_Articles_Total_Area" in row.index:
+        val = row.get("Publication_Articles_Total_Area", "")
         if pd.notna(val):
             datos["publicaciones"] = str(val)
     
@@ -959,6 +884,10 @@ def extraer_datos_excel_para_ia(row, col_map: dict) -> dict:
         val = row.get(col_map["score"], "")
         if pd.notna(val):
             datos["score"] = str(val)
+    elif "Score_10xPatents_plus_Articles" in row.index:
+        val = row.get("Score_10xPatents_plus_Articles", "")
+        if pd.notna(val):
+            datos["score"] = str(val)
     
     return datos
 
@@ -967,7 +896,6 @@ def extraer_datos_excel_para_ia(row, col_map: dict) -> dict:
 # STREAMLIT APP
 # ============================================================================
 def main():
-    # Estado
     if "api" not in st.session_state:
         st.session_state.api = None
     if "scraper" not in st.session_state:
@@ -1152,7 +1080,6 @@ def main():
             st.error(f"❌ Error: {e}")
             st.stop()
 
-        # Detectar columnas
         col_map = {}
         for col in df.columns:
             cl = str(col).lower()
@@ -1171,7 +1098,6 @@ def main():
             elif "publication" in cl and "total" in cl:
                 col_map["publicaciones"] = col
 
-        # Variables seguras
         col_nombre = col_map.get("nombre")
         col_inst = col_map.get("institucion")
         col_orcid = col_map.get("orcid")
@@ -1180,7 +1106,6 @@ def main():
         col_patentes = col_map.get("patentes")
         col_publicaciones = col_map.get("publicaciones")
 
-        # ========== VISTA PREVIA DEL DATASET ==========
         st.markdown("#### 📊 Vista previa del dataset")
         
         c1, c2, c3, c4 = st.columns(4)
@@ -1267,14 +1192,12 @@ def main():
             
             with tab1:
                 st.info("""
-💡 **Búsqueda en 3 rondas automáticas con filtrado equilibrado:**
+💡 **Búsqueda en 3 rondas automáticas:**
 1. **Ronda 1**: Solo nombre
 2. **Ronda 2**: Nombre + institución (si hay < 3 resultados)
 3. **Ronda 3**: Nombre + ORCID (si hay < 3 resultados)
 
-**Filtrado equilibrado:**
-- Se descartan resultados que SOLO comparten apellidos comunes (García, González, etc.)
-- Se acepta cualquier candidato con al menos 1 coincidencia en nombre propio o apellido raro
+Los resultados se combinan y ordenan por relevancia.
 """)
                 seleccion = st.multiselect(
                     "Selecciona investigadores",
@@ -1342,10 +1265,10 @@ def main():
                     st.session_state.selected_profiles[selected_name] = manual_url
                     st.success(f"✅ URL guardada")
 
-            # Mostrar resultados
+            # Mostrar resultados con SELECTBOX
             if st.session_state.search_results:
                 st.markdown("### 📋 Selecciona el perfil correcto")
-                st.info("💡 Solo se muestran candidatos con coincidencia real de nombre. Apellidos comunes como García/González por sí solos no son suficientes.")
+                st.info("💡 Usa el desplegable para seleccionar el perfil. Verifica la URL antes de confirmar.")
                 
                 for nombre, results in st.session_state.search_results.items():
                     debug_info = st.session_state.search_debug.get(nombre, {})
@@ -1384,50 +1307,55 @@ def main():
                         
                         st.divider()
                         
+                        # Construir opciones para el selectbox
                         options = []
+                        option_map = {}
+                        
                         for i, r in enumerate(results[:15]):
                             name = r.get('name', 'Sin nombre')
-                            context = r.get('context', '')[:200]
+                            context = r.get('context', '')[:100]
                             location = r.get('location', '')
                             current_position = r.get('current_position', '')
                             score = r.get('score', 0)
                             round_num = r.get('round', 1)
-                            match_details = r.get('match_details', '')
+                            common_words = r.get('common_words', set())
                             
                             round_badge = f"[R{round_num}]"
                             
+                            # Construir label del selectbox
                             label_parts = [f"{i+1}. {name} {round_badge} (score: {score})"]
-                            if match_details:
-                                label_parts.append(f"   ℹ️ {match_details}")
+                            if common_words:
+                                label_parts.append(f" | Coincide: {', '.join(list(common_words)[:3])}")
                             if current_position:
-                                label_parts.append(f"   💼 {current_position[:100]}")
+                                label_parts.append(f" | {current_position[:80]}")
                             if location:
-                                label_parts.append(f"   📍 {location}")
+                                label_parts.append(f" | 📍 {location}")
                             if context and context != current_position:
-                                label_parts.append(f"   {context[:150]}")
+                                label_parts.append(f" | {context[:100]}")
                             
-                            label = "\n".join(label_parts)
-                            
-                            options.append({
-                                "label": label,
-                                "href": r['href'],
-                                "name": name,
-                                "score": score,
-                                "round": round_num
-                            })
+                            label = "".join(label_parts)
+                            options.append(label)
+                            option_map[label] = r
                         
                         if options:
-                            selected_idx = st.radio(
-                                f"Selecciona el perfil de {nombre}:",
-                                options=list(range(len(options))),
-                                format_func=lambda i: options[i]["label"],
-                                key=f"select_{nombre}"
+                            # SELECTBOX en lugar de radio buttons
+                            selected_label = st.selectbox(
+                                f"Selecciona el perfil de **{nombre}**:",
+                                options=options,
+                                key=f"select_{nombre}",
+                                index=0
                             )
                             
-                            selected = options[selected_idx]
+                            # Obtener resultado seleccionado
+                            selected = option_map[selected_label]
+                            
+                            # Guardar automáticamente
                             st.session_state.selected_profiles[nombre] = selected["href"]
                             
-                            st.caption(f"**URL:** {selected['href']} (Ronda {selected['round']}, Score: {selected['score']})")
+                            # Mostrar URL para verificar
+                            st.caption(f"**🔗 URL seleccionada:** {selected['href']}")
+                            
+                            # Botón para abrir en nueva pestaña
                             st.markdown(
                                 f'<a href="{selected["href"]}" target="_blank">'
                                 f'<button style="background-color:#0073b1;color:white;padding:5px 15px;'
@@ -1439,7 +1367,7 @@ def main():
         # Extraer CVs
         if st.session_state.selected_profiles:
             st.markdown("### 📄 Extraer CVs")
-            st.write(f"**Perfiles:** {len(st.session_state.selected_profiles)}")
+            st.write(f"**Perfiles seleccionados:** {len(st.session_state.selected_profiles)}")
             
             for nombre, url in st.session_state.selected_profiles.items():
                 st.caption(f"• **{nombre}**: {url}")
@@ -1481,11 +1409,11 @@ def main():
                     if cv.get("sections"):
                         for sec, txt in cv.get("sections", {}).items():
                             with st.expander(f"  • {sec} ({len(txt)} chars)", expanded=False):
-                                st.text(txt[:500])
+                                st.text(txt[:2000])
                     
                     if cv.get("texto_completo"):
                         with st.expander(f"  • Texto completo ({len(cv['texto_completo'])} chars)", expanded=False):
-                            st.text(cv["texto_completo"][:1000])
+                            st.text(cv["texto_completo"][:3000])
                     
                     st.divider()
 
@@ -1510,10 +1438,10 @@ def main():
                             cv_text_parts.append(f"UBICACIÓN: {cv['ubicacion']}")
                         
                         for sec, txt in cv.get("sections", {}).items():
-                            cv_text_parts.append(f"\n=== {sec.upper()} ===\n{txt[:500]}")
+                            cv_text_parts.append(f"\n=== {sec.upper()} ===\n{txt}")
                         
                         if cv.get("texto_completo"):
-                            cv_text_parts.append(f"\n=== TEXTO COMPLETO ===\n{cv['texto_completo'][:3000]}")
+                            cv_text_parts.append(f"\n=== TEXTO COMPLETO ===\n{cv['texto_completo']}")
                         
                         cv_text = "\n".join(cv_text_parts)
                         
@@ -1572,7 +1500,7 @@ def main():
                     
                     st.divider()
 
-        # STEP 4: Excel
+        # STEP 4: Excel (CORREGIDO con .loc)
         st.markdown("### 4️⃣ Generar Excel")
 
         if st.session_state.analisis:
@@ -1580,10 +1508,11 @@ def main():
                 df_out = df.copy()
                 col_industrial_out = col_map.get("industrial", "INDUSTRIAL info")
                 
-                # FIX: Forzar tipo object/string
+                # CORRECCIÓN: Usar .loc en lugar de .at para evitar TypeError
                 if col_industrial_out not in df_out.columns:
-                    df_out[col_industrial_out] = ""
+                    df_out[col_industrial_out] = [""] * len(df_out)
                 
+                # Forzar tipo object para aceptar strings largos
                 df_out[col_industrial_out] = df_out[col_industrial_out].astype(object)
 
                 for idx, row in df_out.iterrows():
@@ -1591,8 +1520,9 @@ def main():
                     cv = st.session_state.cvs.get(nombre, {})
                     analisis = st.session_state.analisis.get(nombre, {})
                     if cv or analisis:
-                        texto_formateado = formatear_para_excel(str(nombre), cv, analisis)
-                        df_out.loc[idx, col_industrial_out] = str(texto_formateado)
+                        texto = formatear_para_excel(str(nombre), cv, analisis)
+                        # USAR .loc en vez de .at
+                        df_out.loc[idx, col_industrial_out] = texto
 
                 buffer = BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
