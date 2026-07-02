@@ -1,6 +1,6 @@
 """
 LinkedIn CV Analyzer - Spin-off Detector
-Versión final equilibrada: búsqueda funcional + selectbox + filtrado suave
+Versión final: búsqueda multi-ronda + selectbox + análisis IA
 """
 
 import os
@@ -41,9 +41,6 @@ st.markdown("""
         border-radius: 10px;
         font-size: 0.8rem;
         margin-right: 5px;
-    }
-    div[data-testid="stSelectbox"] {
-        margin-bottom: 1rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -186,7 +183,6 @@ class LinkedInScraper:
         return found
 
     def _normalize_name(self, name: str) -> str:
-        """Normaliza un nombre para comparación."""
         normalized = name.lower()
         normalized = normalized.replace('ı́', 'i').replace('í', 'i').replace('á', 'a')
         normalized = normalized.replace('é', 'e').replace('ó', 'o').replace('ú', 'u')
@@ -196,7 +192,6 @@ class LinkedInScraper:
         return normalized
 
     def _prepare_search_query(self, full_name: str) -> str:
-        """Prepara el nombre para búsqueda: elimina iniciales, normaliza caracteres."""
         search_name = full_name
         search_name = search_name.replace('ı́', 'i').replace('í', 'i').replace('á', 'a')
         search_name = search_name.replace('é', 'e').replace('ó', 'o').replace('ú', 'u')
@@ -269,7 +264,6 @@ class LinkedInScraper:
         return ""
 
     def _clean_linkedin_text(self, text: str) -> str:
-        """Limpia el texto eliminando footer, headers y ruido de LinkedIn."""
         if not text:
             return ""
         
@@ -338,7 +332,6 @@ class LinkedInScraper:
         return cleaned_text
 
     def _search_single_query(self, query: str, target_words: set, institution: str = "", orcid: str = "") -> list:
-        """Ejecuta una búsqueda individual y devuelve resultados con score."""
         search_url = (
             f"https://www.linkedin.com/search/results/people/"
             f"?keywords={requests.utils.quote(query)}&origin=GLOBAL_SEARCH_HEADER"
@@ -380,7 +373,6 @@ class LinkedInScraper:
             img = link.select_one("img")
             avatar_url = img.get("src", "") if img else ""
             
-            # Calcular score (sistema simple que funcionaba)
             name_normalized = self._normalize_name(name)
             name_words = set(name_normalized.split())
             common_words = target_words & name_words
@@ -402,7 +394,6 @@ class LinkedInScraper:
             if location:
                 score += 2
             
-            # FILTRADO SUAVE: Solo descartar los que no tienen NINGUNA coincidencia
             if score < 5:
                 continue
             
@@ -421,7 +412,6 @@ class LinkedInScraper:
 
     def search_person_multi_round(self, full_name: str, institution: str = "", orcid: str = "", 
                                    debug_mode: bool = False, progress_callback=None) -> list:
-        """Búsqueda en múltiples rondas."""
         self.debug_info = {"rounds": []}
         
         search_name = self._prepare_search_query(full_name)
@@ -430,7 +420,6 @@ class LinkedInScraper:
         all_results = []
         seen_urls = set()
         
-        # RONDA 1: Solo nombre
         if progress_callback:
             progress_callback(f"🔍 Ronda 1: Buscando '{search_name}'...")
         
@@ -451,7 +440,6 @@ class LinkedInScraper:
         if debug_mode:
             st.info(f"**Ronda 1:** {len(round1_results)} resultados con '{search_name}'")
         
-        # RONDA 2: Nombre + Institución
         if len(all_results) < 3 and institution:
             inst_clean = re.sub(r'[;|,()\[\]]', ' ', institution)
             inst_words = [w for w in inst_clean.split() if len(w) > 3]
@@ -482,7 +470,6 @@ class LinkedInScraper:
                 if debug_mode:
                     st.info(f"**Ronda 2:** {len(round2_results)} resultados ({new_count} nuevos)")
         
-        # RONDA 3: Nombre + ORCID
         if len(all_results) < 3 and orcid:
             orcid_id = orcid.split("/")[-1] if "/" in orcid else orcid
             query3 = f"{search_name} {orcid_id}"
@@ -523,7 +510,6 @@ class LinkedInScraper:
         return self.search_person_multi_round(full_name, institution, orcid, debug_mode)
 
     def extract_full_cv(self, profile_url: str, debug_mode: bool = False) -> dict:
-        """Extrae CV completo con limpieza de ruido."""
         response = self.api.get_content(profile_url, cookies=self.cookies)
 
         if not response["ok"] or not response["html"]:
@@ -1265,7 +1251,7 @@ Los resultados se combinan y ordenan por relevancia.
                     st.session_state.selected_profiles[selected_name] = manual_url
                     st.success(f"✅ URL guardada")
 
-            # Mostrar resultados con SELECTBOX
+            # Mostrar resultados con SELECTBOX CORREGIDO
             if st.session_state.search_results:
                 st.markdown("### 📋 Selecciona el perfil correcto")
                 st.info("💡 Usa el desplegable para seleccionar el perfil. Verifica la URL antes de confirmar.")
@@ -1322,23 +1308,25 @@ Los resultados se combinan y ordenan por relevancia.
                             
                             round_badge = f"[R{round_num}]"
                             
-                            # Construir label del selectbox
+                            # Construir label del selectbox CON SEPARADORES
                             label_parts = [f"{i+1}. {name} {round_badge} (score: {score})"]
-                            if common_words:
-                                label_parts.append(f" | Coincide: {', '.join(list(common_words)[:3])}")
-                            if current_position:
-                                label_parts.append(f" | {current_position[:80]}")
-                            if location:
-                                label_parts.append(f" | 📍 {location}")
-                            if context and context != current_position:
-                                label_parts.append(f" | {context[:100]}")
                             
-                            label = "".join(label_parts)
+                            if common_words:
+                                label_parts.append(f"| Coincide: {', '.join(list(common_words)[:3])}")
+                            if current_position:
+                                label_parts.append(f"| 💼 {current_position[:80]}")
+                            if location:
+                                label_parts.append(f"| 📍 {location}")
+                            if context and context != current_position:
+                                label_parts.append(f"| {context[:100]}")
+                            
+                            # UNIR CON SEPARADOR
+                            label = " ".join(label_parts)
                             options.append(label)
                             option_map[label] = r
                         
                         if options:
-                            # SELECTBOX en lugar de radio buttons
+                            # SELECTBOX
                             selected_label = st.selectbox(
                                 f"Selecciona el perfil de **{nombre}**:",
                                 options=options,
@@ -1508,11 +1496,9 @@ Los resultados se combinan y ordenan por relevancia.
                 df_out = df.copy()
                 col_industrial_out = col_map.get("industrial", "INDUSTRIAL info")
                 
-                # CORRECCIÓN: Usar .loc en lugar de .at para evitar TypeError
                 if col_industrial_out not in df_out.columns:
                     df_out[col_industrial_out] = [""] * len(df_out)
                 
-                # Forzar tipo object para aceptar strings largos
                 df_out[col_industrial_out] = df_out[col_industrial_out].astype(object)
 
                 for idx, row in df_out.iterrows():
@@ -1521,7 +1507,6 @@ Los resultados se combinan y ordenan por relevancia.
                     analisis = st.session_state.analisis.get(nombre, {})
                     if cv or analisis:
                         texto = formatear_para_excel(str(nombre), cv, analisis)
-                        # USAR .loc en vez de .at
                         df_out.loc[idx, col_industrial_out] = texto
 
                 buffer = BytesIO()
