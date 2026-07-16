@@ -34,27 +34,11 @@ CACHE_DIR = Path("dealflow_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
 BRANDING = {
-    "logo_url": "https://doublehelix.vc/wp-content/uploads/2023/03/cropped-DH-Logo-1.png",
+    "logo_url": "https://doublehelix.vc/wp-content/uploads/2024/11/DH_Healthtech.jpg",
+    "favicon_url": "https://doublehelix.vc/wp-content/uploads/2024/11/DH_Healthtech.jpg",
     "primary_color": "#00A6A6",
     "secondary_color": "#1A1A2E",
     "accent_color": "#16213E",
-}
-
-# Portales europeos para monitoreo
-EUROPEAN_PORTALS = {
-    "CORDIS": {
-        "base_url": "https://cordis.europa.eu",
-        "search_endpoint": "/project/search",
-        "topics": ["health", "biotech", "medical", "pharma", "diagnostic", "digital health"],
-    },
-    "EU-Funding": {
-        "base_url": "https://ec.europa.eu/info/funding-tenders",
-        "search_endpoint": "/opportunities/portal/screen/home",
-    },
-    "EIC": {
-        "base_url": "https://eic.ec.europa.eu",
-        "search_endpoint": "/eic-funding-opportunities",
-    },
 }
 
 st.set_page_config(
@@ -79,7 +63,7 @@ st.markdown(f"""
         padding: 1rem 0; border-bottom: 2px solid var(--dh-primary);
         margin-bottom: 2rem;
     }}
-    .logo-img {{ height: 50px; width: auto; }}
+    .logo-img {{ height: 50px; width: auto; border-radius: 8px; }}
     .logo-text {{ font-size: 1.5rem; font-weight: 700; color: var(--dh-secondary); margin: 0; }}
     .logo-subtitle {{ font-size: 0.9rem; color: var(--dh-primary); margin: 0; }}
     .stButton>button {{
@@ -117,13 +101,6 @@ st.markdown(f"""
         color: #666; font-size: 0.85rem;
         border-top: 1px solid #e0e0e0; margin-top: 3rem;
     }}
-    .status-badge {{
-        padding: 0.25rem 0.75rem; border-radius: 12px;
-        font-size: 0.8rem; font-weight: 600;
-    }}
-    .status-new {{ background: #10B981; color: white; }}
-    .status-updated {{ background: #3B82F6; color: white; }}
-    .status-monitored {{ background: #8B5CF6; color: white; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -133,10 +110,13 @@ st.markdown(f"""
 # ============================================================================
 def normalize_url(url: str) -> str:
     """Normaliza URL: elimina parámetros de tracking (utm, gclid, etc.)"""
-    if not url or not url.startswith(("http://", "https://")):
-        if url and not url.startswith("www."):
+    if not url or not isinstance(url, str):
+        return ""
+    
+    if not url.startswith(("http://", "https://")):
+        if url.startswith("www."):
             url = f"https://{url}"
-        elif url.startswith("www."):
+        else:
             url = f"https://{url}"
     
     try:
@@ -148,8 +128,8 @@ def normalize_url(url: str) -> str:
             'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
             'gclid', 'gbraid', 'wbraid', 'fbclid', 'mc_eid', 'pk_campaign',
             'pk_kwd', 'hsa_cam', 'hsa_grp', 'hsa_mt', 'hsa_src', 'hsa_ad',
-            'hsa_acc', 'hsa_net', 'hsa_ver', '_gl', '_ga', '_gid', 'fbclid',
-            'ref', 'source', 'medium', 'campaign', 'content', 'term'
+            'hsa_acc', 'hsa_net', 'hsa_ver', '_gl', '_ga', '_gid', 'ref',
+            'source', 'medium', 'campaign', 'content', 'term'
         ]
         
         # Filtrar parámetros
@@ -198,37 +178,6 @@ def save_cached_data(cache_type: str, key: str, data: Dict):
     cache_file = CACHE_DIR / f"{cache_type}_{key}.json"
     with open(cache_file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-def detect_page_type(url: str, content: str, title: str) -> str:
-    """Detecta el tipo de página para priorizar extracción"""
-    url_lower = url.lower()
-    content_lower = content.lower()
-    title_lower = title.lower()
-    
-    # Patrones para detectar tipo de página
-    if any(kw in url_lower for kw in ['spin', 'spin-off', 'spinoff', 'startup', 'empresa', 'company']):
-        return "company_directory"
-    if any(kw in url_lower for kw in ['project', 'proyecto', 'funding', 'grant', 'cordis', 'horizon']):
-        return "project_listing"
-    if any(kw in url_lower for kw in ['patent', 'patente', 'ip', 'property', 'technology', 'tecnologia']):
-        return "technology_transfer"
-    if any(kw in url_lower for kw in ['publication', 'paper', 'article', 'research', 'investigacion']):
-        return "research_publications"
-    if any(kw in url_lower for kw in ['team', 'people', 'investigator', 'researcher', 'orcid']):
-        return "people_directory"
-    
-    # Detectar por contenido
-    if re.search(r'spin[-\s]?off|startup|empresa|company', content_lower):
-        return "company_directory"
-    if re.search(r'patent|patente|intellectual\s*property', content_lower):
-        return "technology_transfer"
-    if re.search(r'publication|paper|article|doi|orcid', content_lower):
-        return "research_publications"
-    if re.search(r'project|funding|grant|horizon|cordis', content_lower):
-        return "project_listing"
-    
-    return "general"
 
 
 # ============================================================================
@@ -345,6 +294,37 @@ class WebCrawler:
         text = re.sub(r'[ \t]+', ' ', text)
         
         return text.strip()
+
+
+def detect_page_type(url: str, content: str, title: str) -> str:
+    """Detecta el tipo de página para priorizar extracción"""
+    url_lower = url.lower()
+    content_lower = content.lower() if content else ""
+    title_lower = title.lower() if title else ""
+    
+    # Patrones para detectar tipo de página
+    if any(kw in url_lower for kw in ['spin', 'spin-off', 'spinoff', 'startup', 'empresa', 'company']):
+        return "company_directory"
+    if any(kw in url_lower for kw in ['project', 'proyecto', 'funding', 'grant', 'cordis', 'horizon']):
+        return "project_listing"
+    if any(kw in url_lower for kw in ['patent', 'patente', 'ip', 'property', 'technology', 'tecnologia']):
+        return "technology_transfer"
+    if any(kw in url_lower for kw in ['publication', 'paper', 'article', 'research', 'investigacion']):
+        return "research_publications"
+    if any(kw in url_lower for kw in ['team', 'people', 'investigator', 'researcher', 'orcid']):
+        return "people_directory"
+    
+    # Detectar por contenido
+    if re.search(r'spin[-\s]?off|startup|empresa|company', content_lower):
+        return "company_directory"
+    if re.search(r'patent|patente|intellectual\s*property', content_lower):
+        return "technology_transfer"
+    if re.search(r'publication|paper|article|doi|orcid', content_lower):
+        return "research_publications"
+    if re.search(r'project|funding|grant|horizon|cordis', content_lower):
+        return "project_listing"
+    
+    return "general"
 
 
 # ============================================================================
@@ -833,10 +813,10 @@ def prepare_tematicas(tematicas_df: pd.DataFrame) -> List[Dict]:
     tematicas = []
     for _, row in tematicas_df.iterrows():
         tematicas.append({
-            "vertical": str(row.get("Vertical", "")),
-            "segmento": str(row.get("Segmento", "")),
-            "definicion": str(row.get("Qué es (definición)", "")),
-            "problema_no_resuelto": str(row.get("Problema no resuelto que ataca", "")),
+            "vertical": str(row.get("Vertical", "")) if pd.notna(row.get("Vertical")) else "",
+            "segmento": str(row.get("Segmento", "")) if pd.notna(row.get("Segmento")) else "",
+            "definicion": str(row.get("Qué es (definición)", "")) if pd.notna(row.get("Qué es (definición)")) else "",
+            "problema_no_resuelto": str(row.get("Problema no resuelto que ataca", "")) if pd.notna(row.get("Problema no resuelto que ataca")) else "",
         })
     
     # Filtrar vacíos
@@ -850,8 +830,8 @@ def prepare_centros(centros_df: pd.DataFrame) -> List[Dict]:
     
     centros = []
     for _, row in centros_df.iterrows():
-        nombre = str(row.get("NOMBRE", ""))
-        if not nombre or nombre == "nan" or pd.isna(nombre):
+        nombre = str(row.get("NOMBRE", "")) if pd.notna(row.get("NOMBRE")) else ""
+        if not nombre or nombre == "nan":
             continue
         
         # Extraer todas las URLs (WEB DIRECTORIO, WEB 2, etc.)
@@ -866,8 +846,8 @@ def prepare_centros(centros_df: pd.DataFrame) -> List[Dict]:
         if urls:
             centros.append({
                 "nombre": nombre,
-                "region": str(row.get("REGIÓN", "")),
-                "tipo": str(row.get("TIPO DE CENTRO", "")),
+                "region": str(row.get("REGIÓN", "")) if pd.notna(row.get("REGIÓN")) else "",
+                "tipo": str(row.get("TIPO DE CENTRO", "")) if pd.notna(row.get("TIPO DE CENTRO")) else "",
                 "urls": urls,
             })
     
@@ -896,7 +876,7 @@ def render_sidebar_header():
     """Renderiza el header de la sidebar."""
     st.markdown(f"""
     <div style="text-align: center; padding: 1rem 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 1rem;">
-        <img src="{BRANDING['logo_url']}" style="height: 40px; margin-bottom: 0.5rem;">
+        <img src="{BRANDING['logo_url']}" style="height: 40px; margin-bottom: 0.5rem; border-radius: 8px;">
         <p style="margin: 0; color: {BRANDING['primary_color']}; font-weight: 600;">Dealflow Finder</p>
     </div>
     """, unsafe_allow_html=True)
@@ -910,23 +890,23 @@ def render_entity_card(entity: Dict, entity_type: str):
     # Tags según tipo
     tags_html = ""
     if entity_type == "technologies":
-        tags_html += f'<span class="entity-tag">🔬 Tecnología</span>'
+        tags_html += '<span class="entity-tag">🔬 Tecnología</span>'
         if entity.get("tipo"):
             tags_html += f'<span class="entity-tag">{entity["tipo"].upper()}</span>'
     elif entity_type == "papers":
-        tags_html += f'<span class="entity-tag">📄 Artículo</span>'
+        tags_html += '<span class="entity-tag">📄 Artículo</span>'
         if entity.get("journal"):
             tags_html += f'<span class="entity-tag">{entity["journal"]}</span>'
     elif entity_type == "companies":
-        tags_html += f'<span class="entity-tag">🏢 Empresa</span>'
+        tags_html += '<span class="entity-tag">🏢 Empresa</span>'
         if entity.get("tipo"):
             tags_html += f'<span class="entity-tag">{entity["tipo"].upper()}</span>'
     elif entity_type == "people":
-        tags_html += f'<span class="entity-tag">👤 Investigador</span>'
+        tags_html += '<span class="entity-tag"> Investigador</span>'
         if entity.get("rol"):
             tags_html += f'<span class="entity-tag">{entity["rol"].upper()}</span>'
         if entity.get("orcid"):
-            tags_html += f'<span class="entity-tag">ORCID</span>'
+            tags_html += '<span class="entity-tag">ORCID</span>'
     
     # Contenido principal
     nombre = entity.get("nombre") or entity.get("titulo") or "Sin nombre"
@@ -951,7 +931,7 @@ def render_entity_card(entity: Dict, entity_type: str):
                 <span class="match-score" style="background: linear-gradient(135deg, {score_color} 0%, {score_color}cc 100%);">
                     {score}/100
                 </span>
-                {f'<br><a href="{entity["referencia"]}" target="_blank" style="font-size: 0.8rem; color: {BRANDING["primary_color"]}; text-decoration: none; margin-top: 0.5rem; display: inline-block;">🔗 Ver</a>' if entity.get("referencia") else ''}
+                {f'<br><a href="{entity["referencia"]}" target="_blank" style="font-size: 0.8rem; color: {BRANDING["primary_color"]}; text-decoration: none; margin-top: 0.5rem; display: inline-block;"> Ver</a>' if entity.get("referencia") else ''}
             </div>
         </div>
     </div>
@@ -1115,7 +1095,7 @@ def main():
     # ========================================================================
     # PESTAÑAS PRINCIPALES
     # ========================================================================
-    tab1, tab2, tab3, tab4 = st.tabs(["🔍 Analizar", "📋 Resultados", "🇪🇺 Europa", "📊 Exportar"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🔍 Analizar", "📋 Resultados", "🇪🇺 Europa", " Exportar"])
     
     # ------------------------------------------------------------------------
     # TAB 1: Analizar Centros
@@ -1216,7 +1196,7 @@ def main():
                 sum(len(r["entities"].get(et, [])) for et in ["technologies", "papers", "companies", "people"])
                 for r in st.session_state.results.values()
             )
-            st.metric("🎯 Total oportunidades", total_opp)
+            st.metric(" Total oportunidades", total_opp)
             
             # Filtros de resultados
             col_f1, col_f2, col_f3, col_f4 = st.columns(4)
@@ -1293,7 +1273,7 @@ def main():
     # TAB 3: Monitoreo Europeo
     # ------------------------------------------------------------------------
     with tab3:
-        st.markdown('<p class="section-title">🇪🇺 Monitoreo de Portales Europeos</p>', unsafe_allow_html=True)
+        st.markdown('<p class="section-title">🇪 Monitoreo de Portales Europeos</p>', unsafe_allow_html=True)
         
         st.info("""
         **Portales monitoreados:**
@@ -1429,7 +1409,7 @@ def main():
     # ========================================================================
     st.markdown(f"""
     <div class="footer">
-        <img src="{BRANDING['logo_url']}" style="height: 30px; opacity: 0.7; margin-bottom: 0.5rem;">
+        <img src="{BRANDING['logo_url']}" style="height: 30px; opacity: 0.7; margin-bottom: 0.5rem; border-radius: 8px;">
         <p>Double Helix Dealflow Finder v3.0 © {datetime.now().year} | Healthtech Venture Capital</p>
         <p style="font-size: 0.75rem; color: #999;">
             Extracción jerárquica: Tecnologías → Artículos → Empresas → Personas | 
