@@ -2,7 +2,7 @@
 Double Helix Dealflow Finder v3.0
 Pipeline completo para identificar oportunidades de inversión en healthtech:
 - Crawling inteligente de URLs (extrae enlaces internos)
-- Extracción jerárquica: Tecnologías/Patentes → Artículos → Empresas → Personas
+- Extracción jerárquica: Proyectos → Tecnologías/Patentes → Artículos → Empresas → Personas
 - Normalización de URLs (elimina utm, tracking)
 - Análisis IA específico por tipo de entidad
 - Monitoreo de portales europeos (CORDIS, etc.)
@@ -443,6 +443,33 @@ class EntityExtractor:
     
     # Prompts específicos por tipo de entidad (en orden de prioridad)
     PROMPTS = {
+        "projects": """Eres un analista de proyectos para Double Helix (healthtech VC).
+Analiza el contenido y extrae PROYECTOS DE INVESTIGACIÓN o DESARROLLO relevantes.
+
+CRITERIOS:
+- Proyectos de I+D en salud, biotech, diagnóstico, farma, digital health
+- Proyectos con financiación pública/privada (Horizon Europe, CDTI, etc.)
+- Proyectos con partners industriales o clínicos relevantes
+- Proyectos con potencial de transferencia o spin-off
+
+FORMATO JSON:
+{{
+  "entities": [
+    {{
+      "nombre": "...",
+      "tipo": "investigación|desarrollo|validación|transferencia",
+      "descripcion": "...",
+      "financiacion": "pública|privada|mixta",
+      "estado": "activo|finalizado|en búsqueda",
+      "partners": ["..."],
+      "score": 0-100,
+      "referencia": "URL o sección",
+      "keywords": ["..."]
+    }}
+  ],
+  "resumen": "Breve descripción del foco de proyectos del centro"
+}}""",
+        
         "technologies": """Eres un analista de tecnología para Double Helix (healthtech VC).
 Analiza el contenido y extrae TECNOLOGÍAS, PATENTES o INVENCIONES relevantes.
 
@@ -663,8 +690,8 @@ class EuropeanPortalMonitor:
 class DealflowPipeline:
     """Orquesta el pipeline completo: crawling → extracción → análisis."""
     
-    # Orden de extracción (prioridad)
-    EXTRACTION_ORDER = ["technologies", "papers", "companies", "people"]
+    # ✅ NUEVO: Orden de extracción con "projects" al inicio (prioridad)
+    EXTRACTION_ORDER = ["projects", "technologies", "papers", "companies", "people"]
     
     def __init__(self, api_key: str, orcid_api_key: str = None):
         self.crawler = WebCrawler()
@@ -861,31 +888,39 @@ def prepare_tematicas(tematicas_df: pd.DataFrame) -> List[Dict]:
 
 
 def prepare_centros(centros_df: pd.DataFrame) -> List[Dict]:
-    """Prepara la lista de centros para procesar."""
+    """Prepara la lista de centros para procesar.
+    ✅ NUEVO: Extrae TODAS las URLs de las columnas WEB DIRECTORIO, WEB 2, ..., WEB 8
+    """
     if centros_df is None or centros_df.empty:
         return []
     
     centros = []
+    
+    # ✅ NUEVO: Lista de columnas de URLs a procesar (hasta 8)
+    url_columns = [
+        "WEB DIRECTORIO", "WEB 2", "WEB 3", "WEB 4", 
+        "WEB 5", "WEB 6", "WEB 7", "WEB 8"
+    ]
+    
     for _, row in centros_df.iterrows():
         nombre = str(row.get("NOMBRE", ""))
         if not nombre or nombre == "nan" or pd.isna(nombre):
             continue
         
-        # Extraer todas las URLs (WEB DIRECTORIO, WEB 2, etc.)
+        # ✅ NUEVO: Extraer URLs de todas las columnas WEB disponibles
         urls = []
-        for col in centros_df.columns:
-            col_upper = str(col).upper()
-            if col_upper.startswith("WEB") and pd.notna(row.get(col)):
+        for col in url_columns:
+            if col in centros_df.columns and pd.notna(row.get(col)):
                 url = str(row.get(col)).strip()
                 if url and url.lower().startswith("http"):
                     urls.append(normalize_url(url))
         
-        if urls:
+        if urls:  # Solo añadir centros que tengan al menos una URL válida
             centros.append({
                 "nombre": nombre,
                 "region": str(row.get("REGIÓN", "")),
                 "tipo": str(row.get("TIPO DE CENTRO", "")),
-                "urls": urls,
+                "urls": urls,  # ✅ Ahora puede tener hasta 8 URLs
             })
     
     return centros
@@ -926,7 +961,13 @@ def render_entity_card(entity: Dict, entity_type: str):
     
     # Tags según tipo
     tags_html = ""
-    if entity_type == "technologies":
+    if entity_type == "projects":
+        tags_html += '<span class="entity-tag">🔬 Proyecto</span>'
+        if entity.get("tipo"):
+            tags_html += f'<span class="entity-tag">{entity["tipo"].upper()}</span>'
+        if entity.get("financiacion"):
+            tags_html += f'<span class="entity-tag">{entity["financiacion"].upper()}</span>'
+    elif entity_type == "technologies":
         tags_html += '<span class="entity-tag">🔬 Tecnología</span>'
         if entity.get("tipo"):
             tags_html += f'<span class="entity-tag">{entity["tipo"].upper()}</span>'
@@ -959,6 +1000,15 @@ def render_entity_card(entity: Dict, entity_type: str):
         tags_html,
         f'<p style="margin:0.5rem 0;color:#555;font-style:italic">{descripcion[:200]}{"..." if len(descripcion) > 200 else ""}</p>',
     ]
+    
+    # Mostrar partners si existen (para proyectos)
+    if entity_type == "projects" and entity.get("partners"):
+        partners = entity["partners"]
+        if isinstance(partners, list) and partners:
+            partners_str = ", ".join(partners[:3])
+            if len(partners) > 3:
+                partners_str += "..."
+            html_parts.append(f'<p style="margin:0.25rem 0;font-size:0.9rem;color:#666">🤝 Partners: {partners_str}</p>')
     
     if entity.get("aplicacion_health") or entity.get("problema_resuelto"):
         html_parts.append(f'<p style="margin:0.25rem 0;font-size:0.9rem;color:#666">🎯 {entity.get("aplicacion_health") or entity.get("problema_resuelto", "")}</p>')
@@ -1180,7 +1230,7 @@ def main():
             min_score = st.slider("Score mínimo para incluir oportunidad", 50, 90, 60)
             enable_orcid = st.checkbox("🔗 Enriquecer con ORCID", value=True, help="Busca ORCID IDs para investigadores")
             st.info(f"💡 Temáticas activas: {len(st.session_state.tematicas_list)}")
-            st.info("🔄 Orden de extracción: Tecnologías → Artículos → Empresas → Personas")
+            st.info("🔄 Orden de extracción: Proyectos → Tecnologías → Artículos → Empresas → Personas")
         
         # Botón de análisis
         if st.button("🚀 Iniciar análisis", type="primary", use_container_width=True):
@@ -1222,7 +1272,7 @@ def main():
                 st.rerun()
     
     # ------------------------------------------------------------------------
-    # TAB 2: Resultados - ✅ HTML corregido
+    # TAB 2: Resultados - ✅ ACTUALIZADO CON PROYECTOS
     # ------------------------------------------------------------------------
     with tab2:
         st.markdown('<p class="section-title">📋 Oportunidades identificadas</p>', unsafe_allow_html=True)
@@ -1232,7 +1282,7 @@ def main():
         else:
             # Resumen global
             total_opp = sum(
-                sum(len(r["entities"].get(et, [])) for et in ["technologies", "papers", "companies", "people"])
+                sum(len(r["entities"].get(et, [])) for et in ["projects", "technologies", "papers", "companies", "people"])
                 for r in st.session_state.results.values()
             )
             st.metric("🎯 Total oportunidades", total_opp)
@@ -1242,8 +1292,8 @@ def main():
             with col_f1:
                 entity_filter = st.multiselect(
                     "Tipo de entidad",
-                    options=["technologies", "papers", "companies", "people"],
-                    default=["technologies", "companies"]
+                    options=["projects", "technologies", "papers", "companies", "people"],
+                    default=["projects", "technologies", "companies"]
                 )
             with col_f2:
                 vertical_filter = st.multiselect(
@@ -1251,7 +1301,7 @@ def main():
                     options=list(set(
                         e.get("vertical") or e.get("sector")
                         for r in st.session_state.results.values()
-                        for et in ["technologies", "papers", "companies", "people"]
+                        for et in ["projects", "technologies", "papers", "companies", "people"]
                         for e in r["entities"].get(et, [])
                         if e.get("vertical") or e.get("sector")
                     ))
@@ -1293,7 +1343,13 @@ def main():
                         if not entities:
                             continue
                         
-                        entity_label = {"technologies": "🔬 Tecnologías", "papers": "📄 Artículos", "companies": "🏢 Empresas", "people": "👤 Personas"}
+                        entity_label = {
+                            "projects": "🔬 Proyectos", 
+                            "technologies": "🔬 Tecnologías", 
+                            "papers": "📄 Artículos", 
+                            "companies": "🏢 Empresas", 
+                            "people": "👤 Personas"
+                        }
                         st.markdown(f"**{entity_label.get(entity_type, entity_type)}** ({len(entities)})")
                         
                         for entity in entities:
@@ -1374,7 +1430,7 @@ def main():
             # Preparar DataFrame para exportar
             rows = []
             for centro_nombre, centro_data in st.session_state.results.items():
-                for entity_type in ["technologies", "papers", "companies", "people"]:
+                for entity_type in ["projects", "technologies", "papers", "companies", "people"]:
                     for entity in centro_data["entities"].get(entity_type, []):
                         rows.append({
                             "Centro": centro_nombre,
@@ -1453,7 +1509,7 @@ def main():
         <img src="{BRANDING['logo_url']}" style="height: 30px; opacity: 0.7; margin-bottom: 0.5rem;">
         <p>Double Helix Dealflow Finder v3.0 © {datetime.now().year} | Healthtech Venture Capital</p>
         <p style="font-size: 0.75rem; color: #999;">
-            Extracción jerárquica: Tecnologías → Artículos → Empresas → Personas | 
+            Extracción jerárquica: Proyectos → Tecnologías → Artículos → Empresas → Personas | 
             Monitoreo europeo: CORDIS, EU-Funding, EIC
         </p>
     </div>
