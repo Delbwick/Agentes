@@ -1,5 +1,5 @@
 """
-Double Helix Dealflow Finder v3.1
+Double Helix Dealflow Finder v3.0
 Pipeline completo para identificar oportunidades de inversión en healthtech:
 - Crawling inteligente de URLs (extrae enlaces internos)
 - Extracción jerárquica: Tecnologías/Patentes → Artículos → Empresas → Personas
@@ -20,7 +20,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from urllib.parse import urlparse, parse_qs, urlencode, urljoin, unquote
 from collections import defaultdict
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any
 
 import streamlit as st
 import pandas as pd
@@ -33,12 +33,8 @@ from openai import OpenAI
 CACHE_DIR = Path("dealflow_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
-# ============================================================================
-# BRANDING CON LUPA 🔍
-# ============================================================================
 BRANDING = {
-    "logo_url": "https://cdn-icons-png.flaticon.com/512/751/751463.png",  # Lupa profesional azul
-    "favicon_emoji": "🔍",
+    "logo_url": "https://doublehelix.vc/wp-content/uploads/2023/03/cropped-DH-Logo-1.png",
     "primary_color": "#00A6A6",
     "secondary_color": "#1A1A2E",
     "accent_color": "#16213E",
@@ -62,8 +58,8 @@ EUROPEAN_PORTALS = {
 }
 
 st.set_page_config(
-    page_title="🔍 Double Helix Dealflow Finder",
-    page_icon=BRANDING["favicon_emoji"],
+    page_title="🧬 Double Helix Dealflow Finder",
+    page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -135,26 +131,16 @@ st.markdown(f"""
 # ============================================================================
 # UTILS: URL NORMALIZATION & CACHING
 # ============================================================================
-def normalize_url(url: Union[str, None]) -> str:
+def normalize_url(url: str) -> str:
     """Normaliza URL: elimina parámetros de tracking (utm, gclid, etc.)"""
-    if not url or not isinstance(url, str):
-        return ""
-    
-    url = url.strip()
-    if not url:
-        return ""
-    
-    if not url.startswith(("http://", "https://")):
-        if url.startswith("www."):
+    if not url or not url.startswith(("http://", "https://")):
+        if url and not url.startswith("www."):
             url = f"https://{url}"
-        else:
+        elif url.startswith("www."):
             url = f"https://{url}"
     
     try:
         parsed = urlparse(url)
-        if not parsed.netloc:
-            return url
-        
         query_params = parse_qs(parsed.query)
         
         # Parámetros a eliminar (tracking, analytics, etc.)
@@ -178,7 +164,7 @@ def normalize_url(url: Union[str, None]) -> str:
             clean_url += f"#{parsed.fragment}"
         
         return clean_url
-    except Exception:
+    except:
         return url
 
 
@@ -189,53 +175,36 @@ def url_hash(url: str) -> str:
 
 
 def get_cached_data(cache_type: str, key: str) -> Optional[Dict]:
-    """Obtiene datos desde caché si existen - CON VERIFICACIÓN DE ESTRUCTURA"""
+    """Obtiene datos desde caché si existen"""
     cache_file = CACHE_DIR / f"{cache_type}_{key}.json"
     if cache_file.exists():
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                # Verificar que sea un diccionario (no una lista u otro tipo)
-                if not isinstance(data, dict):
-                    return None
-                # Verificar caché reciente para page_analysis
+                # Verificar si el caché es reciente (< 7 días para contenido dinámico)
                 if cache_type == "page_analysis":
-                    cached_time_str = data.get("cached_at", "2000-01-01")
-                    try:
-                        cached_time = datetime.fromisoformat(cached_time_str)
-                        if datetime.now() - cached_time > timedelta(days=7):
-                            return None  # Caché expirado
-                    except (ValueError, TypeError):
-                        pass  # Si hay error parseando la fecha, usar el caché
+                    cached_time = datetime.fromisoformat(data.get("cached_at", "2000-01-01"))
+                    if datetime.now() - cached_time > timedelta(days=7):
+                        return None  # Caché expirado
                 return data
-        except (json.JSONDecodeError, KeyError, ValueError, OSError):
-            # Si hay error al leer, eliminar caché corrupto
-            try:
-                cache_file.unlink()
-            except OSError:
-                pass
+        except:
             return None
     return None
 
 
 def save_cached_data(cache_type: str, key: str, data: Dict):
-    """Guarda datos en caché con timestamp - asegurando estructura dict"""
-    if not isinstance(data, dict):
-        data = {"data": data}
+    """Guarda datos en caché con timestamp"""
     data["cached_at"] = datetime.now().isoformat()
     cache_file = CACHE_DIR / f"{cache_type}_{key}.json"
-    try:
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except OSError:
-        pass  # Silenciar errores de escritura en caché
+    with open(cache_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def detect_page_type(url: str, content: str, title: str) -> str:
     """Detecta el tipo de página para priorizar extracción"""
-    url_lower = (url or "").lower()
-    content_lower = (content or "").lower()
-    title_lower = (title or "").lower()
+    url_lower = url.lower()
+    content_lower = content.lower()
+    title_lower = title.lower()
     
     # Patrones para detectar tipo de página
     if any(kw in url_lower for kw in ['spin', 'spin-off', 'spinoff', 'startup', 'empresa', 'company']):
@@ -277,9 +246,6 @@ class WebCrawler:
     def fetch_page(self, url: str, timeout: int = 30) -> Dict:
         """Descarga y parsea una página web."""
         url = normalize_url(url)
-        
-        if not url:
-            return {"ok": False, "error": "URL vacía", "url": url}
         
         try:
             if not url.startswith(("http://", "https://")):
@@ -414,7 +380,7 @@ class ORCIDIntegrator:
                     "orcid": orcid_id,
                 }
             return None
-        except Exception:
+        except:
             return None
     
     def _extract_name(self, data: Dict) -> str:
@@ -423,7 +389,7 @@ class ORCIDIntegrator:
             person = data.get("person", {})
             name = person.get("name", {})
             return f"{name.get('given-names', {}).get('value', '')} {name.get('family-name', {}).get('value', '')}".strip()
-        except Exception:
+        except:
             return ""
     
     def _extract_affiliations(self, data: Dict) -> List[str]:
@@ -435,7 +401,7 @@ class ORCIDIntegrator:
                     org = summary.get("employment-summary", {}).get("organization", {}).get("name")
                     if org:
                         affiliations.append(org)
-        except Exception:
+        except:
             pass
         return list(set(affiliations))
     
@@ -450,7 +416,7 @@ class ORCIDIntegrator:
                         "type": summary.get("type", ""),
                         "year": summary.get("published-date", {}).get("year", {}).get("value") if summary.get("published-date") else None,
                     })
-        except Exception:
+        except:
             pass
         return works[:10]  # Limitar a 10 trabajos
     
@@ -461,7 +427,7 @@ class ORCIDIntegrator:
             for kw in data.get("person", {}).get("keywords", {}).get("keyword", []):
                 if kw.get("content"):
                     keywords.append(kw["content"])
-        except Exception:
+        except:
             pass
         return keywords[:20]
 
@@ -585,7 +551,7 @@ FORMATO JSON:
         
         # Preparar contexto adicional
         context_text = ""
-        if context and isinstance(context, dict):
+        if context:
             if context.get("centro"):
                 context_text += f"CENTRO: {context['centro']}\n"
             if context.get("region"):
@@ -593,7 +559,7 @@ FORMATO JSON:
             if context.get("tematicas"):
                 context_text += f"TEMÁTICAS OBJETIVO:\n" + "\n".join(
                     f"- {t['segmento']}: {t['definicion'][:150]}" 
-                    for t in context["tematicas"][:5] if isinstance(t, dict) and t.get("segmento")
+                    for t in context["tematicas"][:5]
                 ) + "\n"
             if context.get("page_type"):
                 context_text += f"TIPO DE PÁGINA: {context['page_type']}\n"
@@ -721,26 +687,20 @@ class DealflowPipeline:
             url_normalized = normalize_url(url)
             cache_key = url_hash(url_normalized)
             
-            # Verificar caché CON VERIFICACIÓN DE ESTRUCTURA
+            # Verificar caché
             cached = get_cached_data("page_analysis", cache_key)
-            if cached and isinstance(cached, dict):
-                # Verificar que tenga la estructura esperada
-                entities_found = 0
-                for et in self.EXTRACTION_ORDER:
-                    et_data = cached.get(et)
-                    # Verificar que et_data sea un dict con "entities" como lista
-                    if isinstance(et_data, dict) and "entities" in et_data:
-                        entities = et_data.get("entities", [])
-                        if isinstance(entities, list):
-                            entities_found += len(entities)
-                            results["entities"][et].extend(entities)
-                
+            if cached:
                 results["urls_analizadas"].append({
                     "url": url_normalized,
                     "status": "cached",
                     "page_type": cached.get("page_type", "unknown"),
-                    "entities_found": entities_found
+                    "entities_found": sum(len(cached.get(et, {}).get("entities", [])) 
+                                        for et in self.EXTRACTION_ORDER)
                 })
+                # Merge entities
+                for et in self.EXTRACTION_ORDER:
+                    if et in cached:
+                        results["entities"][et].extend(cached[et].get("entities", []))
                 if cached.get("page_type"):
                     results["page_types_found"].append(cached["page_type"])
                 continue
@@ -773,11 +733,8 @@ class DealflowPipeline:
                     context=context
                 )
                 
-                # Verificar que extracted sea un dict con "entities" como lista
-                if isinstance(extracted, dict) and "entities" in extracted:
-                    entities = extracted.get("entities", [])
-                    if isinstance(entities, list):
-                        results["entities"][entity_type].extend(entities)
+                if extracted.get("entities"):
+                    results["entities"][entity_type].extend(extracted["entities"])
             
             # Si es página de personas y tenemos ORCID API, enriquecer
             if page_type == "people_directory" and self.orcid:
@@ -785,18 +742,17 @@ class DealflowPipeline:
                     results["entities"]["people"], page["text"]
                 )
             
-            # Guardar en caché CON ESTRUCTURA CORRECTA
-            cache_data = {et: dict(results["entities"][et]) for et in self.EXTRACTION_ORDER}
+            # Guardar en caché
+            cache_data = {et: results["entities"][et] for et in self.EXTRACTION_ORDER}
             cache_data["page_type"] = page_type
             cache_data["title"] = page.get("title", "")
             save_cached_data("page_analysis", cache_key, cache_data)
             
-            entities_found = sum(len(results["entities"][et]) for et in self.EXTRACTION_ORDER)
             results["urls_analizadas"].append({
                 "url": url_normalized,
                 "status": "processed",
                 "page_type": page_type,
-                "entities_found": entities_found
+                "entities_found": sum(len(results["entities"][et]) for et in self.EXTRACTION_ORDER)
             })
         
         # Generar resumen
@@ -810,11 +766,9 @@ class DealflowPipeline:
         enriched = []
         
         for person in people:
-            if not isinstance(person, dict):
-                continue
             # Buscar ORCID en el contenido o en los datos extraídos
             orcid_match = re.search(r'(?:orcid\.org/)?(\d{4}-\d{4}-\d{4}-\d{3}[0-9X])', 
-                                  (page_content or "") + " " + (person.get("referencia") or ""), re.I)
+                                  page_content + " " + person.get("referencia", ""), re.I)
             
             if orcid_match and self.orcid:
                 orcid_id = orcid_match.group(1)
@@ -879,14 +833,14 @@ def prepare_tematicas(tematicas_df: pd.DataFrame) -> List[Dict]:
     tematicas = []
     for _, row in tematicas_df.iterrows():
         tematicas.append({
-            "vertical": str(row.get("Vertical", "")) if pd.notna(row.get("Vertical")) else "",
-            "segmento": str(row.get("Segmento", "")) if pd.notna(row.get("Segmento")) else "",
-            "definicion": str(row.get("Qué es (definición)", "")) if pd.notna(row.get("Qué es (definición)")) else "",
-            "problema_no_resuelto": str(row.get("Problema no resuelto que ataca", "")) if pd.notna(row.get("Problema no resuelto que ataca")) else "",
+            "vertical": str(row.get("Vertical", "")),
+            "segmento": str(row.get("Segmento", "")),
+            "definicion": str(row.get("Qué es (definición)", "")),
+            "problema_no_resuelto": str(row.get("Problema no resuelto que ataca", "")),
         })
     
     # Filtrar vacíos
-    return [t for t in tematicas if t["segmento"] and len(str(t["segmento"])) > 5]
+    return [t for t in tematicas if t["segmento"] and len(t["segmento"]) > 5]
 
 
 def prepare_centros(centros_df: pd.DataFrame) -> List[Dict]:
@@ -896,27 +850,24 @@ def prepare_centros(centros_df: pd.DataFrame) -> List[Dict]:
     
     centros = []
     for _, row in centros_df.iterrows():
-        nombre_val = row.get("NOMBRE")
-        nombre = str(nombre_val) if pd.notna(nombre_val) else ""
-        if not nombre or nombre == "nan":
+        nombre = str(row.get("NOMBRE", ""))
+        if not nombre or nombre == "nan" or pd.isna(nombre):
             continue
         
         # Extraer todas las URLs (WEB DIRECTORIO, WEB 2, etc.)
         urls = []
         for col in centros_df.columns:
             col_upper = str(col).upper()
-            if col_upper.startswith("WEB"):
-                url_val = row.get(col)
-                if pd.notna(url_val):
-                    url = str(url_val).strip()
-                    if url and url.lower().startswith("http"):
-                        urls.append(normalize_url(url))
+            if col_upper.startswith("WEB") and pd.notna(row.get(col)):
+                url = str(row.get(col)).strip()
+                if url and url.lower().startswith("http"):
+                    urls.append(normalize_url(url))
         
         if urls:
             centros.append({
                 "nombre": nombre,
-                "region": str(row.get("REGIÓN", "")) if pd.notna(row.get("REGIÓN")) else "",
-                "tipo": str(row.get("TIPO DE CENTRO", "")) if pd.notna(row.get("TIPO DE CENTRO")) else "",
+                "region": str(row.get("REGIÓN", "")),
+                "tipo": str(row.get("TIPO DE CENTRO", "")),
                 "urls": urls,
             })
     
@@ -927,7 +878,7 @@ def prepare_centros(centros_df: pd.DataFrame) -> List[Dict]:
 # COMPONENTES DE UI
 # ============================================================================
 def render_header():
-    """Renderiza el header con logo de lupa y branding de Double Helix."""
+    """Renderiza el header con logo y branding de Double Helix."""
     st.markdown(f"""
     <div class="main-header">
         <div style="display: flex; align-items: center; gap: 0.75rem;">
@@ -935,7 +886,7 @@ def render_header():
         </div>
         <div>
             <h1 class="logo-text">Double Helix</h1>
-            <p class="logo-subtitle">Dealflow Finder v3.1 🔍</p>
+            <p class="logo-subtitle">Dealflow Finder v3.0 🔬</p>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -953,32 +904,29 @@ def render_sidebar_header():
 
 def render_entity_card(entity: Dict, entity_type: str):
     """Renderiza una tarjeta de entidad con styling DH."""
-    if not isinstance(entity, dict):
-        return
-    
     score = entity.get("score", 0)
     score_color = "#10B981" if score >= 80 else "#3B82F6" if score >= 65 else "#F59E0B"
     
     # Tags según tipo
     tags_html = ""
     if entity_type == "technologies":
-        tags_html += '<span class="entity-tag">🔬 Tecnología</span>'
+        tags_html += f'<span class="entity-tag">🔬 Tecnología</span>'
         if entity.get("tipo"):
             tags_html += f'<span class="entity-tag">{entity["tipo"].upper()}</span>'
     elif entity_type == "papers":
-        tags_html += '<span class="entity-tag">📄 Artículo</span>'
+        tags_html += f'<span class="entity-tag">📄 Artículo</span>'
         if entity.get("journal"):
             tags_html += f'<span class="entity-tag">{entity["journal"]}</span>'
     elif entity_type == "companies":
-        tags_html += '<span class="entity-tag">🏢 Empresa</span>'
+        tags_html += f'<span class="entity-tag">🏢 Empresa</span>'
         if entity.get("tipo"):
             tags_html += f'<span class="entity-tag">{entity["tipo"].upper()}</span>'
     elif entity_type == "people":
-        tags_html += '<span class="entity-tag">👤 Investigador</span>'
+        tags_html += f'<span class="entity-tag">👤 Investigador</span>'
         if entity.get("rol"):
             tags_html += f'<span class="entity-tag">{entity["rol"].upper()}</span>'
         if entity.get("orcid"):
-            tags_html += '<span class="entity-tag">ORCID</span>'
+            tags_html += f'<span class="entity-tag">ORCID</span>'
     
     # Contenido principal
     nombre = entity.get("nombre") or entity.get("titulo") or "Sin nombre"
@@ -1050,7 +998,7 @@ def main():
         api_from_secrets = ""
         try:
             api_from_secrets = st.secrets.get("OPENAI_API_KEY", "")
-        except Exception:
+        except:
             pass
         
         if api_from_secrets:
@@ -1237,14 +1185,16 @@ def main():
                         max_pages=max_pages
                     )
                     
-                    # Filtrar por score mínimo y verificar que sean dicts
+                    # Filtrar por score mínimo
                     for et in pipeline.EXTRACTION_ORDER:
                         result["entities"][et] = [
                             e for e in result["entities"][et] 
-                            if isinstance(e, dict) and e.get("score", 0) >= min_score
+                            if e.get("score", 0) >= min_score
                         ]
                     
                     st.session_state.results[centro["nombre"]] = result
+                    
+                    # Actualizar progreso
                     progress_bar.progress((idx + 1) / len(selected_centros))
                     time.sleep(1)
                 
@@ -1277,14 +1227,16 @@ def main():
                     default=["technologies", "companies"]
                 )
             with col_f2:
-                vertical_options = list(set(
-                    e.get("vertical") or e.get("sector")
-                    for r in st.session_state.results.values()
-                    for et in ["technologies", "papers", "companies", "people"]
-                    for e in r["entities"].get(et, [])
-                    if isinstance(e, dict) and (e.get("vertical") or e.get("sector"))
-                ))
-                vertical_filter = st.multiselect("Vertical", options=vertical_options)
+                vertical_filter = st.multiselect(
+                    "Vertical",
+                    options=list(set(
+                        e.get("vertical") or e.get("sector")
+                        for r in st.session_state.results.values()
+                        for et in ["technologies", "papers", "companies", "people"]
+                        for e in r["entities"].get(et, [])
+                        if e.get("vertical") or e.get("sector")
+                    ))
+                )
             with col_f3:
                 score_min = st.slider("Score mínimo", 60, 100, 60)
             with col_f4:
@@ -1326,8 +1278,6 @@ def main():
                         st.markdown(f"**{entity_label.get(entity_type, entity_type)}** ({len(entities)})")
                         
                         for entity in entities:
-                            if not isinstance(entity, dict):
-                                continue
                             if entity.get("score", 0) < score_min:
                                 continue
                             if vertical_filter:
@@ -1406,8 +1356,6 @@ def main():
             for centro_nombre, centro_data in st.session_state.results.items():
                 for entity_type in ["technologies", "papers", "companies", "people"]:
                     for entity in centro_data["entities"].get(entity_type, []):
-                        if not isinstance(entity, dict):
-                            continue
                         rows.append({
                             "Centro": centro_nombre,
                             "Región": centro_data.get("region", ""),
@@ -1482,7 +1430,7 @@ def main():
     st.markdown(f"""
     <div class="footer">
         <img src="{BRANDING['logo_url']}" style="height: 30px; opacity: 0.7; margin-bottom: 0.5rem;">
-        <p>Double Helix Dealflow Finder v3.1 © {datetime.now().year} | Healthtech Venture Capital</p>
+        <p>Double Helix Dealflow Finder v3.0 © {datetime.now().year} | Healthtech Venture Capital</p>
         <p style="font-size: 0.75rem; color: #999;">
             Extracción jerárquica: Tecnologías → Artículos → Empresas → Personas | 
             Monitoreo europeo: CORDIS, EU-Funding, EIC
