@@ -658,7 +658,7 @@ class EuropeanPortalMonitor:
 
 
 # ============================================================================
-# CLASE: DEALFLOW PIPELINE (Orquestador principal)
+# CLASE: DEALFLOW PIPELINE (Orquestador principal) - ✅ CORREGIDO
 # ============================================================================
 class DealflowPipeline:
     """Orquesta el pipeline completo: crawling → extracción → análisis."""
@@ -690,20 +690,34 @@ class DealflowPipeline:
             url_normalized = normalize_url(url)
             cache_key = url_hash(url_normalized)
             
-            # Verificar caché
+            # Verificar caché - ✅ CORRECCIÓN: acceso robusto al caché
             cached = get_cached_data("page_analysis", cache_key)
             if cached:
+                # ✅ CORRECCIÓN: cálculo robusto de entities_found (evita .get() en listas)
+                entities_found = 0
+                for et in self.EXTRACTION_ORDER:
+                    et_data = cached.get(et)
+                    if isinstance(et_data, list):
+                        entities_found += len(et_data)
+                    elif isinstance(et_data, dict) and "entities" in et_data:
+                        entities_found += len(et_data.get("entities", []))
+                
                 results["urls_analizadas"].append({
                     "url": url_normalized,
                     "status": "cached",
                     "page_type": cached.get("page_type", "unknown"),
-                    "entities_found": sum(len(cached.get(et, {}).get("entities", [])) 
-                                        for et in self.EXTRACTION_ORDER)
+                    "entities_found": entities_found
                 })
-                # Merge entities
+                
+                # ✅ CORRECCIÓN: merge robusto de entidades (maneja listas y dicts)
                 for et in self.EXTRACTION_ORDER:
                     if et in cached:
-                        results["entities"][et].extend(cached[et].get("entities", []))
+                        entities_data = cached[et]
+                        if isinstance(entities_data, list):
+                            results["entities"][et].extend(entities_data)
+                        elif isinstance(entities_data, dict) and "entities" in entities_data:
+                            results["entities"][et].extend(entities_data["entities"])
+                
                 if cached.get("page_type"):
                     results["page_types_found"].append(cached["page_type"])
                 continue
@@ -745,7 +759,7 @@ class DealflowPipeline:
                     results["entities"]["people"], page["text"]
                 )
             
-            # Guardar en caché
+            # Guardar en caché (estructura original: listas directas)
             cache_data = {et: results["entities"][et] for et in self.EXTRACTION_ORDER}
             cache_data["page_type"] = page_type
             cache_data["title"] = page.get("title", "")
@@ -1389,9 +1403,8 @@ def main():
                     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
                         df_export.to_excel(writer, index=False, sheet_name="Oportunidades")
                         worksheet = writer.sheets["Oportunidades"]
-                        # ✅ CORRECCIÓN: manejo robusto de NaN y tipos mixtos en cálculo de ancho de columna
+                        # ✅ CORRECCIÓN: manejo robusto de NaN/float en cálculo de ancho de columna
                         for i, col in enumerate(df_export.columns):
-                            # Usar fillna('') para evitar errores con valores NaN/float
                             max_len = max(df_export[col].fillna('').astype(str).str.len().max(), len(str(col)))
                             worksheet.set_column(i, i, min(max_len + 2, 50))
                     
