@@ -1,12 +1,6 @@
 """
 Double Helix Dealflow Finder v3.0
-Pipeline completo para identificar oportunidades de inversión en healthtech:
-- Crawling inteligente de URLs (extrae enlaces internos)
-- Extracción jerárquica: Proyectos → Tecnologías/Patentes → Artículos → Empresas → Personas
-- Normalización de URLs (elimina utm, tracking)
-- Análisis IA específico por tipo de entidad
-- Monitoreo de portales europeos (CORDIS, etc.)
-- Caché robusto para evitar re-procesamiento
+Pipeline completo para identificar oportunidades de inversión en healthtech
 """
 
 import os
@@ -33,9 +27,6 @@ from openai import OpenAI
 CACHE_DIR = Path("dealflow_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
-# ============================================================================
-# BRANDING ACTUALIZADO CON NUEVO LOGO
-# ============================================================================
 BRANDING = {
     "logo_url": "https://doublehelix.vc/wp-content/uploads/2024/11/DH_Healthtech.jpg",
     "primary_color": "#00A6A6",
@@ -43,7 +34,6 @@ BRANDING = {
     "accent_color": "#16213E",
 }
 
-# Portales europeos para monitoreo
 EUROPEAN_PORTALS = {
     "CORDIS": {
         "base_url": "https://cordis.europa.eu",
@@ -62,13 +52,13 @@ EUROPEAN_PORTALS = {
 
 st.set_page_config(
     page_title="🧬 Double Helix Dealflow Finder",
-    page_icon="🔍",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # ============================================================================
-# CSS PERSONALIZADO CON BRANDING DH
+# CSS PERSONALIZADO
 # ============================================================================
 st.markdown(f"""
 <style>
@@ -95,7 +85,7 @@ st.markdown(f"""
         box-shadow: 0 4px 12px rgba(0, 166, 166, 0.3);
     }}
     .opportunity-card {{
-        padding: 1rem; border: 1px solid #e0e0e0;
+        padding: 1.5rem; border: 1px solid #e0e0e0;
         border-left: 4px solid var(--dh-primary);
         border-radius: 8px; margin: 0.5rem 0; background: white;
     }}
@@ -120,13 +110,24 @@ st.markdown(f"""
         color: #666; font-size: 0.85rem;
         border-top: 1px solid #e0e0e0; margin-top: 3rem;
     }}
-    .status-badge {{
-        padding: 0.25rem 0.75rem; border-radius: 12px;
-        font-size: 0.8rem; font-weight: 600;
+    .info-row {{
+        display: flex; gap: 0.5rem; margin: 0.5rem 0;
+        align-items: center; font-size: 0.9rem;
     }}
-    .status-new {{ background: #10B981; color: white; }}
-    .status-updated {{ background: #3B82F6; color: white; }}
-    .status-monitored {{ background: #8B5CF6; color: white; }}
+    .info-label {{
+        font-weight: 600; color: var(--dh-secondary);
+        min-width: 120px;
+    }}
+    .info-value {{
+        color: #555; flex: 1;
+    }}
+    .web-link {{
+        color: var(--dh-primary); text-decoration: none;
+        font-weight: 500; display: inline-flex; align-items: center; gap: 0.3rem;
+    }}
+    .web-link:hover {{
+        text-decoration: underline;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -146,7 +147,6 @@ def normalize_url(url: str) -> str:
         parsed = urlparse(url)
         query_params = parse_qs(parsed.query)
         
-        # Parámetros a eliminar (tracking, analytics, etc.)
         remove_params = [
             'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
             'gclid', 'gbraid', 'wbraid', 'fbclid', 'mc_eid', 'pk_campaign',
@@ -155,10 +155,7 @@ def normalize_url(url: str) -> str:
             'ref', 'source', 'medium', 'campaign', 'content', 'term'
         ]
         
-        # Filtrar parámetros
         clean_params = {k: v for k, v in query_params.items() if k not in remove_params}
-        
-        # Reconstruir URL
         clean_query = urlencode(clean_params, doseq=True) if clean_params else ""
         clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
         if clean_query:
@@ -184,11 +181,10 @@ def get_cached_data(cache_type: str, key: str) -> Optional[Dict]:
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                # Verificar si el caché es reciente (< 7 días para contenido dinámico)
                 if cache_type == "page_analysis":
                     cached_time = datetime.fromisoformat(data.get("cached_at", "2000-01-01"))
                     if datetime.now() - cached_time > timedelta(days=7):
-                        return None  # Caché expirado
+                        return None
                 return data
         except:
             return None
@@ -209,7 +205,6 @@ def detect_page_type(url: str, content: str, title: str) -> str:
     content_lower = content.lower()
     title_lower = title.lower()
     
-    # Patrones para detectar tipo de página
     if any(kw in url_lower for kw in ['spin', 'spin-off', 'spinoff', 'startup', 'empresa', 'company']):
         return "company_directory"
     if any(kw in url_lower for kw in ['project', 'proyecto', 'funding', 'grant', 'cordis', 'horizon']):
@@ -221,7 +216,6 @@ def detect_page_type(url: str, content: str, title: str) -> str:
     if any(kw in url_lower for kw in ['team', 'people', 'investigator', 'researcher', 'orcid']):
         return "people_directory"
     
-    # Detectar por contenido
     if re.search(r'spin[-\s]?off|startup|empresa|company', content_lower):
         return "company_directory"
     if re.search(r'patent|patente|intellectual\s*property', content_lower):
@@ -235,7 +229,7 @@ def detect_page_type(url: str, content: str, title: str) -> str:
 
 
 # ============================================================================
-# CLASE: WEB CRAWLER (Inteligente - extrae enlaces internos)
+# CLASE: WEB CRAWLER
 # ============================================================================
 class WebCrawler:
     """Crawler que extrae contenido y enlaces internos de una URL."""
@@ -264,15 +258,11 @@ class WebCrawler:
                 resp.encoding = resp.apparent_encoding
                 soup = BeautifulSoup(resp.text, "html.parser")
                 
-                # Extraer metadatos
                 title = soup.title.string.strip() if soup.title else ""
                 meta_desc = soup.find("meta", attrs={"name": "description"})
                 description = meta_desc["content"].strip() if meta_desc and meta_desc.get("content") else ""
                 
-                # Extraer enlaces internos (para crawling posterior)
                 internal_links = self._extract_internal_links(soup, url)
-                
-                # Detectar tipo de página
                 page_type = detect_page_type(url, resp.text, title)
                 
                 return {
@@ -283,7 +273,7 @@ class WebCrawler:
                     "title": title,
                     "description": description,
                     "page_type": page_type,
-                    "internal_links": internal_links[:15],  # Limitar a 15 enlaces
+                    "internal_links": internal_links[:15],
                 }
             else:
                 return {"ok": False, "error": f"HTTP {resp.status_code}", "url": url}
@@ -306,11 +296,9 @@ class WebCrawler:
             full_url = urljoin(base_url, href)
             parsed = urlparse(full_url)
             
-            # Solo enlaces del mismo dominio
             if parsed.netloc != base_domain:
                 continue
             
-            # Filtrar extensiones no relevantes
             if any(parsed.path.lower().endswith(ext) for ext in [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".tar", ".gz"]):
                 continue
             
@@ -319,7 +307,6 @@ class WebCrawler:
                 "text": a.get_text().strip()[:150],
             })
         
-        # Deduplicar por URL
         seen = set()
         unique_links = []
         for link in links:
@@ -331,11 +318,9 @@ class WebCrawler:
     
     def _extract_main_text(self, soup: BeautifulSoup) -> str:
         """Extrae el texto principal eliminando elementos no relevantes."""
-        # Remover elementos no deseados
         for elem in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
             elem.decompose()
         
-        # Buscar contenedor principal
         main = soup.find("main") or soup.find("article") or soup.find("div", class_=re.compile("content|main|article", re.I))
         
         if main:
@@ -343,7 +328,6 @@ class WebCrawler:
         else:
             text = soup.get_text(separator="\n", strip=True)
         
-        # Limpiar texto
         text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
         text = re.sub(r'[ \t]+', ' ', text)
         
@@ -367,7 +351,6 @@ class ORCIDIntegrator:
     def lookup_orcid(self, orcid_id: str) -> Optional[Dict]:
         """Busca información de un investigador por ORCID ID."""
         try:
-            # Normalizar ORCID ID
             orcid_id = orcid_id.replace("https://orcid.org/", "").replace("http://orcid.org/", "").strip()
             
             url = f"{self.ORCID_API}/{orcid_id}"
@@ -387,7 +370,6 @@ class ORCIDIntegrator:
             return None
     
     def _extract_name(self, data: Dict) -> str:
-        """Extrae nombre del perfil ORCID."""
         try:
             person = data.get("person", {})
             name = person.get("name", {})
@@ -396,7 +378,6 @@ class ORCIDIntegrator:
             return ""
     
     def _extract_affiliations(self, data: Dict) -> List[str]:
-        """Extrae afiliaciones del perfil ORCID."""
         affiliations = []
         try:
             for emp in data.get("activities-summary", {}).get("employments", {}).get("affiliation-group", []):
@@ -409,7 +390,6 @@ class ORCIDIntegrator:
         return list(set(affiliations))
     
     def _extract_works(self, data: Dict) -> List[Dict]:
-        """Extrae trabajos/publicaciones del perfil ORCID."""
         works = []
         try:
             for work_group in data.get("activities-summary", {}).get("works", {}).get("group", []):
@@ -421,10 +401,9 @@ class ORCIDIntegrator:
                     })
         except:
             pass
-        return works[:10]  # Limitar a 10 trabajos
+        return works[:10]
     
     def _extract_keywords(self, data: Dict) -> List[str]:
-        """Extrae keywords/áreas de investigación."""
         keywords = []
         try:
             for kw in data.get("person", {}).get("keywords", {}).get("keyword", []):
@@ -436,15 +415,14 @@ class ORCIDIntegrator:
 
 
 # ============================================================================
-# CLASE: ENTITY EXTRACTOR (IA + Reglas)
+# CLASE: ENTITY EXTRACTOR (IA + Reglas) - ✅ MEJORADO
 # ============================================================================
 class EntityExtractor:
     """Extrae entidades específicas usando IA con prompts especializados."""
     
-    # Prompts específicos por tipo de entidad (en orden de prioridad)
     PROMPTS = {
         "projects": """Eres un analista de proyectos para Double Helix (healthtech VC).
-Analiza el contenido y extrae PROYECTOS DE INVESTIGACIÓN o DESARROLLO relevantes.
+Analiza el contenido y extrae PROYECTOS DE INVESTIGACIÓN o DESARROLLO con MÁXIMO DETALLE.
 
 CRITERIOS:
 - Proyectos de I+D en salud, biotech, diagnóstico, farma, digital health
@@ -452,19 +430,39 @@ CRITERIOS:
 - Proyectos con partners industriales o clínicos relevantes
 - Proyectos con potencial de transferencia o spin-off
 
+INFORMACIÓN A EXTRAER (la más completa posible):
+- Nombre completo del proyecto
+- Facultad/Departamento/Instituto responsable
+- Investigador principal o equipo líder
+- Descripción detallada del proyecto
+- Objetivos y metodología
+- Estado actual (activo, finalizado, en búsqueda de financiación)
+- Tipo de financiación (pública, privada, mixta)
+- Partners y colaboradores
+- Duración o fechas relevantes
+- Presupuesto si está disponible
+- Keywords o áreas temáticas
+- URL específica del proyecto si existe
+- Score de relevancia (0-100)
+
 FORMATO JSON:
 {{
   "entities": [
     {{
-      "nombre": "...",
+      "nombre": "Nombre completo del proyecto",
+      "facultad": "Facultad/Departamento/Instituto",
+      "investigador_principal": "Nombre del IP o equipo",
+      "descripcion": "Descripción detallada y completa",
+      "objetivos": "Objetivos principales del proyecto",
       "tipo": "investigación|desarrollo|validación|transferencia",
-      "descripcion": "...",
       "financiacion": "pública|privada|mixta",
       "estado": "activo|finalizado|en búsqueda",
-      "partners": ["..."],
-      "score": 0-100,
-      "referencia": "URL o sección",
-      "keywords": ["..."]
+      "partners": ["Partner 1", "Partner 2"],
+      "duracion": "Duración o fechas",
+      "presupuesto": "Presupuesto si está disponible",
+      "keywords": ["keyword1", "keyword2"],
+      "url_especifica": "URL directa al proyecto",
+      "score": 0-100
     }}
   ],
   "resumen": "Breve descripción del foco de proyectos del centro"
@@ -579,7 +577,6 @@ FORMATO JSON:
         if not prompt_template:
             return {"entities": [], "error": f"Tipo no soportado: {entity_type}"}
         
-        # Preparar contexto adicional
         context_text = ""
         if context:
             if context.get("centro"):
@@ -594,7 +591,6 @@ FORMATO JSON:
             if context.get("page_type"):
                 context_text += f"TIPO DE PÁGINA: {context['page_type']}\n"
         
-        # Limitar contenido para no exceder tokens
         content_limited = content[:8000] if len(content) > 8000 else content
         
         prompt = f"{context_text}\nCONTENIDO A ANALIZAR:\n---\n{content_limited}\n---\n\nExtrae {entity_type.upper()} según las instrucciones."
@@ -632,21 +628,15 @@ class EuropeanPortalMonitor:
         new_projects = []
         
         try:
-            # CORDIS API endpoint (simulado - en producción usar API real)
             base_url = "https://cordis.europa.eu/backend/rest"
             
             for topic in topics:
-                # Construir query para CORDIS
                 query_params = {
                     "q": f"health OR biotech OR medical OR pharma",
-                    "rcn": "",  # Project reference number
+                    "rcn": "",
                     "pageSize": 20,
                 }
                 
-                # En producción: hacer request real a CORDIS API
-                # resp = self.session.get(f"{base_url}/projects", params=query_params, timeout=30)
-                
-                # Simulación para demo
                 new_projects.append({
                     "title": f"HealthTech Innovation Project - {topic}",
                     "cordis_id": f"CORDIS-{hash(topic) % 100000}",
@@ -671,7 +661,6 @@ class EuropeanPortalMonitor:
             "portals_checked": [],
         }
         
-        # CORDIS
         cordis_updates = self.check_cordis_updates(
             topics=["digital health", "biotech", "medical devices", "diagnostics"],
             days_back=7
@@ -679,18 +668,15 @@ class EuropeanPortalMonitor:
         results["new_opportunities"].extend(cordis_updates)
         results["portals_checked"].append("CORDIS")
         
-        # Aquí se añadirían más portales (EU-Funding, EIC, etc.)
-        
         return results
 
 
 # ============================================================================
-# CLASE: DEALFLOW PIPELINE (Orquestador principal) - ✅ CORREGIDO
+# CLASE: DEALFLOW PIPELINE
 # ============================================================================
 class DealflowPipeline:
     """Orquesta el pipeline completo: crawling → extracción → análisis."""
     
-    # ✅ NUEVO: Orden de extracción con "projects" al inicio (prioridad)
     EXTRACTION_ORDER = ["projects", "technologies", "papers", "companies", "people"]
     
     def __init__(self, api_key: str, orcid_api_key: str = None):
@@ -712,15 +698,12 @@ class DealflowPipeline:
             "page_types_found": [],
         }
         
-        # Procesar cada URL del centro
         for url in centro["urls"][:max_pages]:
             url_normalized = normalize_url(url)
             cache_key = url_hash(url_normalized)
             
-            # Verificar caché - ✅ CORRECCIÓN: acceso robusto al caché
             cached = get_cached_data("page_analysis", cache_key)
             if cached:
-                # ✅ CORRECCIÓN: cálculo robusto de entities_found (evita .get() en listas)
                 entities_found = 0
                 for et in self.EXTRACTION_ORDER:
                     et_data = cached.get(et)
@@ -736,7 +719,6 @@ class DealflowPipeline:
                     "entities_found": entities_found
                 })
                 
-                # ✅ CORRECCIÓN: merge robusto de entidades (maneja listas y dicts)
                 for et in self.EXTRACTION_ORDER:
                     if et in cached:
                         entities_data = cached[et]
@@ -749,7 +731,6 @@ class DealflowPipeline:
                     results["page_types_found"].append(cached["page_type"])
                 continue
             
-            # Fetch página
             page = self.crawler.fetch_page(url_normalized)
             if not page["ok"]:
                 results["urls_analizadas"].append({
@@ -758,11 +739,9 @@ class DealflowPipeline:
                 })
                 continue
             
-            # Detectar tipo de página
             page_type = page.get("page_type", "general")
             results["page_types_found"].append(page_type)
             
-            # Extraer entidades por tipo (en orden jerárquico)
             context = {
                 "centro": centro["nombre"],
                 "region": centro.get("region"),
@@ -780,13 +759,11 @@ class DealflowPipeline:
                 if extracted.get("entities"):
                     results["entities"][entity_type].extend(extracted["entities"])
             
-            # Si es página de personas y tenemos ORCID API, enriquecer
             if page_type == "people_directory" and self.orcid:
                 results["entities"]["people"] = self._enrich_with_orcid(
                     results["entities"]["people"], page["text"]
                 )
             
-            # Guardar en caché (estructura original: listas directas)
             cache_data = {et: results["entities"][et] for et in self.EXTRACTION_ORDER}
             cache_data["page_type"] = page_type
             cache_data["title"] = page.get("title", "")
@@ -799,7 +776,6 @@ class DealflowPipeline:
                 "entities_found": sum(len(results["entities"][et]) for et in self.EXTRACTION_ORDER)
             })
         
-        # Generar resumen
         total_entities = sum(len(results["entities"][et]) for et in self.EXTRACTION_ORDER)
         results["summary"] = f"{centro['nombre']} ({centro.get('region', '')}): {total_entities} oportunidades identificadas"
         
@@ -810,7 +786,6 @@ class DealflowPipeline:
         enriched = []
         
         for person in people:
-            # Buscar ORCID en el contenido o en los datos extraídos
             orcid_match = re.search(r'(?:orcid\.org/)?(\d{4}-\d{4}-\d{4}-\d{3}[0-9X])', 
                                   page_content + " " + person.get("referencia", ""), re.I)
             
@@ -823,7 +798,7 @@ class DealflowPipeline:
                     person["afiliaciones_orcid"] = orcid_data.get("affiliations", [])
                     person["publicaciones_orcid"] = orcid_data.get("works", [])
                     person["keywords_orcid"] = orcid_data.get("keywords", [])
-                    # Recalcular score con datos ORCID
+                    
                     if orcid_data.get("affiliations") or orcid_data.get("works"):
                         person["score"] = min(100, person.get("score", 50) + 15)
             
@@ -851,13 +826,11 @@ def load_excel_files(uploaded_files: List) -> tuple:
             xls = pd.ExcelFile(uploaded_file)
             sheet_names = xls.sheet_names
             
-            # Buscar hoja de centros
             if "ENLACES" in sheet_names:
                 centros_df = pd.read_excel(xls, sheet_name="ENLACES")
             elif "Sheet1" in sheet_names:
                 centros_df = pd.read_excel(xls, sheet_name=sheet_names[0])
             
-            # Buscar hoja de temáticas
             if "TEMÁTICAS" in sheet_names:
                 tematicas_df = pd.read_excel(xls, sheet_name="TEMÁTICAS")
             elif len(sheet_names) > 1:
@@ -883,31 +856,22 @@ def prepare_tematicas(tematicas_df: pd.DataFrame) -> List[Dict]:
             "problema_no_resuelto": str(row.get("Problema no resuelto que ataca", "")),
         })
     
-    # Filtrar vacíos
     return [t for t in tematicas if t["segmento"] and len(t["segmento"]) > 5]
 
 
 def prepare_centros(centros_df: pd.DataFrame) -> List[Dict]:
-    """Prepara la lista de centros para procesar.
-    ✅ NUEVO: Extrae TODAS las URLs de las columnas WEB DIRECTORIO, WEB 2, ..., WEB 8
-    """
+    """Prepara la lista de centros para procesar."""
     if centros_df is None or centros_df.empty:
         return []
     
     centros = []
-    
-    # ✅ NUEVO: Lista de columnas de URLs a procesar (hasta 8)
-    url_columns = [
-        "WEB DIRECTORIO", "WEB 2", "WEB 3", "WEB 4", 
-        "WEB 5", "WEB 6", "WEB 7", "WEB 8"
-    ]
+    url_columns = ["WEB DIRECTORIO", "WEB 2", "WEB 3", "WEB 4", "WEB 5", "WEB 6", "WEB 7", "WEB 8"]
     
     for _, row in centros_df.iterrows():
         nombre = str(row.get("NOMBRE", ""))
         if not nombre or nombre == "nan" or pd.isna(nombre):
             continue
         
-        # ✅ NUEVO: Extraer URLs de todas las columnas WEB disponibles
         urls = []
         for col in url_columns:
             if col in centros_df.columns and pd.notna(row.get(col)):
@@ -915,19 +879,19 @@ def prepare_centros(centros_df: pd.DataFrame) -> List[Dict]:
                 if url and url.lower().startswith("http"):
                     urls.append(normalize_url(url))
         
-        if urls:  # Solo añadir centros que tengan al menos una URL válida
+        if urls:
             centros.append({
                 "nombre": nombre,
                 "region": str(row.get("REGIÓN", "")),
                 "tipo": str(row.get("TIPO DE CENTRO", "")),
-                "urls": urls,  # ✅ Ahora puede tener hasta 8 URLs
+                "urls": urls,
             })
     
     return centros
 
 
 # ============================================================================
-# COMPONENTES DE UI
+# COMPONENTES DE UI - ✅ MEJORADO
 # ============================================================================
 def render_header():
     """Renderiza el header con logo y branding de Double Helix."""
@@ -938,7 +902,7 @@ def render_header():
         </div>
         <div>
             <h1 class="logo-text">Double Helix</h1>
-            <p class="logo-subtitle">Dealflow Finder v3.0 🔍</p>
+            <p class="logo-subtitle">Dealflow Finder v3.0 </p>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -955,14 +919,14 @@ def render_sidebar_header():
 
 
 def render_entity_card(entity: Dict, entity_type: str):
-    """Renderiza una tarjeta de entidad con styling DH - ✅ HTML corregido."""
+    """Renderiza una tarjeta de entidad con información COMPLETA y detallada."""
     score = entity.get("score", 0)
     score_color = "#10B981" if score >= 80 else "#3B82F6" if score >= 65 else "#F59E0B"
     
     # Tags según tipo
     tags_html = ""
     if entity_type == "projects":
-        tags_html += '<span class="entity-tag">🔬 Proyecto</span>'
+        tags_html += '<span class="entity-tag"> Proyecto</span>'
         if entity.get("tipo"):
             tags_html += f'<span class="entity-tag">{entity["tipo"].upper()}</span>'
         if entity.get("financiacion"):
@@ -991,39 +955,81 @@ def render_entity_card(entity: Dict, entity_type: str):
     descripcion = entity.get("descripcion") or entity.get("relevancia_health") or ""
     referencia = entity.get("referencia", "")
     
-    # ✅ CORRECCIÓN: HTML construido con concatenación para evitar problemas de comillas
+    # Construir HTML completo
     html_parts = [
         '<div class="opportunity-card">',
-        '<div style="display:flex;justify-content:space-between;align-items:start;gap:1rem">',
+        '<div style="display:flex;justify-content:space-between;align-items:start;gap:1rem;margin-bottom:1rem">',
         '<div style="flex:1">',
-        f'<h4 style="margin:0 0 0.5rem 0;color:{BRANDING["secondary_color"]}">{nombre}</h4>',
+        f'<h3 style="margin:0 0 0.5rem 0;color:{BRANDING["secondary_color"]};font-size:1.3rem">{nombre}</h3>',
         tags_html,
-        f'<p style="margin:0.5rem 0;color:#555;font-style:italic">{descripcion[:200]}{"..." if len(descripcion) > 200 else ""}</p>',
+        '</div>',
+        '<div style="text-align:right;min-width:80px">',
+        f'<span class="match-score" style="background:linear-gradient(135deg,{score_color} 0%,{score_color}cc 100%)">{score}/100</span>',
+        '</div>',
+        '</div>',
     ]
     
-    # Mostrar partners si existen (para proyectos)
-    if entity_type == "projects" and entity.get("partners"):
-        partners = entity["partners"]
-        if isinstance(partners, list) and partners:
-            partners_str = ", ".join(partners[:3])
-            if len(partners) > 3:
-                partners_str += "..."
-            html_parts.append(f'<p style="margin:0.25rem 0;font-size:0.9rem;color:#666">🤝 Partners: {partners_str}</p>')
+    # Información detallada para proyectos
+    if entity_type == "projects":
+        # Facultad/Departamento
+        if entity.get("facultad"):
+            html_parts.append(f'<div class="info-row"><span class="info-label">🏛️ Facultad/Departamento:</span><span class="info-value">{entity["facultad"]}</span></div>')
+        
+        # Investigador principal
+        if entity.get("investigador_principal"):
+            html_parts.append(f'<div class="info-row"><span class="info-label">👨‍🔬 Investigador Principal:</span><span class="info-value">{entity["investigador_principal"]}</span></div>')
+        
+        # Descripción detallada
+        if descripcion:
+            html_parts.append(f'<div style="margin:1rem 0;padding:0.75rem;background:#f9f9f9;border-radius:6px"><strong>Descripción:</strong><br><span style="color:#555;line-height:1.6">{descripcion}</span></div>')
+        
+        # Objetivos
+        if entity.get("objetivos"):
+            html_parts.append(f'<div style="margin:1rem 0;padding:0.75rem;background:#f9f9f9;border-radius:6px"><strong>Objetivos:</strong><br><span style="color:#555;line-height:1.6">{entity["objetivos"]}</span></div>')
+        
+        # Estado y financiación
+        info_row = []
+        if entity.get("estado"):
+            info_row.append(f'<span class="entity-tag">{entity["estado"].upper()}</span>')
+        if entity.get("duracion"):
+            info_row.append(f'<span style="color:#666;font-size:0.85rem">⏱️ {entity["duracion"]}</span>')
+        if entity.get("presupuesto"):
+            info_row.append(f'<span style="color:#666;font-size:0.85rem">💰 {entity["presupuesto"]}</span>')
+        
+        if info_row:
+            html_parts.append(f'<div style="margin:0.75rem 0">{"".join(info_row)}</div>')
+        
+        # Partners
+        if entity.get("partners"):
+            partners = entity["partners"]
+            if isinstance(partners, list) and partners:
+                partners_str = ", ".join(partners)
+                html_parts.append(f'<div class="info-row"><span class="info-label">🤝 Partners:</span><span class="info-value">{partners_str}</span></div>')
+        
+        # Keywords
+        if entity.get("keywords"):
+            keywords = entity["keywords"]
+            if isinstance(keywords, list) and keywords:
+                keywords_html = " ".join([f'<span class="entity-tag" style="background:{BRANDING["accent_color"]};font-size:0.75rem">{kw}</span>' for kw in keywords[:8]])
+                html_parts.append(f'<div style="margin:0.75rem 0">{keywords_html}</div>')
     
-    if entity.get("aplicacion_health") or entity.get("problema_resuelto"):
-        html_parts.append(f'<p style="margin:0.25rem 0;font-size:0.9rem;color:#666">🎯 {entity.get("aplicacion_health") or entity.get("problema_resuelto", "")}</p>')
+    else:
+        # Para otros tipos de entidades
+        if descripcion:
+            html_parts.append(f'<p style="margin:0.75rem 0;color:#555;font-style:italic;line-height:1.6">{descripcion[:300]}{"..." if len(descripcion) > 300 else ""}</p>')
+        
+        if entity.get("aplicacion_health") or entity.get("problema_resuelto"):
+            html_parts.append(f'<div class="info-row"><span class="info-label">🎯 Aplicación:</span><span class="info-value">{entity.get("aplicacion_health") or entity.get("problema_resuelto", "")}</span></div>')
+        
+        if entity.get("orcid"):
+            html_parts.append(f'<div class="info-row"><span class="info-label">🔗 ORCID:</span><span class="info-value">{entity.get("orcid", "")}</span></div>')
     
-    if entity.get("orcid"):
-        html_parts.append(f'<p style="margin:0.25rem 0;font-size:0.85rem;color:#888">🔗 ORCID: {entity.get("orcid", "")}</p>')
+    # URL específica o referencia
+    url_to_show = entity.get("url_especifica") or referencia
+    if url_to_show:
+        html_parts.append(f'<div style="margin-top:1rem;padding-top:0.75rem;border-top:1px solid #e0e0e0"><a href="{url_to_show}" target="_blank" class="web-link">🔗 Ver más información en la web →</a></div>')
     
-    html_parts.append('</div>')
-    html_parts.append('<div style="text-align:right;min-width:80px">')
-    html_parts.append(f'<span class="match-score" style="background:linear-gradient(135deg,{score_color} 0%,{score_color}cc 100%)">{score}/100</span>')
-    
-    if referencia:
-        html_parts.append(f'<br><a href="{referencia}" target="_blank" style="font-size:0.8rem;color:{BRANDING["primary_color"]};text-decoration:none;margin-top:0.5rem;display:inline-block">🔗 Ver</a>')
-    
-    html_parts.append('</div></div></div>')
+    html_parts.append('</div></div>')
     
     html_content = "".join(html_parts)
     st.markdown(html_content, unsafe_allow_html=True)
@@ -1061,9 +1067,7 @@ def main():
         
         st.markdown("### ⚙️ Configuración")
         
-        # OpenAI API Key
-        st.markdown("#### 🤖 OpenAI API")
-        
+        st.markdown("####  OpenAI API")
         api_from_secrets = ""
         try:
             api_from_secrets = st.secrets.get("OPENAI_API_KEY", "")
@@ -1097,7 +1101,6 @@ def main():
         
         st.divider()
         
-        # Carga de archivos
         st.markdown("#### 📁 Archivos Excel")
         uploaded_files = st.file_uploader(
             "Sube archivos con centros y temáticas",
@@ -1126,7 +1129,6 @@ def main():
         
         st.divider()
         
-        # Monitoreo europeo
         st.markdown("#### 🇪🇺 Monitoreo Europeo")
         st.caption("Portales: CORDIS, EU-Funding, EIC")
         
@@ -1146,9 +1148,8 @@ def main():
         
         st.divider()
         
-        # Estado
         st.markdown("#### 📊 Estado")
-        st.write(f"🏢 Centros: {len(st.session_state.centros_list)}")
+        st.write(f" Centros: {len(st.session_state.centros_list)}")
         st.write(f"🎯 Temáticas: {len(st.session_state.tematicas_list)}")
         st.write(f"✅ Resultados: {len(st.session_state.results)}")
         
@@ -1169,7 +1170,6 @@ def main():
     universidades y hubs de innovación en España, con monitoreo de portales europeos.
     """)
     
-    # Verificar configuración mínima
     if not st.session_state.openai_ok:
         st.warning("⚠️ Configura tu API Key de OpenAI en la sidebar para comenzar")
         return
@@ -1192,7 +1192,6 @@ def main():
     with tab1:
         st.markdown('<p class="section-title">🔍 Selecciona centros para analizar</p>', unsafe_allow_html=True)
         
-        # Filtros
         col_f1, col_f2, col_f3 = st.columns(3)
         with col_f1:
             regiones = ["Todas"] + list(set(c["region"] for c in st.session_state.centros_list if c["region"]))
@@ -1206,7 +1205,6 @@ def main():
             page_types = ["Todos", "company_directory", "technology_transfer", "research_publications", "project_listing"]
             page_filter = st.selectbox("Tipo de página", page_types)
         
-        # Filtrar centros
         centros_filtrados = st.session_state.centros_list
         if region_filter != "Todas":
             centros_filtrados = [c for c in centros_filtrados if c["region"] == region_filter]
@@ -1215,7 +1213,6 @@ def main():
         
         st.caption(f"{len(centros_filtrados)} centros disponibles")
         
-        # Selección múltiple
         centro_options = {f"{c['nombre']} ({c['region']})": c for c in centros_filtrados}
         selected_centros = st.multiselect(
             "Selecciona centros para analizar",
@@ -1223,7 +1220,6 @@ def main():
             default=list(centro_options.keys())[:3]
         )
         
-        # Configurar análisis
         with st.expander("⚙️ Configuración del análisis", expanded=False):
             max_pages = st.slider("Máx. páginas por centro", 1, 5, 3)
             timeout = st.slider("Timeout por página (segundos)", 10, 60, 30)
@@ -1232,7 +1228,6 @@ def main():
             st.info(f"💡 Temáticas activas: {len(st.session_state.tematicas_list)}")
             st.info("🔄 Orden de extracción: Proyectos → Tecnologías → Artículos → Empresas → Personas")
         
-        # Botón de análisis
         if st.button("🚀 Iniciar análisis", type="primary", use_container_width=True):
             if not selected_centros:
                 st.warning("⚠️ Selecciona al menos un centro")
@@ -1254,7 +1249,6 @@ def main():
                         max_pages=max_pages
                     )
                     
-                    # Filtrar por score mínimo
                     for et in pipeline.EXTRACTION_ORDER:
                         result["entities"][et] = [
                             e for e in result["entities"][et] 
@@ -1263,7 +1257,6 @@ def main():
                     
                     st.session_state.results[centro["nombre"]] = result
                     
-                    # Actualizar progreso
                     progress_bar.progress((idx + 1) / len(selected_centros))
                     time.sleep(1)
                 
@@ -1272,22 +1265,20 @@ def main():
                 st.rerun()
     
     # ------------------------------------------------------------------------
-    # TAB 2: Resultados - ✅ ACTUALIZADO CON PROYECTOS
+    # TAB 2: Resultados
     # ------------------------------------------------------------------------
     with tab2:
-        st.markdown('<p class="section-title">📋 Oportunidades identificadas</p>', unsafe_allow_html=True)
+        st.markdown('<p class="section-title"> Oportunidades identificadas</p>', unsafe_allow_html=True)
         
         if not st.session_state.results:
             st.info("👉 Ejecuta un análisis en la pestaña 'Analizar' para ver resultados")
         else:
-            # Resumen global
             total_opp = sum(
                 sum(len(r["entities"].get(et, [])) for et in ["projects", "technologies", "papers", "companies", "people"])
                 for r in st.session_state.results.values()
             )
-            st.metric("🎯 Total oportunidades", total_opp)
+            st.metric(" Total oportunidades", total_opp)
             
-            # Filtros de resultados
             col_f1, col_f2, col_f3, col_f4 = st.columns(4)
             with col_f1:
                 entity_filter = st.multiselect(
@@ -1314,7 +1305,6 @@ def main():
                     options=list(set(r["region"] for r in st.session_state.results.values() if r["region"]))
                 )
             
-            # Mostrar resultados por centro
             for centro_nombre, centro_data in st.session_state.results.items():
                 if region_filter and centro_data["region"] not in region_filter:
                     continue
@@ -1328,7 +1318,6 @@ def main():
                 with st.expander(f"🏢 {centro_nombre} ({centro_data['region']}) - {total_opp_centro} oportunidades", expanded=True):
                     st.caption(f"📍 {centro_data['tipo']} | 📄 Tipos de página: {', '.join(set(centro_data['page_types_found']))}")
                     
-                    # Mostrar URLs analizadas
                     if centro_data["urls_analizadas"]:
                         with st.expander("🔗 URLs analizadas", expanded=False):
                             for url_info in centro_data["urls_analizadas"]:
@@ -1337,7 +1326,6 @@ def main():
                     
                     st.divider()
                     
-                    # Mostrar entidades por tipo
                     for entity_type in entity_filter:
                         entities = centro_data["entities"].get(entity_type, [])
                         if not entities:
@@ -1360,7 +1348,6 @@ def main():
                                 if ent_vertical and ent_vertical not in vertical_filter:
                                     continue
                             
-                            # ✅ CORRECCIÓN: llamada a función con HTML corregido
                             render_entity_card(entity, entity_type)
                         
                         st.divider()
@@ -1427,7 +1414,6 @@ def main():
         if not st.session_state.results:
             st.info("👉 Ejecuta un análisis primero para poder exportar")
         else:
-            # Preparar DataFrame para exportar
             rows = []
             for centro_nombre, centro_data in st.session_state.results.items():
                 for entity_type in ["projects", "technologies", "papers", "companies", "people"]:
@@ -1438,31 +1424,28 @@ def main():
                             "Tipo Centro": centro_data.get("tipo", ""),
                             "Tipo Entidad": entity_type,
                             "Nombre": entity.get("nombre") or entity.get("titulo"),
-                            "Vertical": entity.get("vertical") or entity.get("sector"),
+                            "Facultad": entity.get("facultad", ""),
+                            "Investigador": entity.get("investigador_principal", ""),
                             "Descripción": entity.get("descripcion") or entity.get("relevancia_health"),
                             "Score": entity.get("score", 0),
                             "Referencia": entity.get("referencia", ""),
+                            "URL": entity.get("url_especifica", ""),
                             "ORCID": entity.get("orcid", ""),
-                            "Notas": entity.get("notas", ""),
                         })
             
             if rows:
                 df_export = pd.DataFrame(rows)
                 
-                # Vista previa
                 st.markdown("#### Vista previa")
                 st.dataframe(df_export, use_container_width=True)
                 
-                # Botones de descarga
                 col_dl1, col_dl2 = st.columns(2)
                 
                 with col_dl1:
-                    # Excel
                     buffer = BytesIO()
                     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
                         df_export.to_excel(writer, index=False, sheet_name="Oportunidades")
                         worksheet = writer.sheets["Oportunidades"]
-                        # ✅ CORRECCIÓN: manejo robusto de NaN/float en cálculo de ancho de columna
                         for i, col in enumerate(df_export.columns):
                             max_len = max(df_export[col].fillna('').astype(str).str.len().max(), len(str(col)))
                             worksheet.set_column(i, i, min(max_len + 2, 50))
@@ -1476,7 +1459,6 @@ def main():
                     )
                 
                 with col_dl2:
-                    # CSV
                     csv = df_export.to_csv(index=False, encoding="utf-8-sig")
                     st.download_button(
                         label="📥 Descargar CSV",
@@ -1485,15 +1467,13 @@ def main():
                         mime="text/csv"
                     )
                 
-                # Resumen estadístico
                 st.markdown("#### 📈 Resumen")
                 col_s1, col_s2, col_s3, col_s4 = st.columns(4)
                 col_s1.metric("Total oportunidades", len(df_export))
                 col_s2.metric("Score promedio", f"{df_export['Score'].mean():.1f}")
                 col_s3.metric("Centros analizados", df_export["Centro"].nunique())
-                col_s4.metric("Con ORCID", df_export["ORCID"].notna().sum())
+                col_s4.metric("Con URL específica", df_export["URL"].notna().sum())
                 
-                # Distribución por tipo
                 if not df_export["Tipo Entidad"].empty:
                     st.markdown("#### Distribución por tipo de entidad")
                     type_counts = df_export["Tipo Entidad"].value_counts()
@@ -1516,8 +1496,5 @@ def main():
     """, unsafe_allow_html=True)
 
 
-# ============================================================================
-# ENTRY POINT - ✅ CORREGIDO
-# ============================================================================
 if __name__ == "__main__":
     main()
