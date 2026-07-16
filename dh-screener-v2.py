@@ -37,7 +37,7 @@ CACHE_DIR.mkdir(exist_ok=True)
 # BRANDING CON LUPA 🔍
 # ============================================================================
 BRANDING = {
-    "logo_url": "https://cdn-icons-png.flaticon.com/512/751/751463.png",  # Lupa azul profesional
+    "logo_url": "https://cdn-icons-png.flaticon.com/512/751/751463.png",  # Lupa profesional azul
     "favicon_emoji": "🔍",
     "primary_color": "#00A6A6",
     "secondary_color": "#1A1A2E",
@@ -689,7 +689,7 @@ class EuropeanPortalMonitor:
 
 
 # ============================================================================
-# CLASE: DEALFLOW PIPELINE (Orquestador principal) - CORREGIDO
+# CLASE: DEALFLOW PIPELINE (Orquestador principal)
 # ============================================================================
 class DealflowPipeline:
     """Orquesta el pipeline completo: crawling → extracción → análisis."""
@@ -841,7 +841,7 @@ class DealflowPipeline:
 
 
 # ============================================================================
-# HELPERS: CARGA Y PROCESAMIENTO DE EXCEL - CORREGIDO
+# HELPERS: CARGA Y PROCESAMIENTO DE EXCEL
 # ============================================================================
 def load_excel_files(uploaded_files: List) -> tuple:
     """Carga y procesa los archivos Excel."""
@@ -1013,7 +1013,7 @@ def render_entity_card(entity: Dict, entity_type: str):
 
 
 # ============================================================================
-# STREAMLIT APP - CORREGIDO
+# STREAMLIT APP
 # ============================================================================
 def main():
     # Estado de la sesión
