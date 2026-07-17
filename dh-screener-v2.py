@@ -429,6 +429,7 @@ CRITERIOS:
 - Proyectos con financiación pública/privada (Horizon Europe, CDTI, etc.)
 - Proyectos con partners industriales o clínicos relevantes
 - Proyectos con potencial de transferencia o spin-off
+- COmprueba los resultados en busuqedas a traves de internet
 
 INFORMACIÓN A EXTRAER (la más completa posible):
 - Nombre completo del proyecto
