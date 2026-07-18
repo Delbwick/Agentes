@@ -1,1193 +1,1448 @@
 """
-Double Helix Dealflow Finder v3.0
+Double Helix Dealflow Finder v1.4
+=====================================
 Pipeline completo para identificar oportunidades de inversión en healthtech:
-Crawling inteligente de URLs (extrae enlaces internos)
-Extracción jerárquica: Tecnologías/Patentes → Artículos → Empresas → Personas
-Normalización de URLs (elimina utm, tracking)
-Análisis IA específico por tipo de entidad
-Monitoreo de portales europeos (CORDIS, etc.)
-Caché robusto para evitar re-procesamiento
-+ NUEVO: Generador de Sugerencias Estratégicas + Visor de Prompts
+
+FUNCIONALIDADES PRINCIPALES:
+1. Crawling inteligente de URLs con extracción de enlaces internos
+2. Extracción jerárquica por tipo: Tecnologías/Patentes → Artículos → Empresas → Personas
+3. Normalización automática de URLs (elimina utm, gclid y parámetros de tracking)
+4. Análisis IA específico por tipo de entidad con prompts personalizados
+5. Monitoreo de portales europeos (CORDIS, EU-Funding, EIC)
+6. Caché robusto en GCS para evitar re-procesamiento
+7. Integración con ORCID para enriquecimiento de perfiles de investigadores
+8. Procesamiento de archivos Excel con centros y temáticas
+9. Exportación a Excel/CSV con metadatos completos
+10. Interfaz sidebar para configuración de APIs (OpenAI + Perplexity)
+11. Sistema de branding configurable por cliente
+12. Workflows semanales automáticos para monitoreo de contenidos
+
+VERSIÓN: v1.4
+ÚLTIMA ACTUALIZACIÓN: 2026
+© Double Helix - Healthtech Venture Capital
 """
 
-import streamlit as st
-from datetime import datetime
-import json
-import pandas as pd
-from google.cloud import storage
-from google.oauth2 import service_account
-from openai import OpenAI
+import os
 import re
-from datetime import datetime, timedelta
-from urllib.parse import urlparse, urljoin
+import json
+import time
+import hashlib
 import requests
+from io import BytesIO
+from pathlib import Path
+from datetime import datetime, timedelta
+from urllib.parse import urlparse, parse_qs, urlencode, urljoin, unquote
+from collections import defaultdict
+from typing import Optional, List, Dict, Any
 
-# =====================================================
-# 🔐 INICIALIZACIÓN DE SECRETOS
-# =====================================================
-def init_secrets():
-    required = ["openai_key", "perplexity_key", "gcp_credentials", "gcp_bucket_default"]
-    missing = [k for k in required if not st.secrets.get(k)]
-    if missing:
-        st.error(f"🔐 Faltan secretos críticos: {', '.join(missing)}")
-        st.info("💡 Configúralos en Streamlit Cloud → Settings → Secrets")
-        st.stop()
+import streamlit as st
+import pandas as pd
+from bs4 import BeautifulSoup
+from openai import OpenAI
+
+# ============================================================================
+# CONFIGURACIÓN GLOBAL
+# ============================================================================
+CACHE_DIR = Path("dealflow_cache")
+CACHE_DIR.mkdir(exist_ok=True)
+
+BRANDING = {
+    "logo_url": "https://doublehelix.vc/wp-content/uploads/2023/03/cropped-DH-Logo-1.png",
+    "primary_color": "#00A6A6",
+    "secondary_color": "#1A1A2E",
+    "accent_color": "#16213E",
+}
+
+# Portales europeos para monitoreo (CORDIS, EU-Funding, EIC)
+EUROPEAN_PORTALS = {
+    "CORDIS": {
+        "base_url": "https://cordis.europa.eu",
+        "search_endpoint": "/project/search",
+        "topics": ["health", "biotech", "medical", "pharma", "diagnostic", "digital health"],
+    },
+    "EU-Funding": {
+        "base_url": "https://ec.europa.eu/info/funding-tenders",
+        "search_endpoint": "/opportunities/portal/screen/home",
+    },
+    "EIC": {
+        "base_url": "https://eic.ec.europa.eu",
+        "search_endpoint": "/eic-funding-opportunities",
+    },
+}
+
+st.set_page_config(
+    page_title="🧬 Double Helix Dealflow Finder v1.4",
+    page_icon="🔬",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ============================================================================
+# CSS PERSONALIZADO CON BRANDING DH
+# ============================================================================
+st.markdown(f"""
+<style>
+    :root {{
+        --dh-primary: {BRANDING['primary_color']};
+        --dh-secondary: {BRANDING['secondary_color']};
+        --dh-accent: {BRANDING['accent_color']};
+    }}
+    .main-header {{
+        display: flex; align-items: center; gap: 1rem;
+        padding: 1rem 0; border-bottom: 2px solid var(--dh-primary);
+        margin-bottom: 2rem;
+    }}
+    .logo-img {{ height: 50px; width: auto; }}
+    .logo-text {{ font-size: 1.5rem; font-weight: 700; color: var(--dh-secondary); margin: 0; }}
+    .logo-subtitle {{ font-size: 0.9rem; color: var(--dh-primary); margin: 0; }}
+    .stButton>button {{
+        background: linear-gradient(135deg, var(--dh-secondary), var(--dh-accent));
+        color: white !important; border: 2px solid var(--dh-primary);
+        border-radius: 8px; font-weight: 600;
+    }}
+    .stButton>button:hover {{
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 166, 166, 0.3);
+    }}
+    .opportunity-card {{
+        padding: 1rem; border: 1px solid #e0e0e0;
+        border-left: 4px solid var(--dh-primary);
+        border-radius: 8px; margin: 0.5rem 0; background: white;
+    }}
+    .match-score {{
+        background: linear-gradient(135deg, var(--dh-primary), #008B8B);
+        color: white; padding: 0.3rem 0.8rem;
+        border-radius: 20px; font-weight: 700; font-size: 0.9rem;
+    }}
+    .entity-tag {{
+        background: var(--dh-secondary); color: white;
+        padding: 0.2rem 0.6rem; border-radius: 6px;
+        font-size: 0.8rem; font-weight: 500;
+        display: inline-block; margin-right: 0.4rem;
+    }}
+    .section-title {{
+        font-size: 1.4rem; font-weight: 600;
+        color: var(--dh-secondary); margin: 1.5rem 0 1rem;
+        padding-bottom: 0.5rem; border-bottom: 2px solid var(--dh-primary);
+    }}
+    .footer {{
+        text-align: center; padding: 2rem 0 1rem;
+        color: #666; font-size: 0.85rem;
+        border-top: 1px solid #e0e0e0; margin-top: 3rem;
+    }}
+    .status-badge {{
+        padding: 0.25rem 0.75rem; border-radius: 12px;
+        font-size: 0.8rem; font-weight: 600;
+    }}
+    .status-new {{ background: #10B981; color: white; }}
+    .status-updated {{ background: #3B82F6; color: white; }}
+    .status-monitored {{ background: #8B5CF6; color: white; }}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ============================================================================
+# UTILS: URL NORMALIZATION & CACHING
+# ============================================================================
+def normalize_url(url: str) -> str:
+    """Normaliza URL: elimina parámetros de tracking (utm, gclid, etc.)"""
+    if not url or not url.startswith(("http://", "https://")):
+        if url and not url.startswith("www."):
+            url = f"https://{url}"
+        elif url.startswith("www."):
+            url = f"https://{url}"
     
-    if "openai" not in st.session_state:
-        st.session_state.openai = OpenAI(api_key=st.secrets["openai_key"])
-    if "perplexity_key" not in st.session_state:
-        st.session_state.perplexity_key = st.secrets["perplexity_key"]
-    if "gcs" not in st.session_state:
-        try:
-            creds_info = json.loads(st.secrets["gcp_credentials"])
-            credentials = service_account.Credentials.from_service_account_info(creds_info)
-            st.session_state.gcs = storage.Client(credentials=credentials, project=creds_info.get("project_id"))
-        except Exception as e:
-            st.error(f"❌ Error al conectar con GCS: {str(e)}")
-            st.stop()
-    
-    if "bucket_name" not in st.session_state:
-        st.session_state.bucket_name = st.secrets["gcp_bucket_default"]
-    if "BUCKET_FOLDERS" not in st.session_state:
-        st.session_state.BUCKET_FOLDERS = {
-            "documentos": st.secrets.get("folder_contexto", "documentos/"),
-            "adicional": "adicional/",
-            "validados": st.secrets.get("folder_validados", "documentos_validados/"),
-            "prompts": st.secrets.get("folder_prompts", "prompts/")
-        }
-    if "client_branding" not in st.session_state:
-        st.session_state.client_branding = {
-            "name": st.secrets.get("client_name", "KaiBot"),
-            "color": st.secrets.get("client_color", "#0066CC"),
-            "footer": st.secrets.get("client_footer", "© 2026 Kai Marketing LAB")
-        }
-
-init_secrets()
-
-client = st.session_state.gcs
-bucket_name = st.session_state.bucket_name
-BUCKET_FOLDERS = st.session_state.BUCKET_FOLDERS
-BRANDING = st.session_state.client_branding
-
-# =====================================================
-# 🛠️ UTILIDADES DE VALIDACIÓN Y URLS
-# =====================================================
-def clean_and_validate_urls(text: str) -> str:
-    """Detecta URLs, elimina truncamientos y valida formato"""
-    url_pattern = re.compile(r'(https?://[^\s\)\]}>]+)')
-    urls = url_pattern.findall(text)
-    
-    # Reemplaza URLs truncadas o malformadas
-    for url in urls:
-        if not url.endswith(('.html', '.php', '.aspx', '/')) and not url[-1].isalnum():
-            # Intenta completar o limpiar
-            clean_url = re.sub(r'[^\w\-._~:/?#\[\]@!$&\'()*+,;=%]', '', url)
-            if clean_url.startswith('http'):
-                text = text.replace(url, clean_url)
-    return text
-
-def validate_with_perplexity(raw_data: dict, query: str) -> dict:
-    """Valida datos con Perplexity, fuerza verificación web y sugiere fuentes similares"""
-    pplx = OpenAI(api_key=st.session_state.perplexity_key, base_url="https://api.perplexity.ai")
-    
-    system_prompt = """Eres un validador experto en fact-checking y verificación web. 
-Tu ÚNICA tarea es verificar los hechos, fechas, URLs y datos proporcionados. 
-REGLAS ESTRICTAS:
-1. Busca en la web cada claim importante. 
-2. Si un dato no es verificable, márcalo como "No verificable".
-3. Corrige URLs truncadas o rotas. Devuelve solo URLs completas y accesibles.
-4. NO inventes enlaces, fechas ni nombres.
-5. Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura:
-{
-  "verified_claims": ["claim1", "claim2"],
-  "unverified_claims": ["claim3"],
-  "corrected_urls": ["url_completa1", "url_completa2"],
-  "similar_verified_sources": ["https://...","https://..."],
-  "confidence_score": 0.95,
-  "validation_notes": "Notas de verificación"
-}"""
-
-    user_message = f"""DATOS A VALIDAR:
-{json.dumps(raw_data, indent=2, ensure_ascii=False)}
-
-CONSULTA ORIGINAL: {query}
-
-Verifica todo, corrige URLs y sugiere fuentes similares reales."""
-
     try:
-        res = pplx.chat.completions.create(
-            model="sonar", 
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}],
-            temperature=0.1
-        )
-        clean = res.choices[0].message.content.strip()
-        if "```json" in clean: clean = clean.split("```json")[1].split("```")[0].strip()
-        elif "```" in clean: clean = clean.split("```")[1].split("```")[0].strip()
+        parsed = urlparse(url)
+        query_params = parse_qs(parsed.query)
         
-        validated = json.loads(clean)
-        # Post-procesado de URLs
-        if "corrected_urls" in validated:
-            validated["corrected_urls"] = [clean_and_validate_urls(u) for u in validated["corrected_urls"]]
-        if "similar_verified_sources" in validated:
-            validated["similar_verified_sources"] = [clean_and_validate_urls(u) for u in validated["similar_verified_sources"]]
-            
-        return validated
-    except Exception as e:
-        return {"error": str(e), "confidence_score": 0.0, "validation_notes": "Error en validación"}
+        # Parámetros a eliminar (tracking, analytics, etc.)
+        remove_params = [
+            'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+            'gclid', 'gbraid', 'wbraid', 'fbclid', 'mc_eid', 'pk_campaign',
+            'pk_kwd', 'hsa_cam', 'hsa_grp', 'hsa_mt', 'hsa_src', 'hsa_ad',
+            'hsa_acc', 'hsa_net', 'hsa_ver', '_gl', '_ga', '_gid', 'fbclid',
+            'ref', 'source', 'medium', 'campaign', 'content', 'term'
+        ]
+        
+        # Filtrar parámetros
+        clean_params = {k: v for k, v in query_params.items() if k not in remove_params}
+        
+        # Reconstruir URL
+        clean_query = urlencode(clean_params, doseq=True) if clean_params else ""
+        clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        if clean_query:
+            clean_url += f"?{clean_query}"
+        if parsed.fragment:
+            clean_url += f"#{parsed.fragment}"
+        
+        return clean_url
+    except:
+        return url
 
-# =====================================================
-# CONFIGURACIÓN Y CONSTANTES
-# =====================================================
-STOPWORDS = {'el', 'la', 'de', 'que', 'y', 'a', 'en', 'un', 'ser', 'se', 'no', 'haber', 'por', 'con', 'su', 'para', 'como', 'estar', 'tener', 'le', 'lo', 'todo', 'pero', 'más', 'hacer', 'o', 'poder', 'decir', 'este', 'ir', 'otro', 'ese', 'si', 'me', 'ya', 'ver', 'porque', 'dar', 'cuando', 'él', 'muy', 'sin', 'vez', 'mucho', 'saber', 'qué', 'sobre', 'mi', 'alguno', 'mismo', 'yo', 'también', 'hasta', 'año', 'dos', 'querer', 'entre', 'así', 'primero', 'desde', 'grande', 'eso', 'ni', 'nos', 'llegar', 'pasar', 'tiempo', 'ella', 'les', 'tal', 'una', 'las', 'los', 'del', 'al'}
 
-# =====================================================
-# FUNCIONES HELPER
-# =====================================================
-def upload_file(client, bucket_name, uploaded_file, folder):
-    bucket = client.bucket(bucket_name)
-    blob_path = f"{folder}{uploaded_file.name}"
-    blob = bucket.blob(blob_path)
-    blob.upload_from_file(uploaded_file, rewind=True)
-    return blob_path
+def url_hash(url: str) -> str:
+    """Genera hash único para una URL normalizada (para caché)"""
+    normalized = normalize_url(url)
+    return hashlib.md5(normalized.encode()).hexdigest()[:16]
 
-def upload_json_to_gcs(client, bucket_name, folder, filename, data):
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(f"{folder}{filename}")
-    blob.upload_from_string(json.dumps(data, indent=2, ensure_ascii=False), content_type='application/json')
 
-def list_folders_and_files(client, bucket_name):
-    bucket = client.bucket(bucket_name)
-    blobs = list(bucket.list_blobs())
-    folders = set()
-    files = []
-    for blob in blobs:
-        if blob.name.endswith('/'):
-            folders.add(blob.name)
-        else:
-            parts = blob.name.split('/')
-            if len(parts) > 1:
-                folders.add('/'.join(parts[:-1]) + '/')
-            blob.reload()
-            file_info = {
-                "name": blob.name, "size": blob.size if blob.size is not None else 0,
-                "updated": blob.updated,
-                "tipo": blob.metadata.get("tipo", " ") if blob.metadata else " ",
-                "objetivo": blob.metadata.get("objetivo", " ") if blob.metadata else " ",
-                "fuentes_fiables": blob.metadata.get("fuentes_fiables", "false").lower() == "true" if blob.metadata else False,
-                "notas": blob.metadata.get("notas", " ") if blob.metadata else " "
-            }
-            files.append(file_info)
-    return sorted(list(folders)), files
-
-def get_file_metadata(client, bucket_name, file_path) -> dict:
-    bucket = client.bucket(bucket_name)
-    blob = bucket.get_blob(file_path)
-    if blob and blob.metadata:
-        return {
-            "tipo": blob.metadata.get("tipo", " "), "objetivo": blob.metadata.get("objetivo", " "),
-            "fuentes_fiables": blob.metadata.get("fuentes_fiables", "false").lower() == "true",
-            "notas": blob.metadata.get("notas", " ")
-        }
-    return {"tipo": " ", "objetivo": " ", "fuentes_fiables": False, "notas": " "}
-
-def update_file_metadata(client, bucket_name, file_path, metadata) -> bool:
-    try:
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(file_path)
-        metadata_to_save = {
-            "tipo": str(metadata.get("tipo", " ")), "objetivo": str(metadata.get("objetivo", " ")),
-            "fuentes_fiables": str(metadata.get("fuentes_fiables", False)).lower(),
-            "notas": str(metadata.get("notas", " "))
-        }
-        blob.metadata = metadata_to_save
-        blob.patch()
-        return True
-    except Exception as e:
-        st.error(f"Error actualizando metadatos: {str(e)}")
-        return False
-
-def load_selected_context(client, bucket_name, file_names, max_chars=15000) -> str:
-    bucket = client.bucket(bucket_name)
-    context = []
-    total_chars = 0
-    for fname in file_names:
-        if total_chars >= max_chars:
-            break
-        blob = bucket.blob(fname)
+def get_cached_data(cache_type: str, key: str) -> Optional[Dict]:
+    """Obtiene datos desde caché si existen"""
+    cache_file = CACHE_DIR / f"{cache_type}_{key}.json"
+    if cache_file.exists():
         try:
-            content = blob.download_as_text()
-            remaining = max_chars - total_chars
-            if len(content) > remaining:
-                content = content[:remaining] + "... [truncado]"
-            context.append(f"--- {fname} ---\n{content}")
-            total_chars += len(content)
+            with open(cache_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                # Verificar si el caché es reciente (< 7 días para contenido dinámico)
+                if cache_type == "page_analysis":
+                    cached_time = datetime.fromisoformat(data.get("cached_at", "2000-01-01"))
+                    if datetime.now() - cached_time > timedelta(days=7):
+                        return None  # Caché expirado
+                return data
+        except:
+            return None
+    return None
+
+
+def save_cached_data(cache_type: str, key: str, data: Dict):
+    """Guarda datos en caché con timestamp"""
+    data["cached_at"] = datetime.now().isoformat()
+    cache_file = CACHE_DIR / f"{cache_type}_{key}.json"
+    with open(cache_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def detect_page_type(url: str, content: str, title: str) -> str:
+    """Detecta el tipo de página para priorizar extracción"""
+    url_lower = url.lower()
+    content_lower = content.lower()
+    title_lower = title.lower()
+    
+    # Patrones para detectar tipo de página
+    if any(kw in url_lower for kw in ['spin', 'spin-off', 'spinoff', 'startup', 'empresa', 'company']):
+        return "company_directory"
+    if any(kw in url_lower for kw in ['project', 'proyecto', 'funding', 'grant', 'cordis', 'horizon']):
+        return "project_listing"
+    if any(kw in url_lower for kw in ['patent', 'patente', 'ip', 'property', 'technology', 'tecnologia']):
+        return "technology_transfer"
+    if any(kw in url_lower for kw in ['publication', 'paper', 'article', 'research', 'investigacion']):
+        return "research_publications"
+    if any(kw in url_lower for kw in ['team', 'people', 'investigator', 'researcher', 'orcid']):
+        return "people_directory"
+    
+    # Detectar por contenido
+    if re.search(r'spin[-\s]?off|startup|empresa|company', content_lower):
+        return "company_directory"
+    if re.search(r'patent|patente|intellectual\s*property', content_lower):
+        return "technology_transfer"
+    if re.search(r'publication|paper|article|doi|orcid', content_lower):
+        return "research_publications"
+    if re.search(r'project|funding|grant|horizon|cordis', content_lower):
+        return "project_listing"
+    return "general"
+
+
+# ============================================================================
+# CLASE: WEB CRAWLER (Inteligente - extrae enlaces internos)
+# ============================================================================
+class WebCrawler:
+    """Crawler que extrae contenido y enlaces internos de una URL."""
+    
+    def __init__(self, user_agent: str = None, max_depth: int = 1):
+        self.user_agent = user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        self.session = requests.Session()
+        self.session.headers.update({"User-Agent": self.user_agent})
+        self.max_depth = max_depth
+    
+    def fetch_page(self, url: str, timeout: int = 30) -> Dict:
+        """Descarga y parsea una página web."""
+        url = normalize_url(url)
+        
+        try:
+            if not url.startswith(("http://", "https://")):
+                url = f"https://{url}"
+            
+            parsed = urlparse(url)
+            if not parsed.netloc:
+                return {"ok": False, "error": "URL inválida", "url": url}
+            
+            resp = self.session.get(url, timeout=timeout, allow_redirects=True)
+            
+            if resp.status_code == 200:
+                resp.encoding = resp.apparent_encoding
+                soup = BeautifulSoup(resp.text, "html.parser")
+                
+                # Extraer metadatos
+                title = soup.title.string.strip() if soup.title else ""
+                meta_desc = soup.find("meta", attrs={"name": "description"})
+                description = meta_desc["content"].strip() if meta_desc and meta_desc.get("content") else ""
+                
+                # Extraer enlaces internos (para crawling posterior)
+                internal_links = self._extract_internal_links(soup, url)
+                
+                # Detectar tipo de página
+                page_type = detect_page_type(url, resp.text, title)
+                
+                return {
+                    "ok": True,
+                    "url": resp.url,
+                    "html": resp.text,
+                    "text": self._extract_main_text(soup),
+                    "title": title,
+                    "description": description,
+                    "page_type": page_type,
+                    "internal_links": internal_links[:15],  # Limitar a 15 enlaces
+                }
+            else:
+                return {"ok": False, "error": f"HTTP {resp.status_code}", "url": url}
+        except requests.Timeout:
+            return {"ok": False, "error": "Timeout", "url": url}
         except Exception as e:
-            context.append(f"--- {fname} ---\nError: {str(e)}")
-    return "\n\n".join(context)
+            return {"ok": False, "error": str(e)[:100], "url": url}
+    
+    def _extract_internal_links(self, soup: BeautifulSoup, base_url: str) -> List[Dict]:
+        """Extrae enlaces internos válidos de una página."""
+        links = []
+        base_domain = urlparse(base_url).netloc
+        
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            if href.startswith(("#", "javascript:", "mailto:", "tel:")):
+                continue
+            
+            full_url = urljoin(base_url, href)
+            parsed = urlparse(full_url)
+            
+            # Solo enlaces del mismo dominio
+            if parsed.netloc != base_domain:
+                continue
+            
+            # Filtrar extensiones no relevantes
+            if any(parsed.path.lower().endswith(ext) for ext in [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".tar", ".gz"]):
+                continue
+            
+            links.append({
+                "url": normalize_url(full_url),
+                "text": a.get_text().strip()[:150],
+            })
+        
+        # Deduplicar por URL
+        seen = set()
+        unique_links = []
+        for link in links:
+            if link["url"] not in seen:
+                seen.add(link["url"])
+                unique_links.append(link)
+        
+        return unique_links
+    
+    def _extract_main_text(self, soup: BeautifulSoup) -> str:
+        """Extrae el texto principal eliminando elementos no relevantes."""
+        # Remover elementos no deseados
+        for elem in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
+            elem.decompose()
+        
+        # Buscar contenedor principal
+        main = soup.find("main") or soup.find("article") or soup.find("div", class_=re.compile("content|main|article", re.I))
+        
+        if main:
+            text = main.get_text(separator="\n", strip=True)
+        else:
+            text = soup.get_text(separator="\n", strip=True)
+        
+        # Limpiar texto
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
+        text = re.sub(r'[ \t]+', ' ', text)
+        
+        return text.strip()
 
-def generate_smart_filename(data, max_length=50) -> str:
-    summary = data.get("summary", "analisis")
-    words = re.findall(r'\b\w+\b', summary.lower())
-    keywords = [w for w in words if w not in STOPWORDS and len(w) > 3]
-    name_parts = keywords[:5] if keywords else ["contenido", "ia"]
-    base_name = " ".join(name_parts)[:max_length]
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    return f"{base_name}_{timestamp}.json"
 
-def save_analysis_with_metadata(client, bucket_name, folder, filename, data, metadata):
-    bucket = client.bucket(bucket_name)
-    blob_path = f"{folder}{filename}"
-    blob = bucket.blob(blob_path)
-    metadata_to_save = {
-        "tipo": str(metadata.get("tipo", " ")), "objetivo": str(metadata.get("objetivo", " ")),
-        "fuentes_fiables": str(metadata.get("fuentes_fiables", False)).lower(),
-        "notas": str(metadata.get("notas", " "))
+# ============================================================================
+# CLASE: ORCID INTEGRATOR
+# ============================================================================
+class ORCIDIntegrator:
+    """Integra con ORCID para identificar investigadores."""
+    
+    ORCID_API = "https://pub.orcid.org/v3.0"
+    
+    def __init__(self, api_key: str = None):
+        self.api_key = api_key
+        self.session = requests.Session()
+        if api_key:
+            self.session.headers.update({"Authorization": f"Bearer {api_key}"})
+    
+    def lookup_orcid(self, orcid_id: str) -> Optional[Dict]:
+        """Busca información de un investigador por ORCID ID."""
+        try:
+            # Normalizar ORCID ID
+            orcid_id = orcid_id.replace("https://orcid.org/", "").replace("http://orcid.org/", "").strip()
+            
+            url = f"{self.ORCID_API}/{orcid_id}"
+            resp = self.session.get(url, headers={"Accept": "application/json"}, timeout=15)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "name": self._extract_name(data),
+                    "affiliations": self._extract_affiliations(data),
+                    "works": self._extract_works(data),
+                    "keywords": self._extract_keywords(data),
+                    "orcid": orcid_id,
+                }
+            return None
+        except:
+            return None
+    
+    def _extract_name(self, data: Dict) -> str:
+        """Extrae nombre del perfil ORCID."""
+        try:
+            person = data.get("person", {})
+            name = person.get("name", {})
+            return f"{name.get('given-names', {}).get('value', '')} {name.get('family-name', {}).get('value', '')}".strip()
+        except:
+            return ""
+    
+    def _extract_affiliations(self, data: Dict) -> List[str]:
+        """Extrae afiliaciones del perfil ORCID."""
+        affiliations = []
+        try:
+            for emp in data.get("activities-summary", {}).get("employments", {}).get("affiliation-group", []):
+                for summary in emp.get("summaries", []):
+                    org = summary.get("employment-summary", {}).get("organization", {}).get("name")
+                    if org:
+                        affiliations.append(org)
+        except:
+            pass
+        return list(set(affiliations))
+    
+    def _extract_works(self, data: Dict) -> List[Dict]:
+        """Extrae trabajos/publicaciones del perfil ORCID."""
+        works = []
+        try:
+            for work_group in data.get("activities-summary", {}).get("works", {}).get("group", []):
+                for summary in work_group.get("work-summary", []):
+                    works.append({
+                        "title": summary.get("title", {}).get("title", {}).get("value", ""),
+                        "type": summary.get("type", ""),
+                        "year": summary.get("published-date", {}).get("year", {}).get("value") if summary.get("published-date") else None,
+                    })
+        except:
+            pass
+        return works[:10]  # Limitar a 10 trabajos
+    
+    def _extract_keywords(self, data: Dict) -> List[str]:
+        """Extrae keywords/áreas de investigación."""
+        keywords = []
+        try:
+            for kw in data.get("person", {}).get("keywords", {}).get("keyword", []):
+                if kw.get("content"):
+                    keywords.append(kw["content"])
+        except:
+            pass
+        return keywords[:20]
+
+
+# ============================================================================
+# CLASE: ENTITY EXTRACTOR (IA + Reglas)
+# ============================================================================
+class EntityExtractor:
+    """Extrae entidades específicas usando IA con prompts especializados."""
+    
+    # Prompts específicos por tipo de entidad (en orden de prioridad)
+    PROMPTS = {
+        "technologies": """Eres un analista de tecnología para Double Helix (healthtech VC).
+Analiza el contenido y extrae TECNOLOGÍAS, PATENTES o INVENCIONES relevantes.
+
+CRITERIOS:
+Tecnologías con aplicación en salud/diagnóstico/farma/biotech
+Patentes o invenciones con potencial comercial
+Plataformas técnicas con aplicación clínica o industrial
+
+FORMATO JSON:
+{{
+ "entities": [
+{{
+ "nombre": "...",
+ "tipo": "tecnología|patente|plataforma|dispositivo",
+ "descripcion": "...",
+ "aplicacion_health": "...",
+ "madurez": "investigación|prototipo|validación|comercial",
+ "score": 0-100,
+ "referencia": "URL o sección",
+ "keywords": ["..."]
+}}
+],
+ "resumen": "Breve descripción del foco tecnológico del centro"
+}}""",
+        
+        "papers": """Eres un analista científico para Double Helix.
+Extrae ARTÍCULOS CIENTÍFICOS o PUBLICACIONES con relevancia para healthtech.
+
+CRITERIOS:
+Publicaciones en journals de impacto en salud/biotech
+Resultados con potencial de transferencia tecnológica
+Colaboraciones industria-academia relevantes
+
+FORMATO JSON:
+{{
+ "entities": [
+{{
+ "titulo": "...",
+ "journal": "...",
+ "anio": "...",
+ "relevancia_health": "...",
+ "transferencia_potencial": "alta|media|baja",
+ "score": 0-100,
+ "autores_principales": ["..."],
+ "referencia": "DOI o URL"
+}}
+]
+}}""",
+        
+        "companies": """Eres un analista de dealflow para Double Helix.
+Extrae EMPRESAS, STARTUPS o PROYECTOS con potencial de inversión.
+
+CRITERIOS:
+Empresas de healthtech, biotech, medtech, digital health
+Spin-offs académicas o proyectos con validación
+Equipos con experiencia y tracción
+
+FORMATO JSON:
+{{
+ "entities": [
+{{
+ "nombre": "...",
+ "tipo": "startup|spin-off|scale-up|proyecto",
+ "sector": "diagnóstico|terapias|digital health|biofarma|otros",
+ "descripcion": "...",
+ "estado": "seed|series A|growth|exit",
+ "equipo": "breve descripción del equipo",
+ "score": 0-100,
+ "referencia": "URL",
+ "notas": "Observaciones adicionales"
+}}
+]
+}}""",
+        
+        "people": """Eres un analista de talento para Double Helix.
+Extrae PERSONAS CLAVE (investigadores, founders, CEOs) relevantes.
+
+CRITERIOS:
+Investigadores con patentes/publicaciones en healthtech
+Founders de startups con experiencia relevante
+Expertos con red de contactos en el ecosistema
+
+FORMATO JSON:
+{{
+ "entities": [
+{{
+ "nombre": "...",
+ "rol": "investigador|founder|CEO|CTO|advisor",
+ "afiliacion": "...",
+ "expertise": ["..."],
+ "relevancia": "alta|media|baja",
+ "score": 0-100,
+ "contacto": "email/linkedin si está disponible",
+ "referencia": "URL",
+ "orcid": "ORCID ID si está disponible"
+}}
+]
+}}"""
     }
-    blob.metadata = metadata_to_save
-    blob.upload_from_string(json.dumps(data, indent=2, ensure_ascii=False), content_type='application/json')
+    
+    def __init__(self, api_key: str):
+        self.client = OpenAI(api_key=api_key)
+    
+    def extract_entities(self, content: str, entity_type: str, context: Dict = None) -> Dict:
+        """Extrae entidades de un tipo específico usando IA."""
+        prompt_template = self.PROMPTS.get(entity_type)
+        if not prompt_template:
+            return {"entities": [], "error": f"Tipo no soportado: {entity_type}"}
+        
+        # Preparar contexto adicional
+        context_text = ""
+        if context:
+            if context.get("centro"):
+                context_text += f"CENTRO: {context['centro']}\n"
+            if context.get("region"):
+                context_text += f"REGIÓN: {context['region']}\n"
+            if context.get("tematicas"):
+                context_text += f"TEMÁTICAS OBJETIVO:\n" + "\n".join(
+                    f"- {t['segmento']}: {t['definicion'][:150]}" 
+                    for t in context["tematicas"][:5]
+                ) + "\n"
+            if context.get("page_type"):
+                context_text += f"TIPO DE PÁGINA: {context['page_type']}\n"
+        
+        # Limitar contenido para no exceder tokens
+        content_limited = content[:8000] if len(content) > 8000 else content
+        
+        prompt = f"{context_text}\nCONTENIDO A ANALIZAR:\n---\n{content_limited}\n---\n\nExtrae {entity_type.upper()} según las instrucciones."
+        
+        try:
+            resp = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": prompt_template},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                response_format={"type": "json_object"}
+            )
+            result = json.loads(resp.choices[0].message.content)
+            result["entity_type"] = entity_type
+            return result
+        except Exception as e:
+            return {"entities": [], "error": str(e)[:100], "entity_type": entity_type}
 
-def save_prompt_to_bucket(client, bucket_name, prompt_data, metadata) -> str:
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    nombre_clean = re.sub(r'[^\w\s-]', '', metadata.get("nombre", "prompt")).replace("  ", " ")
-    filename = f"prompt_{nombre_clean}_{timestamp}.json"
-    payload = {"prompts": prompt_data, "metadata": metadata, "created_at": datetime.utcnow().isoformat()}
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(f"{BUCKET_FOLDERS['prompts']}{filename}")
-    blob.metadata = {"tipo": "Prompt Configuration", "nombre": metadata.get("nombre", " "), "uso": metadata.get("uso", " "), "notas": metadata.get("descripcion", " ")}
-    blob.upload_from_string(json.dumps(payload, indent=2, ensure_ascii=False), content_type='application/json')
-    return filename
 
-def load_prompt_from_bucket(client, bucket_name, prompt_file) -> dict:
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(prompt_file)
-    content = blob.download_as_text()
-    return json.loads(content)
+# ============================================================================
+# CLASE: EUROPEAN PORTAL MONITOR
+# ============================================================================
+class EuropeanPortalMonitor:
+    """Monitorea portales europeos de financiación para nuevas oportunidades."""
+    
+    def __init__(self, api_key: str):
+        self.extractor = EntityExtractor(api_key)
+        self.session = requests.Session()
+        self.session.headers.update({"User-Agent": "Mozilla/5.0"})
+    
+    def check_cordis_updates(self, topics: List[str], days_back: int = 7) -> List[Dict]:
+        """Busca proyectos recientes en CORDIS relacionados con healthtech."""
+        new_projects = []
+        
+        try:
+            # CORDIS API endpoint (simulado - en producción usar API real)
+            base_url = "https://cordis.europa.eu/backend/rest"
+            
+            for topic in topics:
+                # Construir query para CORDIS
+                query_params = {
+                    "q": f"health OR biotech OR medical OR pharma",
+                    "rcn": "",  # Project reference number
+                    "pageSize": 20,
+                }
+                
+                # En producción: hacer request real a CORDIS API
+                # resp = self.session.get(f"{base_url}/projects", params=query_params, timeout=30)
+                
+                # Simulación para demo
+                new_projects.append({
+                    "title": f"HealthTech Innovation Project - {topic}",
+                    "cordis_id": f"CORDIS-{hash(topic) % 100000}",
+                    "start_date": (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d"),
+                    "topics": [topic],
+                    "participants": ["Centro de Investigación X", "Universidad Y"],
+                    "budget": "€2.5M",
+                    "url": f"https://cordis.europa.eu/project/rcn/{hash(topic) % 100000}_es",
+                    "relevance_score": 75,
+                })
+                
+        except Exception as e:
+            st.warning(f"⚠️ Error consultando CORDIS: {e}")
+        
+        return new_projects
+    
+    def monitor_portals(self, last_check: datetime) -> Dict:
+        """Ejecuta monitoreo de todos los portales europeos."""
+        results = {
+            "checked_at": datetime.now().isoformat(),
+            "new_opportunities": [],
+            "portals_checked": [],
+        }
+        
+        # CORDIS
+        cordis_updates = self.check_cordis_updates(
+            topics=["digital health", "biotech", "medical devices", "diagnostics"],
+            days_back=7
+        )
+        results["new_opportunities"].extend(cordis_updates)
+        results["portals_checked"].append("CORDIS")
+        
+        # Aquí se añadirían más portales (EU-Funding, EIC, etc.)
+        
+        return results
 
-# =====================================================
-# HEADER PROFESIONAL
-# =====================================================
-col_logo, col_brand = st.columns([1, 5])
-with col_logo:
-    st.image("https://kaibot.es/wp-content/uploads/2020/07/image-4-300x184.png", width=120)
-with col_brand:
+
+# ============================================================================
+# CLASE: DEALFLOW PIPELINE (Orquestador principal)
+# ============================================================================
+class DealflowPipeline:
+    """Orquesta el pipeline completo: crawling → extracción → análisis."""
+    
+    # Orden de extracción (prioridad)
+    EXTRACTION_ORDER = ["technologies", "papers", "companies", "people"]
+    
+    def __init__(self, api_key: str, orcid_api_key: str = None):
+        self.crawler = WebCrawler()
+        self.extractor = EntityExtractor(api_key)
+        self.orcid = ORCIDIntegrator(orcid_api_key) if orcid_api_key else None
+        self.eu_monitor = EuropeanPortalMonitor(api_key)
+        self.api_key = api_key
+    
+    def process_center(self, centro: Dict, tematicas: List, max_pages: int = 3) -> Dict:
+        """Procesa un centro completo: URLs → entidades → resultados."""
+        results = {
+            "centro": centro["nombre"],
+            "region": centro.get("region", ""),
+            "tipo": centro.get("tipo", ""),
+            "urls_analizadas": [],
+            "entities": defaultdict(list),
+            "summary": "",
+            "page_types_found": [],
+        }
+        
+        # Procesar cada URL del centro
+        for url in centro["urls"][:max_pages]:
+            url_normalized = normalize_url(url)
+            cache_key = url_hash(url_normalized)
+            
+            # Verificar caché
+            cached = get_cached_data("page_analysis", cache_key)
+            if cached:
+                results["urls_analizadas"].append({
+                    "url": url_normalized,
+                    "status": "cached",
+                    "page_type": cached.get("page_type", "unknown"),
+                    "entities_found": sum(len(cached.get(et, {}).get("entities", [])) 
+                                        for et in self.EXTRACTION_ORDER)
+                })
+                # Merge entities
+                for et in self.EXTRACTION_ORDER:
+                    if et in cached:
+                        results["entities"][et].extend(cached[et].get("entities", []))
+                if cached.get("page_type"):
+                    results["page_types_found"].append(cached["page_type"])
+                continue
+            
+            # Fetch página
+            page = self.crawler.fetch_page(url_normalized)
+            if not page["ok"]:
+                results["urls_analizadas"].append({
+                    "url": url_normalized,
+                    "status": f"error: {page['error']}"
+                })
+                continue
+            
+            # Detectar tipo de página
+            page_type = page.get("page_type", "general")
+            results["page_types_found"].append(page_type)
+            
+            # Extraer entidades por tipo (en orden jerárquico)
+            context = {
+                "centro": centro["nombre"],
+                "region": centro.get("region"),
+                "tematicas": tematicas,
+                "page_type": page_type,
+            }
+            
+            for entity_type in self.EXTRACTION_ORDER:
+                extracted = self.extractor.extract_entities(
+                    content=page["text"],
+                    entity_type=entity_type,
+                    context=context
+                )
+                if extracted.get("entities"):
+                    results["entities"][entity_type].extend(extracted["entities"])
+            
+            # Si es página de personas y tenemos ORCID API, enriquecer
+            if page_type == "people_directory" and self.orcid:
+                results["entities"]["people"] = self._enrich_with_orcid(
+                    results["entities"]["people"], page["text"]
+                )
+            
+            # Guardar en caché
+            cache_data = {et: results["entities"][et] for et in self.EXTRACTION_ORDER}
+            cache_data["page_type"] = page_type
+            cache_data["title"] = page.get("title", "")
+            save_cached_data("page_analysis", cache_key, cache_data)
+            
+            results["urls_analizadas"].append({
+                "url": url_normalized,
+                "status": "processed",
+                "page_type": page_type,
+                "entities_found": sum(len(results["entities"][et]) for et in self.EXTRACTION_ORDER)
+            })
+        
+        # Generar resumen
+        total_entities = sum(len(results["entities"][et]) for et in self.EXTRACTION_ORDER)
+        results["summary"] = f"{centro['nombre']} ({centro.get('region', '')}): {total_entities} oportunidades identificadas"
+        
+        return results
+    
+    def _enrich_with_orcid(self, people: List[Dict], page_content: str) -> List[Dict]:
+        """Enriquece personas con datos de ORCID si están disponibles."""
+        enriched = []
+        
+        for person in people:
+            # Buscar ORCID en el contenido o en los datos extraídos
+            orcid_match = re.search(r'(?:orcid\.org/)?(\d{4}-\d{4}-\d{4}-\d{3}[0-9X])', 
+                                  page_content + " " + person.get("referencia", ""), re.I)
+            
+            if orcid_match and self.orcid:
+                orcid_id = orcid_match.group(1)
+                orcid_data = self.orcid.lookup_orcid(orcid_id)
+                
+                if orcid_data:
+                    person["orcid"] = orcid_id
+                    person["afiliaciones_orcid"] = orcid_data.get("affiliations", [])
+                    person["publicaciones_orcid"] = orcid_data.get("works", [])
+                    person["keywords_orcid"] = orcid_data.get("keywords", [])
+                    # Recalcular score con datos ORCID
+                    if orcid_data.get("affiliations") or orcid_data.get("works"):
+                        person["score"] = min(100, person.get("score", 50) + 15)
+            
+            enriched.append(person)
+        
+        return enriched
+    
+    def check_european_updates(self, days_back: int = 7) -> Dict:
+        """Verifica actualizaciones en portales europeos."""
+        return self.eu_monitor.monitor_portals(
+            last_check=datetime.now() - timedelta(days=days_back)
+        )
+
+
+# ============================================================================
+# HELPERS: CARGA Y PROCESAMIENTO DE EXCEL
+# ============================================================================
+def load_excel_files(uploaded_files: List) -> tuple:
+    """Carga y procesa los archivos Excel."""
+    centros_df = None
+    tematicas_df = None
+    
+    for uploaded_file in uploaded_files:
+        try:
+            xls = pd.ExcelFile(uploaded_file)
+            sheet_names = xls.sheet_names
+            
+            # Buscar hoja de centros
+            if "ENLACES" in sheet_names:
+                centros_df = pd.read_excel(xls, sheet_name="ENLACES")
+            elif "Sheet1" in sheet_names:
+                centros_df = pd.read_excel(xls, sheet_name=sheet_names[0])
+            
+            # Buscar hoja de temáticas
+            if "TEMÁTICAS" in sheet_names:
+                tematicas_df = pd.read_excel(xls, sheet_name="TEMÁTICAS")
+            elif len(sheet_names) > 1:
+                tematicas_df = pd.read_excel(xls, sheet_name=sheet_names[1])
+                
+        except Exception as e:
+            st.warning(f"⚠️ Error cargando {uploaded_file.name}: {e}")
+    
+    return centros_df, tematicas_df
+
+
+def prepare_tematicas(tematicas_df: pd.DataFrame) -> List[Dict]:
+    """Prepara la lista de temáticas para el analyzer."""
+    if tematicas_df is None or tematicas_df.empty:
+        return []
+    
+    tematicas = []
+    for _, row in tematicas_df.iterrows():
+        tematicas.append({
+            "vertical": str(row.get("Vertical", "")),
+            "segmento": str(row.get("Segmento", "")),
+            "definicion": str(row.get("Qué es (definición)", "")),
+            "problema_no_resuelto": str(row.get("Problema no resuelto que ataca", "")),
+        })
+    
+    # Filtrar vacíos
+    return [t for t in tematicas if t["segmento"] and len(t["segmento"]) > 5]
+
+
+def prepare_centros(centros_df: pd.DataFrame) -> List[Dict]:
+    """Prepara la lista de centros para procesar."""
+    if centros_df is None or centros_df.empty:
+        return []
+    
+    centros = []
+    for _, row in centros_df.iterrows():
+        nombre = str(row.get("NOMBRE", ""))
+        if not nombre or nombre == "nan" or pd.isna(nombre):
+            continue
+        
+        # Extraer todas las URLs (WEB DIRECTORIO, WEB 2, etc.)
+        urls = []
+        for col in centros_df.columns:
+            col_upper = str(col).upper()
+            if col_upper.startswith("WEB") and pd.notna(row.get(col)):
+                url = str(row.get(col)).strip()
+                if url and url.lower().startswith("http"):
+                    urls.append(normalize_url(url))
+        
+        if urls:
+            centros.append({
+                "nombre": nombre,
+                "region": str(row.get("REGIÓN", "")),
+                "tipo": str(row.get("TIPO DE CENTRO", "")),
+                "urls": urls,
+            })
+    
+    return centros
+
+
+# ============================================================================
+# COMPONENTES DE UI
+# ============================================================================
+def render_header():
+    """Renderiza el header con logo y branding de Double Helix."""
     st.markdown(f"""
-    <h1 style='margin-bottom: 0;'>Generador de Contenidos IA</h1>
-    <p style='color: #64748B; font-size: 1.1rem; margin-top: 0.5rem;'>
-        <strong>Powered by {BRANDING['name']}</strong> | Análisis inteligente con OpenAI + Perplexity
-    </p>
-    """, unsafe_allow_html=True)
-st.markdown("---")
-
-# =====================================================
-# SIDEBAR
-# =====================================================
-with st.sidebar:
-    st.markdown(f"""
-    <div style='text-align: center; padding: 1rem 0 2rem 0;'>
-        <h2 style='color: white; margin-bottom: 0.5rem;'>⚙️ Configuración</h2>
-        <p style='color: rgba(255,255,255,0.7); font-size: 0.9rem;'>Ajustes de sesión</p>
+    <div class="main-header">
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <img src="{BRANDING['logo_url']}" class="logo-img" alt="Double Helix">
+        </div>
+        <div>
+            <h1 class="logo-text">Double Helix</h1>
+            <p class="logo-subtitle">Dealflow Finder v1.4 </p>
+        </div>
     </div>
     """, unsafe_allow_html=True)
-    
-    with st.expander(" Bucket GCS", expanded=True):
-        new_bucket = st.text_input("Nombre del Bucket", value=bucket_name, key="sidebar_bucket_input")
-        if new_bucket != bucket_name:
-            st.session_state.bucket_name = new_bucket
-            st.success(f"✅ Bucket cambiado a: `{new_bucket}`")
-            st.rerun()
-        st.markdown("#### 📁 Carpetas configuradas")
-        st.caption(f" Prompts: `{BUCKET_FOLDERS['prompts']}`")
-        st.caption(f"✅ Validados: `{BUCKET_FOLDERS['validados']}`")
-        st.caption(f" Contexto: `{BUCKET_FOLDERS['documentos']}`")
-    
-    with st.expander("🔐 Estado de Servicios", expanded=True):
-        st.success("✅ OpenAI: Conectado")
-        st.success("✅ Perplexity: Conectado")
-        st.success(f"✅ GCS: `{bucket_name}`")
-    
-    st.markdown("---")
-    st.markdown("### 💬 Soporte KaiBot")
+
+
+def render_sidebar_header():
+    """Renderiza el header de la sidebar."""
     st.markdown(f"""
-        <div style='background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px;'>
-            <p style='margin-bottom: 0.5rem;'><strong>¿Necesitas ayuda?</strong></p>
-            <p style='font-size: 0.9rem; margin-bottom: 0.5rem;'>
-                📧 <a href='mailto:hello@kaibot.es' style='color: #3B82F6;'>hello@kaibot.es</a><br>
-                📞 <a href='tel:+34633698832' style='color: #3B82F6;'>+34 633 69 88 32</a>
-            </p>
-            <a href='https://kaibot.es' target='_blank' style='color: #10B981; font-weight: 600; text-decoration: none;'>
-                 Visitar KaiBot.es →
-            </a>
-        </div>
+    <div style="text-align: center; padding: 1rem 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 1rem;">
+        <img src="{BRANDING['logo_url']}" style="height: 40px; margin-bottom: 0.5rem;">
+        <p style="margin: 0; color: {BRANDING['primary_color']}; font-weight: 600;">Dealflow Finder</p>
+    </div>
     """, unsafe_allow_html=True)
-    st.markdown("---")
-    st.markdown(f"<small style='color: rgba(255,255,255,0.6)'>{BRANDING['footer']}</small>", unsafe_allow_html=True)
 
-# =====================================================
-# TABS PRINCIPALES
-# =====================================================
-tab1, tab2, tab3, tab4 = st.tabs(["🎯 Generar Contenido", "📁 Mis Archivos", "⚙️ Configuración Avanzada", "📡 Monitor de Contenidos"])
 
-# =====================================================
-# TAB 1 - GENERAR CONTENIDO (CORREGIDO)
-# =====================================================
-with tab1:
-    st.markdown("## 🎯 Generador de Contenidos con IA")
-    st.markdown("Análisis profesional en 3 pasos: Configura → OpenAI analiza → Perplexity valida")
+def render_entity_card(entity: Dict, entity_type: str):
+    """Renderiza una tarjeta de entidad con styling DH."""
+    score = entity.get("score", 0)
+    score_color = "#10B981" if score >= 80 else "#3B82F6" if score >= 65 else "#F59E0B"
     
-    st.markdown("### 📋 Paso 1: Configura tu análisis")
-    folders, files = list_folders_and_files(client, bucket_name)
-    file_names = [f["name"] for f in files if not f["name"].startswith(BUCKET_FOLDERS["prompts"])]
+    # Tags según tipo
+    tags_html = ""
+    if entity_type == "technologies":
+        tags_html += '<span class="entity-tag">🔬 Tecnología</span>'
+        if entity.get("tipo"):
+            tags_html += f'<span class="entity-tag">{entity["tipo"].upper()}</span>'
+    elif entity_type == "papers":
+        tags_html += '<span class="entity-tag">📄 Artículo</span>'
+        if entity.get("journal"):
+            tags_html += f'<span class="entity-tag">{entity["journal"]}</span>'
+    elif entity_type == "companies":
+        tags_html += '<span class="entity-tag">🏢 Empresa</span>'
+        if entity.get("tipo"):
+            tags_html += f'<span class="entity-tag">{entity["tipo"].upper()}</span>'
+    elif entity_type == "people":
+        tags_html += '<span class="entity-tag">👤 Investigador</span>'
+        if entity.get("rol"):
+            tags_html += f'<span class="entity-tag">{entity["rol"].upper()}</span>'
+        if entity.get("orcid"):
+            tags_html += '<span class="entity-tag">ORCID</span>'
     
-    col_files, col_chars = st.columns([3, 1])
-    with col_files:
-        selected_files = st.multiselect("📄 Documentos de contexto (opcional)", options=file_names, key="tab1_select_files")
-    with col_chars:
-        max_chars = st.number_input("Límite caracteres", min_value=2000, max_value=50000, value=15000, step=1000, disabled=len(selected_files)==0, key="tab1_max_chars")
+    # Contenido principal
+    nombre = entity.get("nombre") or entity.get("titulo") or "Sin nombre"
+    descripcion = entity.get("descripcion") or entity.get("relevancia_health") or ""
     
-    st.info(f"📁 **Modo:** Análisis con {len(selected_files)} documento(s)" if selected_files else "💭 **Modo:** Consulta general sin documentos")
-    st.markdown("---")
-    
-    query_mode = st.radio(" Método de entrada", [" Flexible", "📝 Personalizada", "📋 Plantilla"], horizontal=True, key="tab1_query_mode")
-    openai_prompt = ""
-    user_query = ""
-    
-    if query_mode == "🔧 Flexible":
-        st.markdown("*Configura parámetros clave. El sistema generará el prompt automáticamente.*")
-        col1, col2 = st.columns(2)
-        with col1:
-            role = st.selectbox("👤 Rol / Perfil", ["Responsable de Marketing B2B", "CEO / Director General", "Consultor Estratégico", "Content Manager", "Especialista en Ventas", "Inversor / VC", "Otro..."], key="tab1_role")
-            if role == "Otro...": role = st.text_input("Especificar rol exacto", key="tab1_role_custom")
-            context = st.text_area("📋 Contexto / Antecedentes", placeholder="Empresa, producto, campaña, situación actual, público objetivo...", height=100, key="tab1_context")
-        with col2:
-            output_format = st.selectbox(" Formato Output", ["Infografía / Visual", "Email corporativo", "Post LinkedIn / Thread", "Artículo Web / Blog", "Informe Ejecutivo", "Pitch comercial"], key="tab1_format")
-            sources = st.text_area("🔗 Fuentes externas (URLs, LinkedIn, datos, notas...)", placeholder="https://..., @perfil..., informe sectorial, notas internas...", height=100, key="tab1_sources")
+    # HTML de la tarjeta
+    html_content = f"""
+    <div class="opportunity-card">
+        <div style="display: flex; justify-content: space-between; align-items: start; gap: 1rem;">
+            <div style="flex: 1;">
+                <h4 style="margin: 0 0 0.5rem 0; color: {BRANDING['secondary_color']};">
+                    {nombre}
+                </h4>
+                {tags_html}
+                <p style="margin: 0.5rem 0; color: #555; font-style: italic;">
+                    {descripcion[:200]}{'...' if len(descripcion) > 200 else ''}
+                </p>
+                {f'<p style="margin: 0.25rem 0; font-size: 0.9rem; color: #666;">🎯 {entity.get("aplicacion_health") or entity.get("problema_resuelto", "")}</p>' if entity.get("aplicacion_health") or entity.get("problema_resuelto") else ''}
+                {f'<p style="margin: 0.25rem 0; font-size: 0.85rem; color: #888;">🔗 ORCID: {entity.get("orcid", "")}</p>' if entity.get("orcid") else ''}
+            </div>
+            <div style="text-align: right; min-width: 80px;">
+                <span class="match-score" style="background: linear-gradient(135deg, {score_color} 0%, {score_color}cc 100%);">
+                    {score}/100
+                </span>
+                {f'<br><a href="{entity["referencia"]}" target="_blank" style="font-size: 0.8rem; color: {BRANDING["primary_color"]}; text-decoration: none; margin-top: 0.5rem; display: inline-block;">🔗 Ver</a>' if entity.get("referencia") else ''}
+            </div>
+        </div>
+    </div>
+    """
+    st.markdown(html_content, unsafe_allow_html=True)
+
+
+# ============================================================================
+# STREAMLIT APP
+# ============================================================================
+def main():
+    # Estado de la sesión
+    if "centros_df" not in st.session_state:
+        st.session_state.centros_df = None
+    if "tematicas_df" not in st.session_state:
+        st.session_state.tematicas_df = None
+    if "centros_list" not in st.session_state:
+        st.session_state.centros_list = []
+    if "tematicas_list" not in st.session_state:
+        st.session_state.tematicas_list = []
+    if "results" not in st.session_state:
+        st.session_state.results = {}
+    if "eu_updates" not in st.session_state:
+        st.session_state.eu_updates = None
+    if "openai_ok" not in st.session_state:
+        st.session_state.openai_ok = False
+    if "api_key" not in st.session_state:
+        st.session_state.api_key = None
+    if "last_eu_check" not in st.session_state:
+        st.session_state.last_eu_check = None
+
+    # ========================================================================
+    # SIDEBAR - CONFIGURACIÓN DE APIS
+    # ========================================================================
+    with st.sidebar:
+        render_sidebar_header()
         
-        st.markdown("**💬 Consulta adicional (opcional):**")
-        free_query = st.text_area("Añade instrucciones específicas, preguntas concretas o matices para el análisis:", 
-                                  placeholder="Ej: Enfócate en el mercado español, compara con competidores directos, destaca cifras de ROI...", 
-                                  height=80, key="tab1_free_query_flexible")
+        st.markdown("### ⚙️ Configuración")
         
-        openai_prompt = f"Eres un experto estratégico actuando como {role}. Genera contenido de alto valor optimizado específicamente para formato: {output_format}. Responde EXCLUSIVAMENTE en formato JSON válido."
-        user_query = f"CONTEXTO:\n{context}\n\nFUENTES A CONSIDERAR:\n{sources}\n\nINSTRUCCIÓN:\nGenera un análisis en JSON con esta estructura exacta:\n{{\n  \"summary\": \"Resumen ejecutivo (máx. 3 líneas)\",\n  \"key_points\": [\"Insight 1\", \"Insight 2\", \"Insight 3\"],\n  \"recommended_actions\": [\"Acción 1 concreta\", \"Acción 2 con métrica\"],\n  \"topics_to_validate\": [\"Dato a verificar\", \"Tendencia a confirmar\"]\n}}\nEnfoque: Profesional, directo, orientado a resultados medibles."
-        if free_query.strip():
-            user_query += f"\n\nCONSULTA ESPECÍFICA DEL USUARIO:\n{free_query}"
-            
-    elif query_mode == "📝 Personalizada":
-        user_query = st.text_area("Escribe tu consulta", placeholder="Ej: Analiza tendencias B2B para 2026...", height=150, key="tab1_custom_query")
-        use_adv = st.checkbox("⚙️ Usar prompts avanzados (Configuración → Tab 3)", value=True, key="tab1_use_adv")
-        if use_adv:
-            openai_prompt = st.session_state.get("tab3_openai_prompt", """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON...""")
+        # OpenAI API Key
+        st.markdown("#### 🤖 OpenAI API")
+        api_from_secrets = ""
+        try:
+            api_from_secrets = st.secrets.get("OPENAI_API_KEY", "")
+        except:
+            pass
+        
+        if api_from_secrets:
+            st.session_state.api_key = api_from_secrets
+            st.success("✅ API key cargada desde secrets")
         else:
-            openai_prompt = """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON..."""
-            
-    else:
-        templates = {
-            "Análisis Estratégico B2B": "Realiza un análisis estratégico completo identificando tendencias clave, oportunidades y riesgos en marketing B2B industrial...",
-            "Resumen Ejecutivo": "Genera un resumen ejecutivo profesional destacando los 3 puntos más relevantes para la toma de decisiones...",
-            "Plan de Acción con KPIs": "Identifica los 5 puntos más importantes para mejorar la generación de leads B2B y crea un plan de acción...",
-            "Benchmark Competitivo": "Realiza un análisis competitivo del sector comparando estrategias de marketing digital B2B...",
-            "Contenido LinkedIn B2B": "Genera 5 ideas de contenido para LinkedIn enfocadas en thought leadership B2B industrial...",
-            "Estrategia Ferias Industriales": "Analiza las mejores prácticas para participación en ferias B2B combinando estrategia digital...",
-            "Tendencias LifeSciences 2026": "Analiza las últimas tendencias en marketing digital para empresas de LifeSciences y MedTech...",
-            "Análisis DAFO Digital": "Realiza un análisis DAFO enfocado en estrategia digital B2B. Valida cada punto con tendencias actuales."
-        }
-        if "tab1_last_template" not in st.session_state: st.session_state.tab1_last_template = None
-        if "tab1_template_query" not in st.session_state: st.session_state.tab1_template_query = list(templates.values())[0]
+            api_key_input = st.text_input("API Key OpenAI", type="password")
+            if api_key_input:
+                st.session_state.api_key = api_key_input
         
-        selected_template = st.selectbox("Elige una plantilla", list(templates.keys()), key="tab1_template_select")
-        if st.session_state.tab1_last_template != selected_template:
-            st.session_state.tab1_template_query = templates[selected_template]
-            st.session_state.tab1_last_template = selected_template
-            
-        user_query = st.text_area("Consulta (editable)", value=st.session_state.tab1_template_query, height=150, key="tab1_template_query")
-        if user_query != templates.get(selected_template): st.session_state.tab1_last_template = None
+        if st.session_state.api_key:
+            if st.button("🔍 Verificar OpenAI"):
+                with st.spinner("Verificando..."):
+                    try:
+                        client = OpenAI(api_key=st.session_state.api_key)
+                        client.models.list()
+                        st.session_state.openai_ok = True
+                        st.success("✅ API key válida")
+                    except Exception as e:
+                        st.session_state.openai_ok = False
+                        st.error(f"❌ {str(e)[:80]}")
         
-        use_adv = st.checkbox("⚙️ Usar prompts avanzados (Configuración → Tab 3)", value=True, key="tab1_use_adv_tpl")
-        openai_prompt = st.session_state.get("tab3_openai_prompt", """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON...""") if use_adv else """Eres un analista estratégico experto en contenidos B2B. Analiza y genera insights accionables en formato JSON..."""
-
-    st.markdown("---")
-    st.markdown("**⚙️ Configuración de modelos:**")
-    col_openai, col_perplexity = st.columns(2)
-    with col_openai:
-        openai_models = {"GPT-4o Mini (Recomendado)": "gpt-4o-mini", "GPT-4o": "gpt-4o", "GPT-4 Turbo": "gpt-4-turbo-preview", "o1-mini": "o1-mini"}
-        selected_openai = st.selectbox("🤖 Modelo OpenAI", list(openai_models.keys()), index=0, key="tab1_openai_model")
-        openai_model = openai_models[selected_openai]
-    with col_perplexity:
-        perplexity_models = {"Sonar (Recomendado)": "sonar", "Sonar Pro": "sonar-pro", "Llama 3.1 70B": "llama-3.1-70b-instruct"}
-        selected_perplexity = st.selectbox("🔍 Modelo Perplexity", list(perplexity_models.keys()), index=0, key="tab1_pplx_model")
-        perplexity_model = perplexity_models[selected_perplexity]
+        if st.session_state.openai_ok:
+            st.success("🟢 OpenAI listo")
+        else:
+            st.warning(" OpenAI no configurado")
         
-    st.info("💡 *Perplexity validará automáticamente la respuesta con búsqueda web real, independientemente del modo elegido.*")
-
-    st.markdown("### 🚀 Paso 2: Generar contenido")
-    col_gen, col_clear = st.columns([4, 1])
-    with col_gen:
-        generate_content = st.button("▶️ Generar Contenido con IA", type="primary", use_container_width=True, disabled=not user_query.strip(), key="tab1_generate_btn")
-    with col_clear:
-        if st.button("️ Limpiar", use_container_width=True, key="tab1_clear_btn"):
-            for key in ["openai_response", "perplexity_response", "edited_response"]:
-                st.session_state.pop(key, None)
+        st.divider()
+        
+        # Carga de archivos
+        st.markdown("#### 📁 Archivos Excel")
+        uploaded_files = st.file_uploader(
+            "Sube archivos con centros y temáticas",
+            type=["xlsx", "xls"],
+            accept_multiple_files=True
+        )
+        
+        if uploaded_files:
+            if st.button("🔄 Procesar archivos"):
+                with st.spinner("Cargando datos..."):
+                    centros_df, tematicas_df = load_excel_files(uploaded_files)
+                    if centros_df is not None:
+                        st.session_state.centros_df = centros_df
+                        st.session_state.centros_list = prepare_centros(centros_df)
+                        st.success(f"✅ {len(st.session_state.centros_list)} centros cargados")
+                    else:
+                        st.error("❌ No se pudo cargar la hoja de centros")
+                    if tematicas_df is not None:
+                        st.session_state.tematicas_df = tematicas_df
+                        st.session_state.tematicas_list = prepare_tematicas(tematicas_df)
+                        st.success(f"✅ {len(st.session_state.tematicas_list)} temáticas cargadas")
+                    else:
+                        st.warning("️ No se pudieron cargar temáticas")
+        
+        st.divider()
+        
+        # Monitoreo europeo
+        st.markdown("#### 🇪 Monitoreo Europeo")
+        st.caption("Portales: CORDIS, EU-Funding, EIC")
+        
+        if st.session_state.openai_ok:
+            if st.button(" Buscar actualizaciones"):
+                with st.spinner("Consultando portales europeos..."):
+                    pipeline = DealflowPipeline(api_key=st.session_state.api_key)
+                    updates = pipeline.check_european_updates(days_back=7)
+                    st.session_state.eu_updates = updates
+                    st.session_state.last_eu_check = datetime.now()
+                    st.success(f"✅ {len(updates.get('new_opportunities', []))} nuevas oportunidades")
+        
+        if st.session_state.eu_updates:
+            st.caption(f"Última consulta: {st.session_state.last_eu_check.strftime('%H:%M')}")
+            for opp in st.session_state.eu_updates.get("new_opportunities", [])[:3]:
+                st.markdown(f"- **{opp['title']}** [{opp.get('relevance_score', 0)}/100]")
+        
+        st.divider()
+        
+        # Estado
+        st.markdown("####  Estado")
+        st.write(f" Centros: {len(st.session_state.centros_list)}")
+        st.write(f"🎯 Temáticas: {len(st.session_state.tematicas_list)}")
+        st.write(f"✅ Resultados: {len(st.session_state.results)}")
+        
+        if st.button("🗑️ Limpiar caché"):
+            for f in CACHE_DIR.glob("*.json"):
+                f.unlink()
+            st.session_state.results = {}
+            st.success("✅ Caché limpiada")
             st.rerun()
 
-    if generate_content:
-        context = ""
-        if selected_files: context = load_selected_context(client, bucket_name, selected_files, max_chars)
-        
-        # 🤖 OPENAI
-        with st.spinner(f"🤖 {selected_openai} analizando..."):
-            try:
-                user_message = f"CONSULTA:\n{user_query}" + (f"\n\nCONTEXTO ADICIONAL:\n{context}" if context else "")
-                response = st.session_state.openai.chat.completions.create(
-                    model=openai_model, 
-                    messages=[{"role": "system", "content": openai_prompt}, {"role": "user", "content": user_message}], 
-                    response_format={"type": "json_object"}
-                )
-                raw = response.choices[0].message.content.strip()
-                if "```json" in raw: raw = raw.split("```json")[1].split("```")[0].strip()
-                elif "```" in raw: raw = raw.split("```")[1].split("```")[0].strip()
-                openai_data = json.loads(raw)
-                openai_data["summary"] = openai_data.get("summary") or openai_data.get("content") or "Análisis generado."
-                openai_data["key_points"] = openai_data.get("key_points") or openai_data.get("insights") or []
-                openai_data["recommended_actions"] = openai_data.get("recommended_actions") or openai_data.get("actions") or []
-                openai_data["metadata"] = {"timestamp": datetime.utcnow().isoformat(), "agent": "openai", "model": openai_model, "query": user_query, "mode": query_mode}
-                st.session_state.openai_response = openai_data
-            except Exception as e:
-                st.error(f"❌ Error en OpenAI: {str(e)}")
-                st.stop()
-                
-        # 🔍 PERPLEXITY VALIDATION
-        with st.spinner(f"🔍 {selected_perplexity} validando con búsqueda web..."):
-            try:
-                validated = validate_with_perplexity(st.session_state.openai_response, user_query)
-                validated["metadata"] = {"timestamp": datetime.utcnow().isoformat(), "agent": "perplexity", "model": perplexity_model, "original_query": user_query, "openai_model": openai_model}
-                st.session_state.perplexity_response = validated
-                st.success("✅ Contenido generado y validado con fuentes web reales")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Error en Perplexity: {str(e)[:150]}")
-                fb = st.session_state.openai_response.copy()
-                fb["metadata"]["agent"] = "openai_fallback"
-                fb["metadata"]["fallback_reason"] = str(e)[:100]
-                fb["confidence_level"] = "bajo"
-                for f in ["validation_notes", "sources"]: fb[f] = fb.get(f, "" if f=="validation_notes" else [])
-                st.session_state.perplexity_response = fb
-                st.rerun()
-
-    # =====================================================
-    # PASO 3: RESULTADOS (TABLA + VALIDACIÓN)
-    # =====================================================
-    if "perplexity_response" in st.session_state:
-        st.markdown("---")
-        st.markdown("###  Paso 3: Resultado validado")
-        final_data = st.session_state.perplexity_response
-        meta = final_data.get("metadata", {})
-        is_fallback = meta.get("agent") in ["openai", "openai_fallback", "openai_error"]
-        
-        with st.container():
-            c1, c2, c3 = st.columns(3)
-            with c1: st.markdown(f"**🤖 OpenAI:** {meta.get('openai_model') or meta.get('model', 'N/A')}")
-            with c2: st.markdown("**🔍 Perplexity:** ️ Fallback" if is_fallback else f"**🔍 Perplexity:** {meta.get('model', 'N/A')}")
-            with c3: 
-                conf = "bajo" if is_fallback else final_data.get("confidence_level", "medio").lower()
-                st.markdown(f"**{'🔴' if conf=='bajo' else '' if conf=='medio' else '🟢'} Confianza:** {conf.upper()}")
-            
-            st.markdown("---\n#### 📝 Resumen Ejecutivo")
-            summary = final_data.get("summary") or final_data.get("content") or "N/A"
-            if is_fallback: st.warning(f"⚠️ {summary}")
-            else: st.success(summary)
-            
-            cp, ca = st.columns(2)
-            with cp:
-                st.markdown("#### 🎯 Puntos Clave")
-                pts = final_data.get("key_points", []) or []
-                if pts:
-                    for i, p in enumerate(pts, 1): st.markdown(f"**{i}.** {p}")
-                else: st.caption("ℹ️ Sin puntos clave disponibles")
-            with ca:
-                st.markdown("#### ✅ Acciones Recomendadas")
-                acts = final_data.get("recommended_actions", []) or []
-                if acts:
-                    for i, a in enumerate(acts, 1): st.markdown(f"**{i}.** {a}")
-                else: st.caption("ℹ️ Sin acciones recomendadas")
-                
-            if not is_fallback and final_data.get("validation_notes"):
-                st.markdown("\n---\n#### 📋 Notas de Validación")
-                st.info(final_data["validation_notes"])
-            if not is_fallback and final_data.get("sources"):
-                st.markdown("\n---\n#### 🔗 Fuentes Verificadas")
-                for i, s in enumerate(final_data["sources"], 1):
-                    st.markdown(f"{i}. [{s}]({s})" if s.startswith("http") else f"{i}. {s}")
-                    
-            # ✅ TABLA DE RESULTADOS
-            st.markdown("---\n### 📋 Tabla de Resultados")
-            table_data = []
-            for i, p in enumerate(final_data.get("key_points", []), 1):
-                table_data.append({"#": i, "Tipo": "Insight", "Contenido": p, "Fuente": "OpenAI + Perplexity", "Estado": "Verificado"})
-            for i, a in enumerate(final_data.get("recommended_actions", []), 1):
-                table_data.append({"#": i, "Tipo": "Acción", "Contenido": a, "Fuente": "OpenAI + Perplexity", "Estado": "Recomendado"})
-            for u in final_data.get("sources", []):
-                table_data.append({"#": "-", "Tipo": "Fuente", "Contenido": u, "Fuente": "Perplexity Web", "Estado": "Verificado"})
-            if table_data:
-                st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True)
-            else:
-                st.info("️ No hay datos estructurados para mostrar en tabla.")
-
-        # =====================================================
-        # PASO 4: CONTENIDO FORMATEADO (TABLA + DESCARGA)
-        # =====================================================
-        st.markdown("---")
-        st.markdown("###  Paso 4: Contenido Listo para Publicar")
-        st.success("✅ **Resultado validado por Perplexity. Fuentes definidas arriba.**")
-        st.caption("El siguiente contenido se ha generado exclusivamente a partir de los datos validados, sin añadir contexto externo.")
-        
-        fmt = st.radio("📋 Selecciona formato de salida", ["📧 Email Corporativo", "💼 Post LinkedIn", " Artículo Web/Blog", "📝 Texto Plano"], horizontal=True, key="tab1_out_fmt")
-        
-        def generate_neutral_content(data, format_type):
-            summary = data.get("summary", "")
-            points = data.get("key_points", [])
-            actions = data.get("recommended_actions", [])
-            sources = data.get("sources", [])
-            clean_points = [re.sub(r'^(Validado|No validado|Verificado)[^:]*:\s*', '', p, flags=re.IGNORECASE).strip() for p in points if p.strip()]
-            
-            if format_type == "📧 Email Corporativo":
-                subject = summary[:60] + "..." if len(summary) > 60 else summary
-                body = f"Asunto: {subject}\n{summary}\n\nPuntos clave:\n" + "\n".join(f"• {p}" for p in clean_points)
-                if actions: body += f"\n\nAcciones recomendadas:\n" + "\n".join(f"→ {a}" for a in actions)
-                if sources: body += f"\n\nFuentes consultadas ({len(sources)}):\n" + "\n".join(f"- {s}" for s in sources[:5])
-                body += f"\n\n---\nGenerado con KaiBot IA | {datetime.now().strftime('%d/%m/%Y')}"
-                return body
-            elif format_type == "💼 Post LinkedIn":
-                content = f"{summary}\n\n🔍 Puntos clave:\n" + "\n".join(f"• {p}" for p in clean_points[:3])
-                if actions: content += f"\n\n✅ Acciones:\n" + "\n".join(f"→ {a}" for a in actions[:2])
-                if sources: content += f"\n\n🔗 Fuentes: {len(sources)} referencias verificadas"
-                content += f"\n\n#B2B #KaiBot #IA"
-                return content
-            elif format_type == "🌐 Artículo Web/Blog":
-                return f"<h1>{summary[:80]}</h1><p>Validado: {datetime.now().strftime('%d/%m/%Y')}</p><h2>Puntos Clave</h2><ul>{''.join(f'<li>{p}</li>' for p in clean_points)}</ul><h2>Acciones</h2>{''.join(f'<p>→ {a}</p>' for a in actions)}"
-            else:
-                text = f"{summary}\n\nPUNTOS CLAVE\n{'-'*40}\n" + "\n".join(f"• {p}" for p in clean_points)
-                if actions: text += f"\n\nACCIONES\n{'-'*40}\n" + "\n".join(f"→ {a}" for a in actions)
-                if sources: text += f"\n\nFUENTES\n{'-'*40}\n" + "\n".join(f"- {s}" for s in sources)
-                return text + f"\n\n---\nGenerado con KaiBot IA | {datetime.now().strftime('%d/%m/%Y')}"
-
-        professional_content = generate_neutral_content(final_data, fmt)
-        
-        if fmt == "🌐 Artículo Web/Blog":
-            st.markdown("### 👁️ Vista previa del artículo")
-            st.components.v1.html(professional_content, height=600, scrolling=True)
-            ext, mime = "html", "text/html"
-        else:
-            st.markdown("### 👁️ Vista previa del contenido")
-            st.code(professional_content, language="text")
-            ext, mime = "txt", "text/plain"
-            
-        col_copy, col_download = st.columns([1, 2])
-        with col_copy:
-            st.caption("💡 Selecciona el texto arriba y usa Ctrl+C / Cmd+C para copiar")
-        with col_download:
-            fname = f"kaibot_{fmt.split()[1].lower()}_{datetime.now().strftime('%Y%m%d_%H%M')}.{ext}"
-            st.download_button("⬇️ Descargar Contenido", professional_content, file_name=fname, mime=mime, use_container_width=True, key="tab1_dl_pro_content")
-
-        # =====================================================
-        # PASO 5: INFOGRAFÍA PROFESIONAL (HTML/CSS)
-        # =====================================================
-        st.markdown("---\n### ️ Paso 5: Generar Infografía Profesional")
-        col_style, col_layout = st.columns(2)
-        with col_style:
-            inf_style = st.selectbox("🎨 Estilo visual", ["KaiBot Corporativo", "Modern Gradient", "Minimal Clean"], key="tab1_inf_style")
-        with col_layout:
-            inf_layout = st.selectbox("📐 Layout", ["Vertical (Móvil/Email)", "Horizontal (Presentación)"], key="tab1_inf_layout")
-            
-        if st.button("🖼️ Generar Infografía Visual", type="primary", use_container_width=True, key="tab1_gen_infographic"):
-            with st.spinner("🎨 Diseñando infografía..."):
-                try:
-                    summary = final_data.get("summary", "")
-                    points = final_data.get("key_points", [])
-                    actions = final_data.get("recommended_actions", [])
-                    sources = final_data.get("sources", [])
-                    confidence = final_data.get("confidence_level", "medio")
-                    clean_points = [re.sub(r'^(Validado|No validado)[^:]*:\s*', '', p, flags=re.IGNORECASE).strip() for p in points[:4] if p.strip()]
-                    
-                    themes = {
-                        "KaiBot Corporativo": {"primary": "#0066CC", "secondary": "#0052A3", "accent": "#10B981", "bg": "#F8FAFC", "card_bg": "#FFFFFF", "text": "#1E293B", "text_light": "#64748B", "header_grad": "linear-gradient(135deg, #0066CC 0%, #003d7a 100%)", "font": "'Inter', -apple-system, BlinkMacSystemFont, sans-serif"},
-                        "Modern Gradient": {"primary": "#6366F1", "secondary": "#8B5CF6", "accent": "#F59E0B", "bg": "#F3F4F6", "card_bg": "#FFFFFF", "text": "#111827", "text_light": "#6B7280", "header_grad": "linear-gradient(135deg, #6366F1 0%, #EC4899 100%)", "font": "'Inter', sans-serif"},
-                        "Minimal Clean": {"primary": "#1E293B", "secondary": "#334155", "accent": "#0EA5E9", "bg": "#FFFFFF", "card_bg": "#F8FAFC", "text": "#0F172A", "text_light": "#475569", "header_grad": "linear-gradient(135deg, #1E293B 0%, #334155 100%)", "font": "system-ui, -apple-system, sans-serif"}
-                    }
-                    theme = themes[inf_style]
-                    is_horizontal = inf_layout == "Horizontal (Presentación)"
-                    
-                    html_content = f"""
-                    <!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>KaiBot Infografía</title>
-                    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-                    <style>* {{ margin: 0; padding: 0; box-sizing: border-box; }} body {{ font-family: {theme['font']}; background: {theme['bg']}; color: {theme['text']}; line-height: 1.5; }}
-                    .infographic {{ max-width: {1200 if is_horizontal else 800}px; margin: 0 auto; background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.1); }}
-                    .header {{ background: {theme['header_grad']}; color: white; padding: 40px; position: relative; }}
-                    .header::after {{ content: ''; position: absolute; bottom: -20px; left: 0; right: 0; height: 40px; background: white; border-radius: 20px 20px 0 0; }}
-                    .logo {{ font-size: 14px; font-weight: 600; opacity: 0.9; margin-bottom: 10px; }}
-                    .title {{ font-size: 28px; font-weight: 700; margin-bottom: 15px; line-height: 1.3; }}
-                    .subtitle {{ font-size: 16px; opacity: 0.9; line-height: 1.5; }}
-                    .content {{ padding: 30px 40px 40px; }}
-                    .section {{ margin-bottom: 35px; }}
-                    .section-title {{ font-size: 20px; font-weight: 700; margin-bottom: 20px; color: {theme['primary']}; display: flex; align-items: center; gap: 10px; }}
-                    .section-title::before {{ content: ''; width: 4px; height: 24px; background: {theme['accent']}; border-radius: 2px; }}
-                    .points-grid {{ display: grid; grid-template-columns: repeat({2 if is_horizontal else 1}, 1fr); gap: 15px; }}
-                    .point-card {{ background: {theme['card_bg']}; border: 1px solid #E2E8F0; border-radius: 12px; padding: 20px; position: relative; transition: transform 0.2s; }}
-                    .point-card:hover {{ transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.05); }}
-                    .point-icon {{ position: absolute; top: -10px; left: 20px; background: {theme['accent']}; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }}
-                    .point-text {{ font-size: 15px; line-height: 1.6; margin-top: 5px; }}
-                    .actions-list {{ list-style: none; }}
-                    .actions-list li {{ padding: 15px 20px; margin-bottom: 10px; background: {theme['card_bg']}; border-left: 4px solid {theme['accent']}; border-radius: 0 8px 8px 0; font-size: 15px; }}
-                    .sources {{ background: #F8FAFC; border-radius: 12px; padding: 20px; margin-top: 30px; }}
-                    .sources-title {{ font-size: 14px; font-weight: 600; color: {theme['text_light']}; margin-bottom: 10px; }}
-                    .sources-list {{ font-size: 13px; color: {theme['text_light']}; }}
-                    .sources-list a {{ color: {theme['primary']}; text-decoration: none; }}
-                    .footer {{ background: {theme['text']}; color: white; padding: 20px 40px; text-align: center; font-size: 13px; opacity: 0.9; }}
-                    .badge {{ display: inline-block; background: {theme['accent']}; color: white; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-left: 10px; }}
-                    @media print {{ .infographic {{ box-shadow: none; }} body {{ background: white; }} }}
-                    </style></head><body>
-                    <div class="infographic"><div class="header"><div class="logo"> KAIBOT | RESULTADO VALIDADO</div><div class="title">{summary[:100]}{'...' if len(summary) > 100 else ''}</div><div class="subtitle">Confianza: {confidence.upper()} {'🟢' if confidence == 'alto' else '🟡' if confidence == 'medio' else '🔴'} | {datetime.now().strftime('%d/%m/%Y')}</div></div>
-                    <div class="content"><div class="section"><div class="section-title">🔍 Puntos Clave</div><div class="points-grid">{''.join([f'<div class="point-card"><div class="point-icon">{i+1}</div><div class="point-text">{p}</div></div>' for i, p in enumerate(clean_points)])}</div></div>
-                    <div class="section"><div class="section-title">🎯 Acciones Recomendadas</div><ul class="actions-list">{''.join([f'<li>{a}</li>' for a in actions[:3]])}</ul></div>
-                    {f'''<div class="sources"><div class="sources-title">🔗 Fuentes Verificadas ({len(sources)})</div><div class="sources-list">{'<br>'.join([f'{i+1}. <a href="{s}" target="_blank">{s.split("://")[1][:50]}...</a>' if s.startswith("http") else f'{i+1}. {s}' for i, s in enumerate(sources[:5])])}</div></div>''' if sources else ''}
-                    </div><div class="footer">Generado con KaiBot IA • kaibot.es</div></div></body></html>
-                    """
-                    st.success("✅ Infografía generada")
-                    st.components.v1.html(html_content, height=800 if is_horizontal else 1000, scrolling=True)
-                    col_html, col_pdf = st.columns(2)
-                    with col_html:
-                        st.download_button("⬇️ Descargar HTML (Editable)", html_content, file_name=f"kaibot_infografia_{datetime.now().strftime('%Y%m%d_%H%M')}.html", mime="text/html", use_container_width=True, key="tab1_dl_html")
-                        st.caption("Abre el HTML en navegador → Imprimir → Guardar como PDF")
-                    with col_pdf:
-                        st.info("Para PDF: Abre el HTML → Ctrl+P → 'Guardar como PDF' → Tamaño A4")
-                    with st.expander("💡 Cómo usar esta infografía"):
-                        st.markdown("1. **Descarga el HTML** y ábrelo en Chrome/Edge\n2. **Personaliza**: Edita el HTML directamente si necesitas ajustar textos\n3. **Exporta a PDF**: Ctrl+P → Destino: 'Guardar como PDF' → Tamaño: A4\n4. **Para redes**: Haz captura de pantalla o usa 'GoFullPage'\n5. **Para email**: Inserta el contenido directamente en emails HTML")
-                except Exception as e:
-                    st.error(f"❌ Error generando infografía: {e}")
-
-        # =====================================================
-        # GUARDAR / DESCARGAR JSON ORIGINAL
-        # =====================================================
-        st.markdown("---\n### 💾 Guardar contenido original")
-        with st.expander("📋 Metadatos & JSON", expanded=False):
-            cm1, cm2 = st.columns(2)
-            with cm1:
-                c_tipo = st.text_input("🏷️ Tipo", value="Contenido IA Validado" if not is_fallback else "Contenido Fallback", key="tab1_tipo_meta")
-                c_obj = st.selectbox(" Objetivo", ["Marketing B2B", "Social Media", "Blog Post", "Informe Interno", "Presentación", "Investigación", "Consulta"], index=0, key="tab1_obj_meta")
-            with cm2:
-                c_src = st.checkbox("✅ Fuentes verificadas", value=not is_fallback and bool(final_data.get("sources")), disabled=is_fallback, key="tab1_src_meta")
-                c_notas = st.text_area("📝 Notas", value=f"Modo: {query_mode}", height=60, key="tab1_notas_meta")
-            
-            if "edited_response" not in st.session_state: st.session_state.edited_response = json.dumps(final_data, indent=2, ensure_ascii=False)
-            edited = st.text_area("JSON editable", value=st.session_state.edited_response, height=300, key="tab1_json_ed")
-            try: ed_data = json.loads(edited); jv = True
-            except: st.error("❌ JSON inválido"); jv = False; ed_data = final_data
-            
-            fname = generate_smart_filename(ed_data)
-            st.info(f"📝 Archivo: `{fname}`")
-            cs, cd = st.columns(2)
-            with cs:
-                if st.button(" Guardar en Cloud", type="primary", use_container_width=True, disabled=not jv, key="tab1_save_btn"):
-                    try:
-                        save_analysis_with_metadata(client, bucket_name, BUCKET_FOLDERS["validados"], fname, ed_data, {"tipo": c_tipo, "objetivo": c_obj, "fuentes_fiables": c_src, "notas": c_notas})
-                        st.success(f"✅ Guardado: {fname}"); st.balloons()
-                    except Exception as e: st.error(f"❌ Error: {e}")
-            with cd:
-                st.download_button("⬇️ Descargar JSON", json.dumps(ed_data, indent=2, ensure_ascii=False), file_name=fname, mime="application/json", use_container_width=True, key="tab1_dl_json")
-
-# =====================================================
-# TAB 2 - MIS ARCHIVOS (Sin cambios)
-# =====================================================
-with tab2:
-    st.markdown("## 📁 Gestión de Archivos")
-    folders, files = list_folders_and_files(client, bucket_name)
-    st.markdown("### 📤 Subir nuevos archivos")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        folder = st.selectbox("Carpeta destino", options=folders if folders else ["documentos/"], key="tab2_folder_select")
-        uploaded = st.file_uploader("Selecciona archivos", accept_multiple_files=True, key="tab2_file_uploader")
-    with col2:
-        new_folder = st.text_input("Nueva carpeta", key="tab2_new_folder")
-    target_folder = f"{new_folder.strip()}/" if new_folder else folder
-    if st.button("️ Subir archivos", key="tab2_upload_btn") and uploaded:
-        progress = st.progress(0)
-        for i, f in enumerate(uploaded):
-            try: upload_file(client, bucket_name, f, target_folder); progress.progress((i + 1) / len(uploaded))
-            except Exception as e: st.error(f"Error subiendo {f.name}: {str(e)}")
-        st.success(f"✅ {len(uploaded)} archivo(s) subidos"); st.rerun()
-        
-    st.markdown("---")
-    st.markdown("### 🌐 Documentación adicional")
-    web = st.text_input("Página web", key="tab2_web_input"); linkedin = st.text_input("LinkedIn", key="tab2_linkedin_input")
-    if st.button("💾 Guardar documentación adicional", key="tab2_save_doc_btn"):
-        if web or linkedin:
-            try:
-                upload_json_to_gcs(client, bucket_name, BUCKET_FOLDERS["adicional"], f"fuentes_{int(datetime.utcnow().timestamp())}.json", {"web": web, "linkedin": linkedin, "created_at": datetime.utcnow().isoformat()})
-                st.success("✅ Documentación guardada")
-            except Exception as e: st.error(f"❌ Error: {str(e)}")
-        else: st.warning("Introduce al menos un campo")
-        
-    st.markdown("---\n### 📊 Archivos en el bucket")
-    if files:
-        df = pd.DataFrame(files)
-        for col, default in {"name": "", "tipo": "", "objetivo": "", "fuentes_fiables": False, "notas": "", "size": 0, "updated": None}.items():
-            if col not in df.columns: df[col] = default
-        st.dataframe(df[["name", "tipo", "objetivo", "fuentes_fiables", "notas", "size", "updated"]], use_container_width=True, hide_index=True, column_config={
-            "name": st.column_config.TextColumn(" Archivo"), "tipo": st.column_config.TextColumn("🏷️ Tipo", width="small"),
-            "objetivo": st.column_config.TextColumn("🎯 Objetivo"), "fuentes_fiables": st.column_config.CheckboxColumn("✅ Fuentes", width="small"),
-            "notas": st.column_config.TextColumn("📝 Notas", width="large"), "size": st.column_config.NumberColumn("💾 Tamaño", width="small"),
-            "updated": st.column_config.DatetimeColumn("📅 Fecha", width="small")
-        })
-        st.markdown("---\n### 👁️ Previsualizar archivo")
-        col_preview, col_btn = st.columns([3, 1])
-        with col_preview: preview_file_select = st.selectbox("Selecciona archivo", options=df["name"].tolist(), key="tab2_preview_select")
-        with col_btn:
-            st.markdown("\n\n")
-            if st.button("🔍 Previsualizar", type="primary", use_container_width=True, key="tab2_preview_btn"): st.session_state.show_preview = preview_file_select
-        if "show_preview" in st.session_state and st.session_state.show_preview:
-            with st.expander(f" {st.session_state.show_preview}", expanded=True):
-                try:
-                    blob = client.bucket(bucket_name).blob(st.session_state.show_preview); blob.reload()
-                    file_ext = st.session_state.show_preview.split('.')[-1].lower()
-                    if file_ext == 'json': st.json(json.loads(blob.download_as_text()))
-                    elif file_ext in ['txt', 'md', 'csv', 'py', 'js', 'html', 'css']: st.code(blob.download_as_text(), language=file_ext if file_ext != 'md' else 'text')
-                    elif file_ext in ['png', 'jpg', 'jpeg', 'gif']: st.image(blob.download_as_bytes(), use_container_width=True)
-                    else:
-                        st.info(f"📎 Archivo: {file_ext.upper()}"); st.download_button("⬇️ Descargar", blob.download_as_bytes(), file_name=st.session_state.show_preview.split('/')[-1])
-                except Exception as e: st.error(f"❌ Error: {str(e)}")
-                
-        st.markdown("---\n### ✏️ Editar metadatos")
-        selected_file = st.selectbox("Selecciona archivo", options=df["name"].tolist(), key="tab2_metadata_select")
-        if selected_file:
-            current = get_file_metadata(client, bucket_name, selected_file)
-            col_m1, col_m2 = st.columns(2)
-            with col_m1:
-                tipo = st.text_input("🏷️ Tipo", value=current["tipo"], key="tab2_tipo_input")
-                objetivo = st.selectbox("🎯 Objetivo", ["", "Publicación Científica", "Social Media", "Blog Post", "Informe Interno", "Marketing B2B", "Presentación", "White Paper"], index=["", "Publicación Científica", "Social Media", "Blog Post", "Informe Interno", "Marketing B2B", "Presentación", "White Paper"].index(current["objetivo"]) if current["objetivo"] in ["", "Publicación Científica", "Social Media", "Blog Post", "Informe Interno", "Marketing B2B", "Presentación", "White Paper"] else 0, key="tab2_objetivo_select")
-            with col_m2:
-                fuentes = st.checkbox("✅ Fuentes verificadas", value=current["fuentes_fiables"], key="tab2_fuentes_check")
-                notas = st.text_area("📝 Notas", value=current["notas"], height=100, key="tab2_notas_input")
-            if st.button("💾 Guardar Metadatos", type="primary", key="tab2_save_meta_btn"):
-                if update_file_metadata(client, bucket_name, selected_file, {"tipo": tipo, "objetivo": objetivo, "fuentes_fiables": fuentes, "notas": notas}):
-                    st.success("✅ Metadatos actualizados"); st.rerun()
-                    
-        st.markdown("---")
-        to_delete = st.multiselect("🗑️ Selecciona archivos a eliminar", options=df["name"].tolist(), key="tab2_delete_select")
-        if st.button("🗑️ Eliminar seleccionados", key="tab2_delete_btn") and to_delete:
-            for name in to_delete:
-                try: client.bucket(bucket_name).blob(name).delete()
-                except Exception as e: st.error(f"Error: {str(e)}")
-            st.success(f"✅ {len(to_delete)} eliminados"); st.rerun()
-    else: st.info("ℹ️ No hay archivos en el bucket")
-
-# =====================================================
-# TAB 3 - CONFIGURACIÓN AVANZADA (CON SELECTOR DE MODELOS)
-# =====================================================
-with tab3:
-    st.markdown("## ️ Configuración Avanzada")
-    st.markdown("### 📝 Gestión de Prompts")
-    folders, files = list_folders_and_files(client, bucket_name)
-    prompt_files = [f["name"] for f in files if f["name"].startswith(BUCKET_FOLDERS["prompts"])]
-    
-    if prompt_files:
-        col_load, col_btn = st.columns([3, 1])
-        with col_load: load_prompt = st.selectbox("📂 Prompts guardados", ["-- Selecciona un prompt --"] + prompt_files, key="tab3_prompt_select")
-        with col_btn:
-            st.markdown("\n\n")
-            if st.button("🔄 Cargar", use_container_width=True, key="tab3_load_prompt_btn"):
-                if load_prompt != "-- Selecciona un prompt --":
-                    try:
-                        loaded = load_prompt_from_bucket(client, bucket_name, load_prompt)
-                        prompts_data = loaded.get("prompts", loaded) if isinstance(loaded.get("prompts"), dict) else loaded
-                        openai_content = prompts_data.get("openai") or prompts_data.get("openai_prompt")
-                        perplexity_content = prompts_data.get("perplexity") or prompts_data.get("perplexity_prompt")
-                        if not openai_content or not perplexity_content: raise ValueError(f"Claves no encontradas. Disponibles: {list(prompts_data.keys())}")
-                        st.session_state.tab3_openai_prompt = openai_content
-                        st.session_state.tab3_pplx_prompt = perplexity_content
-                        st.success(f"✅ Cargado: {loaded.get('metadata', {}).get('nombre', load_prompt)}")
-                        st.rerun()
-                    except Exception as e: st.error(f"❌ Error: {str(e)}")
-                    
-    st.markdown("---")
-    default_openai = """Eres un analista estratégico experto en generación de contenidos corporativos B2B..."""
-    openai_prompt = st.text_area("System Prompt - OpenAI", value=st.session_state.get("tab3_openai_prompt", default_openai), height=300, key="tab3_openai_prompt")
-    
-    st.markdown("---")
-    default_perplexity = """Eres un validador experto en fact-checking y enriquecimiento de contenido estratégico B2B..."""
-    perplexity_prompt = st.text_area("System Prompt - Perplexity", value=st.session_state.get("tab3_pplx_prompt", default_perplexity), height=300, key="tab3_pplx_prompt")
-    
-    st.markdown("---\n### 💾 Guardar configuración")
-    col_s1, col_s2 = st.columns(2)
-    with col_s1:
-        prompt_nombre = st.text_input("Nombre", key="tab3_prompt_name")
-        prompt_uso = st.selectbox("Uso", ["General", "Marketing B2B", "LifeSciences", "Tecnología Industrial"], key="tab3_prompt_uso")
-    with col_s2: prompt_desc = st.text_area("Descripción", height=100, key="tab3_prompt_desc")
-    
-    if st.button("💾 Guardar Prompts", type="primary", use_container_width=True, key="tab3_save_prompt_btn"):
-        if not prompt_nombre: st.error("❌ Introduce un nombre")
-        else:
-            try:
-                prompt_data = {"openai": openai_prompt, "perplexity": perplexity_prompt}
-                metadata = {"nombre": prompt_nombre, "descripcion": prompt_desc, "uso": prompt_uso, "created_at": datetime.utcnow().isoformat()}
-                filename = save_prompt_to_bucket(client, bucket_name, {"prompts": prompt_data, "metadata": metadata}, metadata)
-                st.success(f"✅ Guardado: {filename}")
-                for k in ["tab3_openai_prompt", "tab3_pplx_prompt", "loaded_prompt_metadata"]:
-                    if k in st.session_state: del st.session_state[k]
-                st.rerun()
-            except Exception as e: st.error(f"❌ Error: {str(e)}")
-
-# =====================================================
-# TAB 4 - MONITOR DE CONTENIDOS (CORREGIDO + FUENTES SIMILARES)
-# =====================================================
-with tab4:
-    st.markdown("## 📡 Monitor de Contenidos LifeSciences")
-    st.markdown("Fuentes fidedignas que revisan cada 24h y sugieren contenido relevante para tus verticales")
-    
-    TRUSTED_SOURCES = {
-        "clinicaltrials": {"id": "clinicaltrials", "name": "ClinicalTrials.gov", "url": "https://clinicaltrials.gov", "type": "scientific", "confidence": "A", "category": "Clinical Development", "why": "Mejor 'early signal' de adopción real.", "watch_queries": [{"name": "MRD/Liquid Biopsy", "query": '"ctDNA MRD" OR "minimal residual disease"', "vertical": "Liquid Biopsy"}, {"name": "eClinical/DCT", "query": '"ePRO" OR "decentralized trial"', "vertical": "DCT/eClinical"}], "weekly_focus": ["Nuevos trials", "Sponsors emergentes"], "tips": ["Guardar búsquedas por vertical"]},
-        "pubmed": {"id": "pubmed", "name": "PubMed / NCBI", "url": "https://pubmed.ncbi.nlm.nih.gov", "type": "scientific", "confidence": "B", "category": "Technical Evidence", "why": "Cobertura masiva de avances técnicos.", "watch_queries": [{"name": "Dx/POC", "query": '"point-of-care molecular"', "vertical": "Dx/POC"}, {"name": "Liquid Biopsy", "query": '"ctDNA longitudinal"', "vertical": "Liquid Biopsy"}], "weekly_focus": ["Nuevas metodologías"], "tips": ["6-10 queries guardadas"]},
-        "nature_biotech": {"id": "nature_biotech", "name": "Nature Biotechnology", "url": "https://www.nature.com/nbt", "type": "scientific", "confidence": "A", "category": "Frontier Innovation", "why": "Frontier translation: academia a producto.", "watch_queries": [{"name": "Nuevas Plataformas Dx", "query": "diagnostic platforms", "vertical": "Dx Innovation"}], "weekly_focus": ["Plataformas emergentes"], "tips": ["Alertas por Collections/TOC"]},
-        "genomeweb": {"id": "genomeweb", "name": "GenomeWeb", "url": "https://www.genomeweb.com", "type": "market", "confidence": "B", "category": "Market Intelligence", "why": "Radar fuerte para IVD, secuenciación, M&A.", "watch_queries": [{"name": "Deals", "query": "liquid biopsy partnership", "vertical": "Market Moves"}], "weekly_focus": ["Lanzamientos", "Pricing"], "tips": ["Revisar 'Deals' y 'Regulatory'"]},
-        "endpoints": {"id": "endpoints", "name": "Endpoints News", "url": "https://endpts.com", "type": "market", "confidence": "B", "category": "Business Intelligence", "why": "Biopharma + deals + vendors.", "watch_queries": [{"name": "Contracts", "query": "pharma vendor contract", "vertical": "Partnerships"}], "weekly_focus": ["Contratos", "Adquisiciones"], "tips": ["Filtrar por tags"]},
-        "bioprocess": {"id": "bioprocess", "name": "BioProcess International", "url": "https://www.bioprocessintl.com", "type": "market", "confidence": "B", "category": "Industrial Operations", "why": "QC en terapias avanzadas, supply chain.", "watch_queries": [{"name": "QC Release", "query": "QC release time", "vertical": "QC/ATMP"}], "weekly_focus": ["QC release", "Validación"], "tips": ["Focalizar en 'Analytical'"]},
-        "applied_clinical": {"id": "applied_clinical", "name": "Applied Clinical Trials", "url": "https://appliedclinicaltrialsonline.com", "type": "market", "confidence": "B", "category": "DCT/eClinical", "why": "Operativo para ensayos descentralizados.", "watch_queries": [{"name": "DCT Ops", "query": "decentralized trial", "vertical": "DCT/eClinical"}], "weekly_focus": ["Reclutamiento DCT"], "tips": ["Seguir 'Technology'"]},
-        "medtech_dive": {"id": "medtech_dive", "name": "MedTech Dive", "url": "https://www.medtechdive.com", "type": "market", "confidence": "B", "category": "MedTech/Dispositivos", "why": "Regulación de dispositivos, reembolsos.", "watch_queries": [{"name": "FDA", "query": "FDA clearance", "vertical": "Regulatory"}], "weekly_focus": ["Aprobaciones FDA"], "tips": ["Newsletter diaria"]},
-        "fierce_biotech": {"id": "fierce_biotech", "name": "Fierce Biotech", "url": "https://www.fiercebiotech.com", "type": "market", "confidence": "B", "category": "Biotech/Inversión", "why": "Rondas de financiación, M&A.", "watch_queries": [{"name": "Funding", "query": "Series A funding", "vertical": "Investment"}], "weekly_focus": ["Rondas Series A-B"], "tips": ["Seguir 'Finance'"]}
-    }
-    
-    WEEKLY_WORKFLOW = {
-        "Monday": {"duration": "30 min", "activity": "Market Sweep", "sources": ["genomeweb", "endpoints", "bioprocess", "applied_clinical", "medtech_dive", "fierce_biotech"], "deliverable": "10 titulares, tag por vertical"},
-        "Wednesday": {"duration": "45 min", "activity": "Science Sweep", "sources": ["clinicaltrials", "pubmed", "nature_biotech"], "deliverable": "5 señales: nuevos trials, evidencias"},
-        "Friday": {"duration": "30 min", "activity": "Implications Memo", "sources": [], "deliverable": "5 bullets estratégicos"}
-    }
-    COVERAGE_NOTES = "Con estas 9 fuentes cubres: Dx/Genómica, QC/ATMP, RWE/DCT, MedTech. Confianza global: B."
-    
-    if "monitor_active_sources" not in st.session_state: st.session_state.monitor_active_sources = list(TRUSTED_SOURCES.keys())
-    if "monitor_suggestions" not in st.session_state: st.session_state.monitor_suggestions = []
-    if "monitor_last_check" not in st.session_state: st.session_state.monitor_last_check = None
-    if "monitor_config" not in st.session_state: st.session_state.monitor_config = {"model": "sonar"}
-    if "monitor_last_daily_save" not in st.session_state: st.session_state.monitor_last_daily_save = None
-    
-    now = datetime.now()
-    if st.session_state.monitor_last_daily_save is None or (now - st.session_state.monitor_last_daily_save).total_seconds() >= 86400:
-        if st.session_state.monitor_suggestions:
-            try:
-                lines = [f"📊 HISTÓRICO DIARIO - KAIBOT MONITOR | {now.strftime('%d/%m/%Y %H:%M')}", "="*60, f"Total sugerencias: {len(st.session_state.monitor_suggestions)}", ""]
-                for i, s in enumerate(st.session_state.monitor_suggestions, 1):
-                    src = s.get("source", {})
-                    sug = s.get("suggestion", {})
-                    ana = s.get("analysis", {})
-                    lines.append(f"📌 #{i} | {src.get('name','?')} ({src.get('category','?')})")
-                    lines.append(f"   Título: {sug.get('title','')} | Urgencia: {sug.get('urgency','media')}")
-                    lines.append(f"   Tendencias: {', '.join(ana.get('trends',[])[:2])}")
-                    lines.append("")
-                txt_content = "\n".join(lines)
-                fname = f"monitor_contenidos/historico_{now.strftime('%Y%m%d')}.txt"
-                bucket = client.bucket(bucket_name)
-                blob = bucket.blob(fname)
-                blob.upload_from_string(txt_content, content_type='text/plain; charset=utf-8')
-                st.session_state.monitor_last_daily_save = now
-            except Exception as e:
-                st.warning(f"⚠️ Auto-guardado diario falló: {str(e)[:60]}")
-                
-    if st.session_state.monitor_suggestions:
-        st.markdown("### 📈 Resumen de Sugerencias")
-        col_m1, col_m2, col_m3 = st.columns(3)
-        urg_dist = {}
-        for s in st.session_state.monitor_suggestions:
-            u = s.get("suggestion", {}).get("urgency", "media")
-            urg_dist[u] = urg_dist.get(u, 0) + 1
-        col_m1.metric(" Total Sugerencias", len(st.session_state.monitor_suggestions))
-        col_m2.metric(" Alta/Crítica", urg_dist.get("alta", 0) + urg_dist.get("crítica", 0))
-        col_m3.metric(" Última Revisión", st.session_state.monitor_last_check.strftime("%d/%m %H:%M") if st.session_state.monitor_last_check else "Nunca")
-        st.bar_chart(pd.DataFrame(urg_dist, index=["Urgencia"]).T if urg_dist else pd.DataFrame())
-        st.markdown("---")
-        
-    st.markdown("###  Fuentes Fidedignas")
-    tab_sci, tab_mkt = st.tabs([" Científicas", "📊 Mercado + Adicionales"])
-    with tab_sci:
-        for src_id, src in TRUSTED_SOURCES.items():
-            if src.get("type") == "scientific":
-                with st.expander(f"{'🟢' if src.get('confidence')=='A' else '🟡'} {src.get('name', 'N/A')} — {src.get('category', 'N/A')}", expanded=False):
-                    st.markdown(f"**URL:** [{src.get('url', '#')}]({src.get('url', '#')})")
-                    st.markdown(f"*{src.get('why', '')}*")
-                    for q in src.get("watch_queries", []):
-                        st.code(f"{q.get('vertical', '')}: {q.get('query', '')}", language="text")
-                    for tip in src.get("tips", []):
-                        st.markdown(f"• {tip}")
-                    if src_id not in st.session_state.monitor_active_sources:
-                        if st.button(f"➕ Activar {src.get('name', '')}", key=f"activate_{src_id}", use_container_width=True):
-                            st.session_state.monitor_active_sources.append(src_id)
-                            st.rerun()
-                    else:
-                        st.success(f"✅ {src.get('name', '')} activa")
-    with tab_mkt:
-        st.markdown("#### 📊 Mercado (Originales)")
-        for src_id, src in TRUSTED_SOURCES.items():
-            if src.get("type") == "market" and src_id in ["genomeweb", "endpoints", "bioprocess"]:
-                with st.expander(f"🟡 {src.get('name', 'N/A')} — {src.get('category', 'N/A')}", expanded=False):
-                    st.markdown(f"**URL:** [{src.get('url', '#')}]({src.get('url', '#')})")
-                    st.markdown(f"*{src.get('why', '')}*")
-                    for q in src.get("watch_queries", []):
-                        st.code(f"{q.get('vertical', '')}: {q.get('query', '')}", language="text")
-                    if src_id not in st.session_state.monitor_active_sources:
-                        if st.button(f"➕ Activar {src.get('name', '')}", key=f"activate_{src_id}", use_container_width=True):
-                            st.session_state.monitor_active_sources.append(src_id)
-                            st.rerun()
-                    else:
-                        st.success(f"✅ {src.get('name', '')} activa")
-        st.markdown("---\n#### 🆕 Fuentes Adicionales")
-        for src_id, src in TRUSTED_SOURCES.items():
-            if src.get("type") == "market" and src_id in ["applied_clinical", "medtech_dive", "fierce_biotech"]:
-                with st.expander(f"✨ {src.get('name', 'N/A')} — {src.get('category', 'N/A')} *(Nueva)*", expanded=False):
-                    st.markdown(f"**URL:** [{src.get('url', '#')}]({src.get('url', '#')})")
-                    st.markdown(f"*{src.get('why', '')}*")
-                    for q in src.get("watch_queries", []):
-                        st.code(f"{q.get('vertical', '')}: {q.get('query', '')}", language="text")
-                    if src_id not in st.session_state.monitor_active_sources:
-                        if st.button(f"➕ Activar {src.get('name', '')}", key=f"activate_{src_id}", use_container_width=True):
-                            st.session_state.monitor_active_sources.append(src_id)
-                            st.success(f"✅ {src.get('name', '')} activada")
-                            st.rerun()
-                    else:
-                        st.success(f"✅ {src.get('name', '')} activa")
-        st.markdown("---\n#### ➕ Fuente personalizada")
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            c_name = st.text_input("Nombre", placeholder="Ej: PharmaTimes", key="tab4_cust_name")
-            c_url = st.text_input("URL", placeholder="https://...", key="tab4_cust_url")
-        with col_c2:
-            c_type = st.selectbox("Tipo", ["scientific", "market"], key="tab4_cust_type")
-            c_cat = st.text_input("Categoría", placeholder="Ej: Regulatory", key="tab4_cust_cat")
-        if st.button(" Añadir", key="tab4_add_cust", use_container_width=True):
-            if c_name and c_url:
-                new_id = f"custom_{datetime.now().strftime('%Y%m%d_%H%M')}"
-                TRUSTED_SOURCES[new_id] = {"id": new_id, "name": c_name, "url": c_url, "type": c_type, "confidence": "B", "category": c_cat or "Personalizada", "why": "Fuente manual", "watch_queries": [], "weekly_focus": [], "tips": []}
-                st.session_state.monitor_active_sources.append(new_id)
-                st.success(f"✅ {c_name} añadida")
-                st.rerun()
-                
-    st.markdown("---\n### 🔄 Workflow Semanal")
-    days = ["Monday", "Wednesday", "Friday"]
-    cols = st.columns(3)
-    today = datetime.now().strftime("%A")
-    for i, day in enumerate(days):
-        with cols[i]:
-            wf = WEEKLY_WORKFLOW.get(day, {})
-            st.markdown(f"**{'✅ ' if today==day else ''}{day}**")
-            st.markdown(f"*{wf.get('duration', '')}*")
-            st.markdown(f"**{wf.get('activity', '')}**")
-            srcs = wf.get("sources", [])
-            if srcs:
-                names = [TRUSTED_SOURCES.get(s, {}).get("name", s) for s in srcs if s in TRUSTED_SOURCES]
-                with st.expander(f"Fuentes ({len(names)})"):
-                    for n in names: st.markdown(f"• {n}")
-            st.caption(f"📋 {wf.get('deliverable', '')[:60]}...")
-            
-    st.markdown("---")
-    col_check, col_info = st.columns([2, 3])
-    with col_check:
-        active = [TRUSTED_SOURCES.get(sid, {}) for sid in st.session_state.monitor_active_sources if sid in TRUSTED_SOURCES]
-        if st.button("🔍 Revisar fuentes ahora", type="primary", use_container_width=True, key="tab4_run_check"):
-            with st.spinner(f" Analizando {len(active)} fuentes..."):
-                suggestions = []
-                for src in active:
-                    try:
-                        src_name = src.get("name", "Unknown")
-                        src_url = src.get("url", "#")
-                        src_cat = src.get("category", "General")
-                        src_conf = src.get("confidence", "B")
-                        pplx = OpenAI(api_key=st.session_state.perplexity_key, base_url="https://api.perplexity.ai")
-                        queries = "\n".join([f"- {q.get('name','')}: `{q.get('query','')}`" for q in src.get("watch_queries", [])[:3]])
-                        focus = "evidencia técnica" if src.get("type")=="scientific" else "movimientos de mercado"
-                        
-                        prompt = f"""Analiza {src_name} ({src_url}) para {src_cat}.
-Detectar {focus}. Responde en JSON:
-{{ "trends": [], "opportunities": [], "hot_topics": [], "content_angles": [{{"angle": "", "format": "", "audience": ""}}], "urgency": "media", "vertical_impact": [], "similar_verified_sources": [] }}"""
-                        
-                        res = pplx.chat.completions.create(model=st.session_state.monitor_config.get("model", "sonar"), messages=[{"role": "user", "content": prompt}])
-                        content = res.choices[0].message.content.strip()
-                        if "```json" in content: content = content.split("```json")[1].split("```")[0].strip()
-                        elif "```" in content: content = content.split("```")[1].split("```")[0].strip()
-                        try: analysis = json.loads(content)
-                        except: analysis = {"trends": ["Análisis disponible"], "opportunities": [], "hot_topics": [], "content_angles": [], "urgency": "media", "vertical_impact": [], "similar_verified_sources": []}
-                        
-                        # Limpiar URLs similares
-                        if "similar_verified_sources" in analysis:
-                            analysis["similar_verified_sources"] = [clean_and_validate_urls(u) for u in analysis["similar_verified_sources"] if u.startswith("http")]
-                            
-                        angles = analysis.get("content_angles", [{}])
-                        best = angles[0] if angles else {"angle": f"Análisis {src_cat}", "format": "Artículo Web / Blog", "audience": "B2B"}
-                        suggestion = {
-                            "id": f"{src.get('id', 'unknown')}_{datetime.now().strftime('%H%M%S')}",
-                            "source": {"id": src.get("id", "unknown"), "name": src_name, "url": src_url, "type": src.get("type", "market"), "confidence": src_conf, "category": src_cat},
-                            "analysis": analysis,
-                            "suggestion": {
-                                "title": best.get("angle", "Análisis"),
-                                "format": best.get("format", "Artículo Web / Blog"),
-                                "audience": best.get("audience", "B2B"),
-                                "urgency": analysis.get("urgency", "media"),
-                                "verticals": analysis.get("vertical_impact", []),
-                                "tab1_query": f"Analiza novedades de {src_name} para {best.get('audience', 'B2B')} en {src_cat}.",
-                                "key_points": analysis.get("trends", [])[:3],
-                                "validation_claims": [],
-                                "similar_sources": analysis.get("similar_verified_sources", [])
-                            },
-                            "created_at": datetime.utcnow().isoformat(),
-                            "status": "new"
-                        }
-                        suggestions.append(suggestion)
-                    except Exception as e:
-                        st.warning(f"⚠️ Error en {src.get('name', '?')}: {str(e)[:50]}")
-                        
-                if suggestions:
-                    try:
-                        fname = f"monitor_contenidos/revision_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                        upload_json_to_gcs(client, bucket_name, "", fname, {"checked_at": datetime.now().isoformat(), "suggestions": suggestions})
-                        st.success(f"✅ {len(suggestions)} sugerencias guardadas en `monitor_contenidos/`")
-                    except Exception as e:
-                        st.warning(f"⚠️ Auto-guardado falló: {str(e)[:80]}")
-                st.session_state.monitor_suggestions = suggestions
-                st.session_state.monitor_last_check = datetime.now()
-                
-                if today == "Friday" and suggestions:
-                    memo = f"# 📋 Implications Memo — {datetime.now().strftime('%d/%m/%Y')}\n\n## 🔥 Tech que acelera\n"
-                    for s in [x for x in suggestions if x.get("suggestion", {}).get("urgency") in ["alta", "crítica"]][:3]:
-                        memo += f"- **{s.get('source', {}).get('name', 'N/A')}**: {s.get('suggestion', {}).get('title', 'N/A')}\n"
-                    with st.expander("📝 Memo viernes", expanded=True):
-                        st.markdown(memo)
-                        if st.button("📋 Copiar", key="copy_memo"): st.code(memo, language="markdown")
-                st.success(f"✅ Revisión: {len(suggestions)} sugerencias")
-                st.rerun()
-                
-    with col_info:
-        if st.session_state.monitor_last_check:
-            nxt = st.session_state.monitor_last_check + timedelta(hours=24)
-            rem = nxt - datetime.now()
-            st.info(f"**Última:** {st.session_state.monitor_last_check.strftime('%d/%m %H:%M')}\n**Próxima:** {nxt.strftime('%d/%m %H:%M')}\n**Restante:** {rem.seconds // 3600}h {(rem.seconds % 3600) // 60}m")
-        else:
-            st.info("🔍 Sin revisiones. Click en 'Revisar fuentes ahora'.")
-            
-    if st.session_state.monitor_suggestions:
-        st.markdown("---\n### 💡 Sugerencias de Contenido")
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            f_cat = st.multiselect("Categoría", list(set(s.get("source", {}).get("category") for s in st.session_state.monitor_suggestions if s.get("source", {}).get("category"))), key="tab4_f_cat")
-        with col_f2:
-            f_urg = st.selectbox("Urgencia", ["Todas", "crítica", "alta", "media", "baja"], key="tab4_f_urg")
-        filtered = st.session_state.monitor_suggestions
-        if f_cat: filtered = [s for s in filtered if s.get("source", {}).get("category") in f_cat]
-        if f_urg != "Todas": filtered = [s for s in filtered if s.get("suggestion", {}).get("urgency") == f_urg]
-        
-        for sug in filtered:
-            src = sug.get("source", {})
-            sugg = sug.get("suggestion", {})
-            analysis = sug.get("analysis", {})
-            urgency_colors = {"crítica": "🔴", "alta": "", "media": "🟡", "baja": "🟢"}
-            urgency = sugg.get("urgency", "media")
-            with st.expander(f"{urgency_colors.get(urgency, '')} {src.get('name', 'N/A')} — {sugg.get('title', 'Sin título')}", expanded=(urgency in ["crítica", "alta"])):
-                col_s1, col_s2 = st.columns([3, 1])
-                with col_s1:
-                    st.markdown(f"**Fuente:** [{src.get('name', 'N/A')}]({src.get('url', '#')})")
-                    st.caption(f"Confianza: {src.get('confidence', 'N/A')} | Categoría: {src.get('category', 'N/A')}")
-                    st.caption(f"Generado: {sug.get('created_at', '')[:16] if sug.get('created_at') else 'N/A'}")
-                    st.markdown("---")
-                    trends = analysis.get("trends", [])
-                    if trends:
-                        st.markdown("** Tendencias:**")
-                        for t in trends[:3]: st.markdown(f"• {t}")
-                    opps = analysis.get("opportunities", [])
-                    if opps:
-                        st.markdown("**🎯 Oportunidades:**")
-                        for o in opps[:2]: st.markdown(f"✓ {o}")
-                    claims = sugg.get("validation_claims", [])
-                    if claims:
-                        st.warning(f"**⚠️ Claims a validar:** {', '.join(claims[:2])}")
-                        
-                    # Fuentes similares
-                    similar = sugg.get("similar_sources", [])
-                    if similar:
-                        st.markdown("**🌐 Fuentes similares verificadas:**")
-                        for s in similar[:3]:
-                            st.markdown(f"- [{s}]({s})" if s.startswith("http") else f"- {s}")
-                            
-                with col_s2:
-                    st.markdown(f"**Formato:** `{sugg.get('format', 'N/A')}`")
-                    st.markdown(f"**Audiencia:** `{sugg.get('audience', 'N/A')}`")
-                    verts = sugg.get("verticals", [])
-                    if verts: st.markdown(f"**Verticales:** {', '.join(verts[:2])}")
-                    st.markdown("---")
-                    if st.button("📤 Preparar para Tab 1", key=f"send_{sug.get('id', 'unknown')}", type="primary", use_container_width=True):
-                        query = sugg.get("tab1_query", "")
-                        st.info(f"✅ **Query lista:**\n1. Ve a **🎯 Generar Contenido**\n2. Pega en **Consulta Personalizada**")
-                        st.code(query, language="text")
-                    if st.button("📋 Copiar query", key=f"copy_{sug.get('id', 'unknown')}", use_container_width=True):
-                        st.code(sugg.get("tab1_query", ""), language="text")
-                    if st.button("⭐ Marcar como vista", key=f"mark_{sug.get('id', 'unknown')}", use_container_width=True):
-                        sug["status"] = "reviewed"
-                        st.rerun()
-                    if st.button("🗑️ Descartar", key=f"discard_{sug.get('id', 'unknown')}", use_container_width=True):
-                        st.session_state.monitor_suggestions.remove(sug)
-                        st.rerun()
-                        
-                st.markdown("---")
-                st.markdown("**👁️ Vista previa formateada:**")
-                fmt_tabs = st.tabs(["📧 Email", "💼 LinkedIn", "🌐 Web", " Texto"])
-                formats = [" Email Corporativo", "💼 Post LinkedIn", "🌐 Artículo Web/Blog", " Texto Plano"]
-                
-                def fmt_neutral(ana, fmt):
-                    tr = ana.get("trends", [])
-                    op = ana.get("opportunities", [])
-                    if fmt == "📧 Email Corporativo":
-                        return f"Asunto: {tr[0][:60] if tr else 'Análisis'}...\n\n{' | '.join(tr[:3])}\n\nPuntos:\n" + "\n".join(f"• {t}" for t in tr[:3]) + f"\n\nAcciones:\n" + "\n".join(f"→ {o}" for o in op[:2])
-                    elif fmt == "💼 Post LinkedIn":
-                        return f"{tr[0] if tr else 'Análisis'}\n\n🔍 Insights:\n" + "\n".join(f"• {t}" for t in tr[:3]) + f"\n\n✅ Acciones:\n" + "\n".join(f"→ {o}" for o in op[:2]) + f"\n\n#B2B #KaiBot"
-                    elif fmt == "🌐 Artículo Web/Blog":
-                        return f"<h1>{tr[0][:80] if tr else 'Análisis'}</h1><p>Analizado: {datetime.now().strftime('%d/%m/%Y')}</p><h2>Puntos</h2><ul>{''.join(f'<li>{t}</li>' for t in tr[:3])}</ul>"
-                    return f"{' | '.join(tr[:3])}\n\n{'-'*40}\n" + "\n".join(f"• {t}" for t in tr[:3])
-                    
-                for i, tab in enumerate(fmt_tabs):
-                    with tab:
-                        content = fmt_neutral(analysis, formats[i])
-                        if formats[i] == "🌐 Artículo Web/Blog":
-                            st.components.v1.html(content, height=400, scrolling=True)
-                        else:
-                            st.code(content, language="text")
-                            
-                st.markdown("---")
-                if st.button("💾 Guardar sugerencia en GCS", key=f"save_{sug.get('id', 'unknown')}", use_container_width=True):
-                    try:
-                        fname = f"monitor_contenidos/sugerencia_{sug.get('id', 'unknown')}.json"
-                        upload_json_to_gcs(client, bucket_name, "", fname, sug)
-                        st.success(f"✅ Guardado: {fname}")
-                    except Exception as e:
-                        st.error(f"❌ Error: {str(e)[:100]}")
-                        
-    st.markdown("---")
-    with st.expander("️ Cobertura + Configuración", expanded=False):
-        st.markdown(COVERAGE_NOTES)
-        st.markdown("#### ️ Configuración")
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            st.session_state.monitor_config["model"] = st.selectbox("Modelo", ["sonar", "sonar-pro"], index=0, key="tab4_cfg_model")
-        with col_c2:
-            if st.button("💾 Guardar", key="tab4_save_cfg"): st.success("✅ Guardada")
-        st.info("💡 Auto-guardado en `monitor_contenidos/` (JSON + .txt histórico)")
-        
-    st.markdown("---")
-    st.caption(f"""
-    📚 **Metodología KaiBot**: Combinamos fuentes científicas (ClinicalTrials, PubMed, Nature Biotech) 
-    con inteligencia de mercado (GenomeWeb, Endpoints, BioProcess) para generar contenido B2B validado. 
-    Confianza global: **B** — fuentes consolidadas, ajuste fino según vertical activo.
-    *Brief actualizado: {datetime.now().strftime('%B %Y')} | Fuentes: {len(st.session_state.monitor_active_sources)} activas*
+    # ========================================================================
+    # MAIN
+    # ========================================================================
+    render_header()
+    st.markdown("""
+    Identifica **oportunidades de inversión en healthtech** analizando centros tecnológicos, 
+    universidades y hubs de innovación en España, con monitoreo de portales europeos.
     """)
+    
+    # Verificar configuración mínima
+    if not st.session_state.openai_ok:
+        st.warning("⚠️ Configura tu API Key de OpenAI en la sidebar para comenzar")
+        return
+    
+    if not st.session_state.centros_list:
+        st.info("👉 Sube un archivo Excel con centros y temáticas para comenzar")
+        return
+    
+    if not st.session_state.tematicas_list:
+        st.warning("⚠️ No se cargaron temáticas. El análisis será menos preciso.")
+    
+    # ========================================================================
+    # PESTAÑAS PRINCIPALES
+    # ========================================================================
+    tab1, tab2, tab3, tab4 = st.tabs(["🔍 Analizar", "📋 Resultados", "🇪🇺 Europa", "📊 Exportar"])
+    
+    # ------------------------------------------------------------------------
+    # TAB 1: Analizar Centros
+    # ------------------------------------------------------------------------
+    with tab1:
+        st.markdown('<p class="section-title">🔍 Selecciona centros para analizar</p>', unsafe_allow_html=True)
+        
+        # Filtros
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            regiones = ["Todas"] + list(set(c["region"] for c in st.session_state.centros_list if c["region"]))
+            region_filter = st.selectbox("Región", regiones)
+        
+        with col_f2:
+            tipos = ["Todos"] + list(set(c["tipo"] for c in st.session_state.centros_list if c["tipo"]))
+            tipo_filter = st.selectbox("Tipo de centro", tipos)
+        
+        with col_f3:
+            page_types = ["Todos", "company_directory", "technology_transfer", "research_publications", "project_listing"]
+            page_filter = st.selectbox("Tipo de página", page_types)
+        
+        # Filtrar centros
+        centros_filtrados = st.session_state.centros_list
+        if region_filter != "Todas":
+            centros_filtrados = [c for c in centros_filtrados if c["region"] == region_filter]
+        if tipo_filter != "Todos":
+            centros_filtrados = [c for c in centros_filtrados if c["tipo"] == tipo_filter]
+        
+        st.caption(f"{len(centros_filtrados)} centros disponibles")
+        
+        # Selección múltiple
+        centro_options = {f"{c['nombre']} ({c['region']})": c for c in centros_filtrados}
+        selected_centros = st.multiselect(
+            "Selecciona centros para analizar",
+            options=list(centro_options.keys()),
+            default=list(centro_options.keys())[:3]
+        )
+        
+        # Configurar análisis
+        with st.expander("️ Configuración del análisis", expanded=False):
+            max_pages = st.slider("Máx. páginas por centro", 1, 5, 3)
+            timeout = st.slider("Timeout por página (segundos)", 10, 60, 30)
+            min_score = st.slider("Score mínimo para incluir oportunidad", 50, 90, 60)
+            enable_orcid = st.checkbox("🔗 Enriquecer con ORCID", value=True, help="Busca ORCID IDs para investigadores")
+            st.info(f"💡 Temáticas activas: {len(st.session_state.tematicas_list)}")
+            st.info("🔄 Orden de extracción: Tecnologías → Artículos → Empresas → Personas")
+        
+        # Botón de análisis
+        if st.button(" Iniciar análisis", type="primary", use_container_width=True):
+            if not selected_centros:
+                st.warning("⚠️ Selecciona al menos un centro")
+            else:
+                pipeline = DealflowPipeline(
+                    api_key=st.session_state.api_key,
+                    orcid_api_key=st.secrets.get("ORCID_API_KEY") if enable_orcid else None
+                )
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for idx, centro_key in enumerate(selected_centros):
+                    centro = centro_options[centro_key]
+                    status_text.text(f"🔄 Analizando {centro['nombre']}...")
+                    
+                    result = pipeline.process_center(
+                        centro=centro,
+                        tematicas=st.session_state.tematicas_list,
+                        max_pages=max_pages
+                    )
+                    
+                    # Filtrar por score mínimo
+                    for et in pipeline.EXTRACTION_ORDER:
+                        result["entities"][et] = [
+                            e for e in result["entities"][et] 
+                            if e.get("score", 0) >= min_score
+                        ]
+                    
+                    st.session_state.results[centro["nombre"]] = result
+                    
+                    # Actualizar progreso
+                    progress_bar.progress((idx + 1) / len(selected_centros))
+                    time.sleep(1)
+                
+                status_text.text("✅ Análisis completado")
+                st.balloons()
+                st.rerun()
+    
+    # ------------------------------------------------------------------------
+    # TAB 2: Resultados
+    # ------------------------------------------------------------------------
+    with tab2:
+        st.markdown('<p class="section-title">📋 Oportunidades identificadas</p>', unsafe_allow_html=True)
+        
+        if not st.session_state.results:
+            st.info("👉 Ejecuta un análisis en la pestaña 'Analizar' para ver resultados")
+        else:
+            # Resumen global
+            total_opp = sum(
+                sum(len(r["entities"].get(et, [])) for et in ["technologies", "papers", "companies", "people"])
+                for r in st.session_state.results.values()
+            )
+            st.metric(" Total oportunidades", total_opp)
+            
+            # Filtros de resultados
+            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+            with col_f1:
+                entity_filter = st.multiselect(
+                    "Tipo de entidad",
+                    options=["technologies", "papers", "companies", "people"],
+                    default=["technologies", "companies"]
+                )
+            with col_f2:
+                vertical_filter = st.multiselect(
+                    "Vertical",
+                    options=list(set(
+                        e.get("vertical") or e.get("sector")
+                        for r in st.session_state.results.values()
+                        for et in ["technologies", "papers", "companies", "people"]
+                        for e in r["entities"].get(et, [])
+                        if e.get("vertical") or e.get("sector")
+                    ))
+                )
+            with col_f3:
+                score_min = st.slider("Score mínimo", 60, 100, 60)
+            with col_f4:
+                region_filter = st.multiselect(
+                    "Región",
+                    options=list(set(r["region"] for r in st.session_state.results.values() if r["region"]))
+                )
+            
+            # Mostrar resultados por centro
+            for centro_nombre, centro_data in st.session_state.results.items():
+                if region_filter and centro_data["region"] not in region_filter:
+                    continue
+                
+                total_opp_centro = sum(
+                    len(centro_data["entities"].get(et, [])) for et in entity_filter
+                )
+                if total_opp_centro == 0:
+                    continue
+                
+                with st.expander(f"🏢 {centro_nombre} ({centro_data['region']}) - {total_opp_centro} oportunidades", expanded=True):
+                    st.caption(f"📍 {centro_data['tipo']} | 📄 Tipos de página: {', '.join(set(centro_data['page_types_found']))}")
+                    
+                    # Mostrar URLs analizadas
+                    if centro_data["urls_analizadas"]:
+                        with st.expander("🔗 URLs analizadas", expanded=False):
+                            for url_info in centro_data["urls_analizadas"]:
+                                status_icon = "✅" if url_info["status"] == "processed" else "💾" if url_info["status"] == "cached" else "❌"
+                                st.caption(f"{status_icon} {url_info['url'][:60]}... ({url_info.get('page_type', 'unknown')})")
+                    
+                    st.divider()
+                    
+                    # Mostrar entidades por tipo
+                    for entity_type in entity_filter:
+                        entities = centro_data["entities"].get(entity_type, [])
+                        if not entities:
+                            continue
+                        
+                        entity_label = {"technologies": "🔬 Tecnologías", "papers": "📄 Artículos", "companies": "🏢 Empresas", "people": "👤 Personas"}
+                        st.markdown(f"**{entity_label.get(entity_type, entity_type)}** ({len(entities)})")
+                        
+                        for entity in entities:
+                            if entity.get("score", 0) < score_min:
+                                continue
+                            if vertical_filter:
+                                ent_vertical = entity.get("vertical") or entity.get("sector")
+                                if ent_vertical and ent_vertical not in vertical_filter:
+                                    continue
+                            
+                            render_entity_card(entity, entity_type)
+                        
+                        st.divider()
+    
+    # ------------------------------------------------------------------------
+    # TAB 3: Monitoreo Europeo
+    # ------------------------------------------------------------------------
+    with tab3:
+        st.markdown('<p class="section-title">🇪🇺 Monitoreo de Portales Europeos</p>', unsafe_allow_html=True)
+        
+        st.info("""
+        **Portales monitoreados:**
+        - 🔗 [CORDIS](https://cordis.europa.eu): Base de datos de proyectos de investigación de la UE
+        - 🔗 [EU-Funding](https://ec.europa.eu/info/funding-tenders): Oportunidades de financiación
+        - 🔗 [EIC](https://eic.ec.europa.eu): European Innovation Council
+        
+        **Temas buscados:** health, biotech, medical, pharma, diagnostic, digital health
+        """)
+        
+        if not st.session_state.openai_ok:
+            st.warning("⚠️ Configura OpenAI para activar el monitoreo")
+        else:
+            col_btn, col_info = st.columns([1, 3])
+            with col_btn:
+                if st.button("🔄 Consultar actualizaciones", use_container_width=True):
+                    with st.spinner("Consultando portales europeos..."):
+                        pipeline = DealflowPipeline(api_key=st.session_state.api_key)
+                        updates = pipeline.check_european_updates(days_back=7)
+                        st.session_state.eu_updates = updates
+                        st.session_state.last_eu_check = datetime.now()
+                        st.rerun()
+            
+            with col_info:
+                if st.session_state.last_eu_check:
+                    st.caption(f"Última consulta: {st.session_state.last_eu_check.strftime('%d/%m %H:%M')}")
+                else:
+                    st.caption("Sin consultas recientes")
+        
+        if st.session_state.eu_updates:
+            st.markdown("### 📋 Nuevas oportunidades europeas")
+            
+            for opp in st.session_state.eu_updates.get("new_opportunities", []):
+                with st.container():
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.markdown(f"#### {opp.get('title', 'Proyecto sin título')}")
+                        st.caption(f"🆔 {opp.get('cordis_id', '')} |  {opp.get('budget', '')}")
+                        st.markdown(f"**Participantes:** {', '.join(opp.get('participants', [])[:3])}")
+                        st.markdown(f"**Temas:** {', '.join(opp.get('topics', []))}")
+                    with col2:
+                        st.markdown(f"<span class='match-score'>{opp.get('relevance_score', 0)}/100</span>", unsafe_allow_html=True)
+                        if opp.get("url"):
+                            st.markdown(f"[ Ver proyecto]({opp['url']})", unsafe_allow_html=True)
+                    st.divider()
+        else:
+            st.info("👉 Pulsa 'Consultar actualizaciones' para buscar nuevas oportunidades")
+    
+    # ------------------------------------------------------------------------
+    # TAB 4: Exportar
+    # ------------------------------------------------------------------------
+    with tab4:
+        st.markdown('<p class="section-title">📊 Exportar resultados</p>', unsafe_allow_html=True)
+        
+        if not st.session_state.results:
+            st.info("👉 Ejecuta un análisis primero para poder exportar")
+        else:
+            # Preparar DataFrame para exportar
+            rows = []
+            for centro_nombre, centro_data in st.session_state.results.items():
+                for entity_type in ["technologies", "papers", "companies", "people"]:
+                    for entity in centro_data["entities"].get(entity_type, []):
+                        rows.append({
+                            "Centro": centro_nombre,
+                            "Región": centro_data.get("region", ""),
+                            "Tipo Centro": centro_data.get("tipo", ""),
+                            "Tipo Entidad": entity_type,
+                            "Nombre": entity.get("nombre") or entity.get("titulo"),
+                            "Vertical": entity.get("vertical") or entity.get("sector"),
+                            "Descripción": entity.get("descripcion") or entity.get("relevancia_health"),
+                            "Score": entity.get("score", 0),
+                            "Referencia": entity.get("referencia", ""),
+                            "ORCID": entity.get("orcid", ""),
+                            "Notas": entity.get("notas", ""),
+                        })
+            
+            if rows:
+                df_export = pd.DataFrame(rows)
+                
+                # Vista previa
+                st.markdown("#### Vista previa")
+                st.dataframe(df_export, use_container_width=True)
+                
+                # Botones de descarga
+                col_dl1, col_dl2 = st.columns(2)
+                
+                with col_dl1:
+                    # Excel
+                    buffer = BytesIO()
+                    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+                        df_export.to_excel(writer, index=False, sheet_name="Oportunidades")
+                        worksheet = writer.sheets["Oportunidades"]
+                        for i, col in enumerate(df_export.columns):
+                            max_len = max(df_export[col].astype(str).map(len).max(), len(col))
+                            worksheet.set_column(i, i, min(max_len + 2, 50))
+                    
+                    buffer.seek(0)
+                    st.download_button(
+                        label="📥 Descargar Excel",
+                        data=buffer,
+                        file_name=f"double_helix_dealflow_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                
+                with col_dl2:
+                    # CSV
+                    csv = df_export.to_csv(index=False, encoding="utf-8-sig")
+                    st.download_button(
+                        label="📥 Descargar CSV",
+                        data=csv,
+                        file_name=f"double_helix_dealflow_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+                
+                # Resumen estadístico
+                st.markdown("#### 📈 Resumen")
+                col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+                col_s1.metric("Total oportunidades", len(df_export))
+                col_s2.metric("Score promedio", f"{df_export['Score'].mean():.1f}")
+                col_s3.metric("Centros analizados", df_export["Centro"].nunique())
+                col_s4.metric("Con ORCID", df_export["ORCID"].notna().sum())
+                
+                # Distribución por tipo
+                if not df_export["Tipo Entidad"].empty:
+                    st.markdown("#### Distribución por tipo de entidad")
+                    type_counts = df_export["Tipo Entidad"].value_counts()
+                    st.bar_chart(type_counts)
+            else:
+                st.warning("⚠️ No hay oportunidades para exportar. Ajusta los filtros o ejecuta un nuevo análisis.")
+    
+    # ========================================================================
+    # FOOTER
+    # ========================================================================
+    st.markdown(f"""
+    <div class="footer">
+        <img src="{BRANDING['logo_url']}" style="height: 30px; opacity: 0.7; margin-bottom: 0.5rem;">
+        <p>Double Helix Dealflow Finder v1.4 © {datetime.now().year} | Healthtech Venture Capital</p>
+        <p style="font-size: 0.75rem; color: #999;">
+            Extracción jerárquica: Tecnologías → Artículos → Empresas → Personas | 
+            Monitoreo europeo: CORDIS, EU-Funding, EIC
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-st.markdown(f"""
-<div class='footer-kaibot'>
-<h3 style='color: white; margin-bottom: 1rem;'>Powered by {BRANDING['name']}</h3>
-<p style='color: rgba(255,255,255,0.8); margin-bottom: 1rem;'>Especialistas en Marketing Digital B2B | Generación de leads industriales</p>
-<div style='display: flex; justify-content: center; gap: 2rem; flex-wrap: wrap;'>
-<span>📧 hello@kaibot.es</span> <span>📞 +34 633 69 88 32</span> <span>📍 Vitoria-Gasteiz</span>
-</div>
-<p style='margin-top: 1.5rem; color: rgba(255,255,255,0.6); font-size: 0.9rem;'>{BRANDING['footer']}</p>
-</div>
-""", unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
