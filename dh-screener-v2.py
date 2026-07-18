@@ -7,7 +7,7 @@ Pipeline completo para identificar oportunidades de inversión en healthtech:
 - Análisis IA específico por tipo de entidad
 - VALIDACIÓN CON PERPLEXITY para verificar hechos, fechas y URLs
 - Monitoreo de portales europeos con fuentes reales (no simuladas)
-- Caché robusto para evitar re-procesamiento.
+- Caché robusto para evitar re-procesamiento
 """
 import os
 import re
