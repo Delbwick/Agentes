@@ -7,7 +7,7 @@ Pipeline completo para identificar oportunidades de inversión en healthtech:
 - Análisis IA específico por tipo de entidad
 - VALIDACIÓN CON PERPLEXITY para verificar hechos, fechas y URLs
 - Monitoreo de portales europeos con fuentes reales (no simuladas)
-- Caché robusto para evitar re-procesamiento
+- Caché robusto para evitar re-procesamiento.
 """
 import os
 import re
@@ -606,11 +606,10 @@ FORMATO JSON:
 }"""
     }
     
-    def __init__(self, api_key: str, model: str = "gpt-4o"):
+    def __init__(self, api_key: str):
         self.client = OpenAI(api_key=api_key)
-        self.model = model
     
-    def extract_entities(self, content: str, entity_type: str, context: Dict = None, token_tracker: Dict = None) -> Dict:
+    def extract_entities(self, content: str, entity_type: str, context: Dict = None) -> Dict:
         """Extrae entidades de un tipo específico usando IA."""
         prompt_template = self.PROMPTS.get(entity_type)
         if not prompt_template:
@@ -638,7 +637,7 @@ FORMATO JSON:
         
         try:
             resp = self.client.chat.completions.create(
-                model=self.model,
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": prompt_template},
                     {"role": "user", "content": prompt}
@@ -646,12 +645,6 @@ FORMATO JSON:
                 temperature=0.1,
                 response_format={"type": "json_object"}
             )
-            # Trackear uso de tokens
-            if token_tracker is not None and hasattr(resp, "usage") and resp.usage:
-                token_tracker["prompt_tokens"] += resp.usage.prompt_tokens
-                token_tracker["completion_tokens"] += resp.usage.completion_tokens
-                token_tracker["total_tokens"] += resp.usage.total_tokens
-                token_tracker["calls"] += 1
             result = json.loads(resp.choices[0].message.content)
             result["entity_type"] = entity_type
             return result
@@ -775,15 +768,13 @@ class DealflowPipeline:
     # Orden de extracción (prioridad)
     EXTRACTION_ORDER = ["technologies", "papers", "companies", "people"]
     
-    def __init__(self, api_key: str, orcid_api_key: str = None, perplexity_key: str = None, model: str = "gpt-4o"):
+    def __init__(self, api_key: str, orcid_api_key: str = None, perplexity_key: str = None):
         self.crawler = WebCrawler()
-        self.extractor = EntityExtractor(api_key, model=model)
+        self.extractor = EntityExtractor(api_key)
         self.orcid = ORCIDIntegrator(orcid_api_key) if orcid_api_key else None
         self.eu_monitor = EuropeanPortalMonitor(api_key, perplexity_key)
         self.api_key = api_key
         self.perplexity_key = perplexity_key
-        self.model = model
-        self.token_tracker = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
     
     def process_center(self, centro: Dict, tematicas: List, max_pages: int = 3) -> Dict:
         """Procesa un centro completo: URLs → entidades → validación."""
@@ -859,8 +850,7 @@ class DealflowPipeline:
                 extracted = self.extractor.extract_entities(
                     content=page["text"],
                     entity_type=entity_type,
-                    context=context,
-                    token_tracker=self.token_tracker
+                    context=context
                 )
                 if extracted.get("entities"):
                     results["entities"][entity_type].extend(extracted["entities"])
@@ -1106,10 +1096,6 @@ def main():
         st.session_state.last_eu_check = None
     if "validated_results" not in st.session_state:
         st.session_state.validated_results = {}
-    if "selected_model" not in st.session_state:
-        st.session_state.selected_model = "gpt-4o"
-    if "token_usage" not in st.session_state:
-        st.session_state.token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
     
     # ========================================================================
     # SIDEBAR
@@ -1325,26 +1311,7 @@ def main():
         )
         
         # Configurar análisis
-        with st.expander("⚙️ Configuración del análisis", expanded=True):
-            # Selector de modelo (prioritizando los más avanzados)
-            st.markdown("**🤖 Modelo de IA**")
-            AVAILABLE_MODELS = {
-                "gpt-4o": "GPT-4o — Más avanzado, mejor análisis (recomendado)",
-                "gpt-4o-mini": "GPT-4o Mini — Más rápido y económico",
-                "gpt-4-turbo": "GPT-4 Turbo — Alta capacidad, contexto largo",
-                "gpt-4": "GPT-4 — Equilibrado",
-                "gpt-3.5-turbo": "GPT-3.5 Turbo — Muy rápido, menor precisión",
-            }
-            selected_model = st.selectbox(
-                "Selecciona el modelo",
-                options=list(AVAILABLE_MODELS.keys()),
-                format_func=lambda x: AVAILABLE_MODELS[x],
-                index=0,
-                help="Los modelos más avanzados ofrecen mejor extracción pero mayor coste en tokens"
-            )
-            st.session_state.selected_model = selected_model
-            
-            st.divider()
+        with st.expander("⚙️ Configuración del análisis", expanded=False):
             max_pages = st.slider("Máx. páginas por centro", 1, 5, 3)
             timeout = st.slider("Timeout por página (segundos)", 10, 60, 30)
             min_score = st.slider("Score mínimo para incluir oportunidad", 50, 90, 60)
@@ -1354,18 +1321,6 @@ def main():
             st.info(f"💡 Temáticas activas: {len(st.session_state.tematicas_list)}")
             st.info("🔄 Orden de extracción: Tecnologías → Artículos → Empresas → Personas")
         
-        # Contador de tokens (sesión actual)
-        if st.session_state.token_usage["calls"] > 0:
-            with st.expander(f"🔢 Uso de tokens — sesión actual ({st.session_state.token_usage['calls']} llamadas)", expanded=False):
-                tu = st.session_state.token_usage
-                c1, c2, c3 = st.columns(3)
-                c1.metric("🔵 Prompt tokens", f"{tu['prompt_tokens']:,}")
-                c2.metric("🟢 Completion tokens", f"{tu['completion_tokens']:,}")
-                c3.metric("⭐ Total tokens", f"{tu['total_tokens']:,}")
-                if st.button("🗑️ Resetear contador", key="reset_tokens"):
-                    st.session_state.token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
-                    st.rerun()
-        
         # Botón de análisis
         if st.button("🚀 Iniciar análisis", type="primary", use_container_width=True):
             if not selected_centros:
@@ -1374,8 +1329,7 @@ def main():
                 pipeline = DealflowPipeline(
                     api_key=st.session_state.api_key,
                     orcid_api_key=st.secrets.get("ORCID_API_KEY") if enable_orcid else None,
-                    perplexity_key=st.session_state.perplexity_key if enable_validation else None,
-                    model=st.session_state.selected_model
+                    perplexity_key=st.session_state.perplexity_key if enable_validation else None
                 )
                 
                 progress_bar = st.progress(0)
@@ -1419,129 +1373,94 @@ def main():
                     progress_bar.progress((idx + 1) / len(selected_centros))
                     time.sleep(1)
                 
-                # Acumular uso de tokens de esta sesión
-                prev = st.session_state.token_usage
-                st.session_state.token_usage = {
-                    "prompt_tokens": prev["prompt_tokens"] + pipeline.token_tracker["prompt_tokens"],
-                    "completion_tokens": prev["completion_tokens"] + pipeline.token_tracker["completion_tokens"],
-                    "total_tokens": prev["total_tokens"] + pipeline.token_tracker["total_tokens"],
-                    "calls": prev["calls"] + pipeline.token_tracker["calls"],
-                }
-                
                 status_text.text("✅ Análisis completado")
                 st.balloons()
                 st.rerun()
     
     # ------------------------------------------------------------------------
-    # TAB 2: Resultados (TABLA - por centro)
+    # TAB 2: Resultados (TABLA - NO HTML)
     # ------------------------------------------------------------------------
     with tab2:
-        st.markdown('<p class="section-title">📋 Oportunidades identificadas</p>', unsafe_allow_html=True)
+        st.markdown('<p class="section-title">📋 Oportunidades identificadas (Tabla)</p>', unsafe_allow_html=True)
         
         if not st.session_state.results:
             st.info("👉 Ejecuta un análisis en la pestaña 'Analizar' para ver resultados")
         else:
-            # Filtros globales (aplican a todos los centros)
-            with st.expander("🔍 Filtros", expanded=True):
-                col_f1, col_f2, col_f3 = st.columns(3)
-                with col_f1:
-                    tipo_filter = st.multiselect(
-                        "Tipo de entidad",
-                        options=["technologies", "papers", "companies", "people"],
-                        default=["technologies", "companies"],
-                        key="tab2_tipo"
-                    )
-                with col_f2:
-                    all_regions = list(set(d.get("region", "") for d in st.session_state.results.values()))
-                    region_filter = st.multiselect("Región", options=all_regions, key="tab2_region")
-                with col_f3:
-                    score_min = st.slider("Score mínimo", 60, 100, 60, key="tab2_score")
-            
-            # Iterar por centro
+            # Preparar datos para tabla
+            rows = []
             for centro_nombre, centro_data in st.session_state.results.items():
-                region = centro_data.get("region", "")
-                if region_filter and region not in region_filter:
-                    continue
-                
-                # Header del centro
-                st.markdown(f"### 🏢 {centro_nombre}")
-                if region:
-                    st.caption(f"📍 {region} · {centro_data.get('tipo', '')}")
-                
-                # ---- Sección: URLs analizadas ----
-                urls_analizadas = centro_data.get("urls_analizadas", [])
-                if urls_analizadas:
-                    with st.expander(f"🔗 URLs analizadas ({len(urls_analizadas)})", expanded=False):
-                        url_rows = []
-                        for u in urls_analizadas:
-                            url_rows.append({
-                                "URL": u.get("url", ""),
-                                "Estado": u.get("status", ""),
-                                "Tipo de página": u.get("page_type", "–"),
-                                "Entidades encontradas": u.get("entities_found", "–"),
-                            })
-                        df_urls = pd.DataFrame(url_rows)
-                        st.dataframe(
-                            df_urls,
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "URL": st.column_config.LinkColumn("🔗 URL"),
-                                "Estado": st.column_config.TextColumn("Estado", width="small"),
-                                "Tipo de página": st.column_config.TextColumn("Tipo", width="medium"),
-                                "Entidades encontradas": st.column_config.NumberColumn("Entidades", width="small"),
-                            }
-                        )
-                
-                # ---- Sección: Tabla de oportunidades del centro ----
-                rows = []
                 for entity_type in ["technologies", "papers", "companies", "people"]:
-                    if entity_type not in tipo_filter:
-                        continue
                     entities = centro_data["entities"].get(entity_type, [])
                     for entity in entities:
+                        # Obtener URL verificada si existe validación
                         referencia = entity.get("referencia", "")
                         validation = centro_data.get("validation", {}).get(entity_type, {})
+                        
                         if validation and "corrected_urls" in validation:
+                            # Usar URL corregida si está disponible
                             for corrected in validation["corrected_urls"]:
                                 if referencia in corrected or corrected in referencia:
                                     referencia = corrected
                                     break
-                        score = entity.get("score", 0)
-                        if score < score_min:
-                            continue
+                        
                         rows.append({
+                            "#": len(rows) + 1,
+                            "Centro": centro_nombre,
+                            "Región": centro_data.get("region", ""),
                             "Tipo": entity_type,
-                            "Nombre": entity.get("nombre") or entity.get("titulo") or "–",
-                            "Descripción": (entity.get("descripcion") or entity.get("relevancia_health") or "")[:250],
-                            "Score": score,
+                            "Nombre": entity.get("nombre") or entity.get("titulo"),
+                            "Descripción": entity.get("descripcion") or entity.get("relevancia_health"),
+                            "Score": entity.get("score", 0),
                             "URL": referencia,
-                            "Validado": "✅" if validation and entity.get("nombre") in validation.get("verified_claims", []) else "⚠️" if validation else "–",
+                            "Verificado": "✅" if validation and entity.get("nombre") in validation.get("verified_claims", []) else "⚠️" if validation else "–",
                         })
+            
+            if rows:
+                df_results = pd.DataFrame(rows)
                 
-                if rows:
-                    df_centro = pd.DataFrame(rows)
-                    st.dataframe(
-                        df_centro,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Tipo": st.column_config.TextColumn("🏷️ Tipo", width="small"),
-                            "Nombre": st.column_config.TextColumn("📝 Nombre"),
-                            "Descripción": st.column_config.TextColumn("📄 Descripción", width="large"),
-                            "Score": st.column_config.ProgressColumn("⭐ Score", min_value=0, max_value=100, format="%d"),
-                            "URL": st.column_config.LinkColumn("🔗 URL"),
-                            "Validado": st.column_config.TextColumn("✅ Val.", width="small"),
-                        }
-                    )
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Oportunidades", len(df_centro))
-                    c2.metric("Score medio", f"{df_centro['Score'].mean():.0f}")
-                    c3.metric("Validadas", df_centro[df_centro["Validado"] == "✅"].shape[0])
-                else:
-                    st.info("No hay oportunidades que superen los filtros para este centro.")
+                # Filtros de tabla
+                col_f1, col_f2, col_f3 = st.columns(3)
+                with col_f1:
+                    tipo_filter = st.multiselect("Tipo de entidad", options=["technologies", "papers", "companies", "people"], default=["technologies", "companies"])
+                with col_f2:
+                    region_filter = st.multiselect("Región", options=df_results["Región"].unique().tolist())
+                with col_f3:
+                    score_min = st.slider("Score mínimo", 60, 100, 60)
                 
-                st.divider()
+                # Aplicar filtros
+                df_filtered = df_results[
+                    (df_results["Tipo"].isin(tipo_filter)) &
+                    (df_results["Región"].isin(region_filter) if region_filter else True) &
+                    (df_results["Score"] >= score_min)
+                ]
+                
+                # Mostrar tabla
+                st.dataframe(
+                    df_filtered,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "#": st.column_config.NumberColumn("#", width="small"),
+                        "Centro": st.column_config.TextColumn("🏢 Centro"),
+                        "Región": st.column_config.TextColumn("📍 Región", width="small"),
+                        "Tipo": st.column_config.TextColumn("🏷️ Tipo", width="small"),
+                        "Nombre": st.column_config.TextColumn("📝 Nombre"),
+                        "Descripción": st.column_config.TextColumn("📄 Descripción", width="large"),
+                        "Score": st.column_config.ProgressColumn("⭐ Score", min_value=0, max_value=100, format="%d"),
+                        "URL": st.column_config.LinkColumn("🔗 URL"),
+                        "Verificado": st.column_config.TextColumn("✅ Validado", width="small"),
+                    }
+                )
+                
+                # Resumen estadístico
+                st.markdown("#### 📈 Resumen")
+                col_s1, col_s2, col_s3 = st.columns(3)
+                col_s1.metric("Total oportunidades", len(df_filtered))
+                col_s2.metric("Score promedio", f"{df_filtered['Score'].mean():.1f}")
+                col_s3.metric("URLs verificadas", len(df_filtered[df_filtered["Verificado"] == "✅"]))
+                
+            else:
+                st.warning("⚠️ No hay oportunidades para mostrar. Ajusta los filtros o ejecuta un nuevo análisis.")
     
     # ------------------------------------------------------------------------
     # TAB 3: Monitoreo Europeo (CORREGIDO)
