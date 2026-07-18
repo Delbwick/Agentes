@@ -965,34 +965,71 @@ def prepare_tematicas(tematicas_df: pd.DataFrame) -> List[Dict]:
     return [t for t in tematicas if t["segmento"] and len(t["segmento"]) > 5]
 
 def prepare_centros(centros_df: pd.DataFrame) -> List[Dict]:
-    """Prepara la lista de centros para procesar."""
+    """
+    Prepara la lista de centros para procesar.
+    Esquema esperado: REGIÓN | TIPO DE CENTRO | NOMBRE | WEB DIRECTORIO | WEB 2 … WEB 8
+    Lee dinámicamente todas las columnas que empiecen por 'WEB'.
+    """
     if centros_df is None or centros_df.empty:
         return []
-    
+
+    # Normalizar nombres de columnas: strip + upper para comparaciones robustas
+    col_map = {str(c).strip(): str(c) for c in centros_df.columns}
+    centros_df = centros_df.rename(columns={v: k for k, v in col_map.items()})
+
+    # Detectar columnas de URL dinámicamente (cualquier col que empiece por 'WEB')
+    web_columns = [c for c in centros_df.columns if str(c).upper().startswith("WEB")]
+
+    # Columnas de metadatos (insensible a mayúsculas/tildes)
+    def find_col(candidates):
+        for cand in candidates:
+            for col in centros_df.columns:
+                if col.upper().strip() == cand.upper().strip():
+                    return col
+        return None
+
+    col_nombre  = find_col(["NOMBRE"])
+    col_region  = find_col(["REGIÓN", "REGION"])
+    col_tipo    = find_col(["TIPO DE CENTRO", "TIPO CENTRO", "TIPO"])
+
     centros = []
-    url_columns = ["WEB DIRECTORIO", "WEB 2", "WEB 3", "WEB 4", "WEB 5", "WEB 6", "WEB 7", "WEB 8"]
-    
     for _, row in centros_df.iterrows():
-        nombre = str(row.get("NOMBRE", ""))
-        if not nombre or nombre == "nan" or pd.isna(nombre):
+        nombre = str(row.get(col_nombre, "")).strip() if col_nombre else ""
+        if not nombre or nombre.lower() == "nan":
             continue
-        
-        # Extraer todas las URLs
+
+        # Extraer todas las URLs de columnas WEB *
         urls = []
-        for col in url_columns:
-            if col in centros_df.columns and pd.notna(row.get(col)):
-                url = str(row.get(col)).strip()
-                if url and url.lower().startswith("http"):
-                    urls.append(normalize_url(url))
-        
-        if urls:
+        for col in web_columns:
+            val = row.get(col)
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                continue
+            url = str(val).strip()
+            if not url or url.lower() == "nan":
+                continue
+            # Añadir esquema si falta
+            if url.startswith("www."):
+                url = "https://" + url
+            elif not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            urls.append(normalize_url(url))
+
+        # Deduplicar manteniendo orden
+        seen = set()
+        unique_urls = []
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                unique_urls.append(u)
+
+        if unique_urls:
             centros.append({
                 "nombre": nombre,
-                "region": str(row.get("REGIÓN", "")),
-                "tipo": str(row.get("TIPO DE CENTRO", "")),
-                "urls": urls,
+                "region": str(row.get(col_region, "")).strip() if col_region else "",
+                "tipo":   str(row.get(col_tipo, "")).strip()   if col_tipo   else "",
+                "urls":   unique_urls,
             })
-    
+
     return centros
 
 # ============================================================================
@@ -1213,6 +1250,10 @@ def main():
                         st.success(f"✅ {len(st.session_state.tematicas_list)} temáticas cargadas")
                     else:
                         st.warning("⚠️ No se pudieron cargar temáticas")
+            
+            # Preview compacto en sidebar
+            if st.session_state.centros_list:
+                st.caption(f"📋 {len(st.session_state.centros_list)} centros · {sum(len(c['urls']) for c in st.session_state.centros_list)} URLs totales")
         
         st.divider()
         
@@ -1294,6 +1335,45 @@ def main():
     # ------------------------------------------------------------------------
     with tab1:
         st.markdown('<p class="section-title">🔍 Selecciona centros para analizar</p>', unsafe_allow_html=True)
+        
+        # ---- Preview de datos cargados del Excel ----
+        if st.session_state.centros_list:
+            with st.expander(f"📊 Previsualización del Excel — {len(st.session_state.centros_list)} centros cargados", expanded=False):
+                preview_rows = []
+                for c in st.session_state.centros_list:
+                    row = {
+                        "Nombre": c["nombre"],
+                        "Región": c["region"],
+                        "Tipo": c["tipo"],
+                        "Nº URLs": len(c["urls"]),
+                    }
+                    # Columnas WEB 1..N dinámicas
+                    for i, url in enumerate(c["urls"], 1):
+                        label = "WEB DIRECTORIO" if i == 1 else f"WEB {i}"
+                        row[label] = url
+                    preview_rows.append(row)
+                
+                df_preview = pd.DataFrame(preview_rows)
+                
+                # Columnas URL como LinkColumn
+                url_col_config = {}
+                for col in df_preview.columns:
+                    if col.startswith("WEB"):
+                        url_col_config[col] = st.column_config.LinkColumn(col)
+                url_col_config["Nº URLs"] = st.column_config.NumberColumn("Nº URLs", width="small")
+                
+                st.dataframe(
+                    df_preview,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=url_col_config,
+                )
+                
+                # Métricas rápidas
+                mc1, mc2, mc3 = st.columns(3)
+                mc1.metric("Centros", len(st.session_state.centros_list))
+                mc2.metric("URLs totales", sum(len(c["urls"]) for c in st.session_state.centros_list))
+                mc3.metric("Regiones", len(set(c["region"] for c in st.session_state.centros_list if c["region"])))
         
         # Filtros
         col_f1, col_f2, col_f3 = st.columns(3)
