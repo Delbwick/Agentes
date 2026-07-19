@@ -1260,12 +1260,16 @@ with tab3:
 # TAB 4 - MONITOR DE CONTENIDOS (DEFINITIVO + CORREGIDO)
 # =====================================================
 
+# =====================================================
+# TAB 4 - MONITOR DE CONTENIDOS (v3.0: DOWNLOAD TXT + WEB SCRAPING)
+# =====================================================
+
 with tab4:
     st.markdown("## 📡 Monitor de Contenidos LifeSciences")
     st.markdown("*Fuentes fidedignas que revisan cada 24h y sugieren contenido relevante para tus verticales*")
     
     # =====================================================
-    # DEFINICIÓN DE FUENTES FIDEDIGNAS (6 originales + 3 adicionales)
+    # DEFINICIÓN DE FUENTES FIDEDIGNAS
     # =====================================================
     
     TRUSTED_SOURCES = {
@@ -1331,7 +1335,7 @@ with tab4:
             "weekly_focus": ["QC release", "Validación"],
             "tips": ["Focalizar en 'Analytical'"]
         },
-        # 🆕 Fuentes adicionales
+        # Fuentes adicionales
         "applied_clinical": {
             "id": "applied_clinical", "name": "Applied Clinical Trials", "url": "https://appliedclinicaltrialsonline.com",
             "type": "market", "confidence": "B", "category": "DCT/eClinical",
@@ -1364,7 +1368,7 @@ with tab4:
     COVERAGE_NOTES = "Con estas 9 fuentes cubres: Dx/Genómica, QC/ATMP, RWE/DCT, MedTech. Confianza global: B."
     
     # =====================================================
-    # INICIALIZACIÓN DE ESTADO & AUTO-GUARDADO DIARIO (.TXT)
+    # INICIALIZACIÓN DE ESTADO & AUTO-GUARDADO DIARIO
     # =====================================================
     if "monitor_active_sources" not in st.session_state:
         st.session_state.monitor_active_sources = list(TRUSTED_SOURCES.keys())
@@ -1377,7 +1381,7 @@ with tab4:
     if "monitor_last_daily_save" not in st.session_state:
         st.session_state.monitor_last_daily_save = None
 
-    # 🔧 Auto-guardado histórico diario en GCS
+    # Auto-guardado histórico diario en GCS
     now = datetime.now()
     if st.session_state.monitor_last_daily_save is None or (now - st.session_state.monitor_last_daily_save).total_seconds() >= 86400:
         if st.session_state.monitor_suggestions:
@@ -1392,7 +1396,7 @@ with tab4:
                     src = s.get("source", {})
                     sug = s.get("suggestion", {})
                     ana = s.get("analysis", {})
-                    lines.append(f"📌 #{i} | {src.get('name','?')} ({src.get('category','?')})")
+                    lines.append(f" #{i} | {src.get('name','?')} ({src.get('category','?')})")
                     lines.append(f"   Título: {sug.get('title','')} | Urgencia: {sug.get('urgency','media')}")
                     lines.append(f"   Tendencias: {', '.join(ana.get('trends',[])[:2])}")
                     lines.append("")
@@ -1404,9 +1408,9 @@ with tab4:
                 blob.upload_from_string(txt_content, content_type='text/plain; charset=utf-8')
                 st.session_state.monitor_last_daily_save = now
             except Exception as e:
-                st.warning(f"️ Auto-guardado diario falló: {str(e)[:60]}")
+                st.warning(f"⚠️ Auto-guardado diario falló: {str(e)[:60]}")
 
-    #  Gráfica resumen rápida
+    # Gráfica resumen rápida
     if st.session_state.monitor_suggestions:
         st.markdown("### 📈 Resumen de Sugerencias")
         col_m1, col_m2, col_m3 = st.columns(3)
@@ -1419,20 +1423,21 @@ with tab4:
         col_m2.metric("🔥 Alta/Crítica", urg_dist.get("alta", 0) + urg_dist.get("crítica", 0))
         col_m3.metric("📅 Última Revisión", st.session_state.monitor_last_check.strftime("%d/%m %H:%M") if st.session_state.monitor_last_check else "Nunca")
         
-        st.bar_chart(pd.DataFrame(urg_dist, index=["Urgencia"]).T if urg_dist else pd.DataFrame())
+        if urg_dist:
+            st.bar_chart(pd.DataFrame(urg_dist, index=["Urgencia"]).T)
         st.markdown("---")
     
     # =====================================================
     # SECCIÓN 1: FUENTES
     # =====================================================
-    st.markdown("###  Fuentes Fidedignas")
+    st.markdown("### 🔗 Fuentes Fidedignas")
     
     tab_sci, tab_mkt = st.tabs(["🔬 Científicas", "📊 Mercado + Adicionales"])
     
     with tab_sci:
         for src_id, src in TRUSTED_SOURCES.items():
             if src.get("type") == "scientific":
-                with st.expander(f"{'🟢' if src.get('confidence')=='A' else '🟡'} {src.get('name', 'N/A')} — {src.get('category', 'N/A')}", expanded=False):
+                with st.expander(f"{'' if src.get('confidence')=='A' else '🟡'} {src.get('name', 'N/A')} — {src.get('category', 'N/A')}", expanded=False):
                     st.markdown(f"**URL:** [{src.get('url', '#')}]({src.get('url', '#')})")
                     st.markdown(f"*{src.get('why', '')}*")
                     for q in src.get("watch_queries", []):
@@ -1450,7 +1455,7 @@ with tab4:
         st.markdown("#### 📊 Mercado (Originales)")
         for src_id, src in TRUSTED_SOURCES.items():
             if src.get("type") == "market" and src_id in ["genomeweb", "endpoints", "bioprocess"]:
-                with st.expander(f"🟡 {src.get('name', 'N/A')} — {src.get('category', 'N/A')}", expanded=False):
+                with st.expander(f" {src.get('name', 'N/A')} — {src.get('category', 'N/A')}", expanded=False):
                     st.markdown(f"**URL:** [{src.get('url', '#')}]({src.get('url', '#')})")
                     st.markdown(f"*{src.get('why', '')}*")
                     for q in src.get("watch_queries", []):
@@ -1579,28 +1584,28 @@ Detectar {focus}. Responde en JSON:
                         }
                         suggestions.append(suggestion)
                     except Exception as e:
-                        st.warning(f"⚠️ Error en {src.get('name', '?')}: {str(e)[:50]}")
+                        st.warning(f"️ Error en {src.get('name', '?')}: {str(e)[:50]}")
                 
-                # ✅ Auto-guardado en GCS tras revisión
+                # Auto-guardado en GCS tras revisión
                 if suggestions:
                     try:
                         fname = f"monitor_contenidos/revision_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                         upload_json_to_gcs(client, bucket_name, "", fname, {"checked_at": datetime.now().isoformat(), "suggestions": suggestions})
                         st.success(f"✅ {len(suggestions)} sugerencias guardadas en `monitor_contenidos/`")
                     except Exception as e:
-                        st.warning(f"️ Auto-guardado falló: {str(e)[:80]}")
+                        st.warning(f"⚠️ Auto-guardado falló: {str(e)[:80]}")
                 
                 st.session_state.monitor_suggestions = suggestions
                 st.session_state.monitor_last_check = datetime.now()
                 
                 # Memo viernes
                 if today == "Friday" and suggestions:
-                    memo = f"# 📋 Implications Memo — {datetime.now().strftime('%d/%m/%Y')}\n\n## 🔥 Tech que acelera\n"
+                    memo = f"#  Implications Memo — {datetime.now().strftime('%d/%m/%Y')}\n\n## 🔥 Tech que acelera\n"
                     for s in [x for x in suggestions if x.get("suggestion", {}).get("urgency") in ["alta", "crítica"]][:3]:
                         memo += f"- **{s.get('source', {}).get('name', 'N/A')}**: {s.get('suggestion', {}).get('title', 'N/A')}\n"
-                    with st.expander(" Memo viernes", expanded=True):
+                    with st.expander("📋 Memo viernes", expanded=True):
                         st.markdown(memo)
-                        if st.button(" Copiar", key="copy_memo"): st.code(memo, language="markdown")
+                        if st.button("📋 Copiar", key="copy_memo"): st.code(memo, language="markdown")
                 
                 st.success(f"✅ Revisión: {len(suggestions)} sugerencias")
                 st.rerun()
@@ -1614,10 +1619,10 @@ Detectar {focus}. Responde en JSON:
             st.info("🔍 Sin revisiones. Click en 'Revisar fuentes ahora'.")
     
     # =====================================================
-    # SECCIÓN 3: SUGERENCIAS (CORREGIDO + PREVIEW + BOTONES)
+    # SECCIÓN 3: SUGERENCIAS (CON DOWNLOAD TXT + WEB SCRAPING)
     # =====================================================
     if st.session_state.monitor_suggestions:
-        st.markdown("---\n### 💡 Sugerencias de Contenido")
+        st.markdown("---\n###  Sugerencias de Contenido")
         
         col_f1, col_f2 = st.columns(2)
         with col_f1:
@@ -1629,15 +1634,49 @@ Detectar {focus}. Responde en JSON:
         if f_cat: filtered = [s for s in filtered if s.get("source", {}).get("category") in f_cat]
         if f_urg != "Todas": filtered = [s for s in filtered if s.get("suggestion", {}).get("urgency") == f_urg]
         
+        # Función para generar contenido .txt formateado
+        def generate_txt_content(sug):
+            src = sug.get("source", {})
+            sugg = sug.get("suggestion", {})
+            ana = sug.get("analysis", {})
+            
+            lines = [
+                f"{sugg.get('title', 'Sin título')}",
+                "",
+                f"Fuente: {src.get('name', 'N/A')}",
+                "",
+                f"Confianza: {src.get('confidence', 'N/A')} | Categoría: {src.get('category', 'N/A')}",
+                f"Generado: {sug.get('created_at', 'N/A')}",
+                "",
+                "📈 Tendencias:"
+            ]
+            for t in ana.get("trends", [])[:3]:
+                lines.append(f"• {t}")
+            
+            lines.append("")
+            lines.append(" Oportunidades:")
+            for o in ana.get("opportunities", [])[:2]:
+                lines.append(f"✓ {o}")
+            
+            lines.append("")
+            lines.append(f"Formato: {sugg.get('format', 'N/A')}")
+            lines.append(f"Audiencia: {sugg.get('audience', 'N/A')}")
+            
+            verts = sugg.get("verticals", [])
+            if verts:
+                lines.append(f"Verticales: {', '.join(verts)}")
+            
+            return "\n".join(lines)
+        
         for sug in filtered:
             src = sug.get("source", {})
             sugg = sug.get("suggestion", {})
             analysis = sug.get("analysis", {})
             
-            urgency_colors = {"crítica": "", "alta": "🟠", "media": "🟡", "baja": "🟢"}
+            urgency_colors = {"crítica": "🔴", "alta": "🟠", "media": "🟡", "baja": ""}
             urgency = sugg.get("urgency", "media")
             
-            with st.expander(f"{urgency_colors.get(urgency, '')} {src.get('name', 'N/A')} — {sugg.get('title', 'Sin título')}", expanded=(urgency in ["crítica", "alta"])):
+            with st.expander(f"{urgency_colors.get(urgency, '⚪')} {src.get('name', 'N/A')} — {sugg.get('title', 'Sin título')}", expanded=(urgency in ["crítica", "alta"])):
                 
                 col_s1, col_s2 = st.columns([3, 1])
                 
@@ -1670,7 +1709,7 @@ Detectar {focus}. Responde en JSON:
                     
                     st.markdown("---")
                     
-                    # ✅ BOTÓN COMPATIBLE CON STREAMLIT
+                    # Botón Preparar para Tab 1
                     if st.button("📤 Preparar para Tab 1", key=f"send_{sug.get('id', 'unknown')}", type="primary", use_container_width=True):
                         query = sugg.get("tab1_query", "")
                         st.info(f"✅ **Query lista:**\n1. Ve a **🎯 Generar Contenido**\n2. Pega en **Consulta Personalizada**")
@@ -1683,14 +1722,53 @@ Detectar {focus}. Responde en JSON:
                         sug["status"] = "reviewed"
                         st.rerun()
                     
-                    if st.button("️ Descartar", key=f"discard_{sug.get('id', 'unknown')}", use_container_width=True):
+                    if st.button("🗑️ Descartar", key=f"discard_{sug.get('id', 'unknown')}", use_container_width=True):
                         st.session_state.monitor_suggestions.remove(sug)
                         st.rerun()
                 
-                # ✅ PREVIEW FORMATEADO (MEJORA #2)
+                # ✅ NUEVO: Botón para analizar web fuente (MEJORA #2)
+                src_url = src.get("url", "#")
+                if src_url and src_url != "#":
+                    if st.button("🔍 Analizar web fuente", key=f"scrape_{sug.get('id', 'unknown')}", use_container_width=True):
+                        try:
+                            import requests
+                            from bs4 import BeautifulSoup
+                            
+                            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                            response = requests.get(src_url, headers=headers, timeout=10)
+                            soup = BeautifulSoup(response.content, 'html.parser')
+                            
+                            # Extraer metadatos
+                            title = soup.find('title')
+                            meta_desc = soup.find('meta', attrs={'name': 'description'})
+                            meta_keywords = soup.find('meta', attrs={'name': 'keywords'})
+                            
+                            st.info(f"**📄 Información extraída de {src_url}**")
+                            
+                            if title:
+                                st.markdown(f"**Título:** {title.get_text().strip()}")
+                            if meta_desc:
+                                st.markdown(f"**Descripción:** {meta_desc.get('content', '')}")
+                            if meta_keywords:
+                                st.markdown(f"**Keywords:** {meta_keywords.get('content', '')}")
+                            
+                            # Extraer primeros párrafos
+                            paragraphs = soup.find_all('p')
+                            if paragraphs:
+                                st.markdown("** Contenido destacado:**")
+                                for p in paragraphs[:3]:
+                                    text = p.get_text().strip()
+                                    if len(text) > 50:  # Solo párrafos relevantes
+                                        st.markdown(f"• {text[:200]}...")
+                            
+                        except Exception as e:
+                            st.error(f"❌ Error al analizar web: {str(e)[:150]}")
+                            st.info("💡 Algunas webs bloquean scraping automático")
+                
+                # Preview formateado
                 st.markdown("---\n**👁️ Vista previa formateada:**")
                 fmt_tabs = st.tabs(["📧 Email", "💼 LinkedIn", "🌐 Web", "📝 Texto"])
-                formats = [" Email Corporativo", "💼 Post LinkedIn", "🌐 Artículo Web/Blog", "📝 Texto Plano"]
+                formats = ["📧 Email Corporativo", "💼 Post LinkedIn", "🌐 Artículo Web/Blog", "📝 Texto Plano"]
                 
                 def fmt_neutral(ana, fmt):
                     tr = ana.get("trends", [])
@@ -1711,21 +1789,38 @@ Detectar {focus}. Responde en JSON:
                         else:
                             st.code(content, language="text")
                 
-                # ✅ GUARDADO MANUAL (MEJORA #4)
+                # ✅ NUEVO: Botones Guardar + Descargar (MEJORA #1)
                 st.markdown("---")
-                if st.button(" Guardar sugerencia en GCS", key=f"save_{sug.get('id', 'unknown')}", use_container_width=True):
-                    try:
-                        fname = f"monitor_contenidos/sugerencia_{sug.get('id', 'unknown')}.json"
-                        upload_json_to_gcs(client, bucket_name, "", fname, sug)
-                        st.success(f"✅ Guardado: {fname}")
-                    except Exception as e:
-                        st.error(f"❌ Error: {str(e)[:100]}")
+                col_save, col_dl = st.columns(2)
+                
+                with col_save:
+                    if st.button("💾 Guardar sugerencia en GCS", key=f"save_{sug.get('id', 'unknown')}", use_container_width=True):
+                        try:
+                            fname = f"monitor_contenidos/sugerencia_{sug.get('id', 'unknown')}.json"
+                            upload_json_to_gcs(client, bucket_name, "", fname, sug)
+                            st.success(f"✅ Guardado: {fname}")
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)[:100]}")
+                
+                with col_dl:
+                    # Generar contenido .txt
+                    txt_content = generate_txt_content(sug)
+                    fname_txt = f"sugerencia_{sug.get('source', {}).get('name', 'unknown')}_{datetime.now().strftime('%Y%m%d')}.txt"
+                    
+                    st.download_button(
+                        label="📥 Descargar contenido (.txt)",
+                        data=txt_content,
+                        file_name=fname_txt,
+                        mime="text/plain",
+                        use_container_width=True,
+                        key=f"dl_{sug.get('id', 'unknown')}"
+                    )
     
     # =====================================================
     # SECCIÓN 4: COBERTURA + CONFIGURACIÓN
     # =====================================================
     st.markdown("---")
-    with st.expander("🗺️ Cobertura + Configuración", expanded=False):
+    with st.expander("️ Cobertura + Configuración", expanded=False):
         st.markdown(COVERAGE_NOTES)
         st.markdown("#### ⚙️ Configuración")
         col_c1, col_c2 = st.columns(2)
@@ -1746,6 +1841,7 @@ Detectar {focus}. Responde en JSON:
     
     *Brief actualizado: {datetime.now().strftime('%B %Y')} | Fuentes: {len(st.session_state.monitor_active_sources)} activas*
     """)
+    
 
 
 # =====================================================
