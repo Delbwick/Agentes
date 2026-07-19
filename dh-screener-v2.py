@@ -7,7 +7,7 @@ Pipeline completo para identificar oportunidades de inversión en healthtech:
 - Análisis IA específico por tipo de entidad
 - VALIDACIÓN CON PERPLEXITY para verificar hechos, fechas y URLs
 - Monitoreo de portales europeos con fuentes reales (no simuladas)
-- Caché robusto para evitar re-procesamiento.
+- Caché robusto para evitar re-procesamiento
 """
 import os
 import re
@@ -349,6 +349,132 @@ class WebCrawler:
         text = re.sub(r'[ \t]+', ' ', text)
         return text.strip()
 
+    def _is_directory_page(self, page: Dict) -> bool:
+        """Determina si una página es un índice/directorio con sub-páginas relevantes."""
+        url = page.get("url", "").lower()
+        page_type = page.get("page_type", "")
+        text = page.get("text", "").lower()
+        
+        # Tipos de página que suelen ser directorios
+        directory_types = {"company_directory", "people_directory", "project_listing", "technology_transfer", "research_publications"}
+        if page_type in directory_types:
+            return True
+        
+        # Patrones en URL que indican índice
+        directory_url_patterns = [
+            r'/spin[-_]?off', r'/startups?', r'/empresas?', r'/portfolio',
+            r'/investigador', r'/researcher', r'/people', r'/equipo', r'/team',
+            r'/proyectos?', r'/projects?', r'/research', r'/investigacion',
+            r'/tecnolog', r'/transfer', r'/patent', r'/publicacion', r'/publication',
+            r'/directorio', r'/directory', r'/catalog', r'/catalogo',
+            r'/groups?', r'/grupos?', r'/lab', r'/departamento',
+        ]
+        if any(re.search(p, url) for p in directory_url_patterns):
+            return True
+        
+        # Heurística: muchos links del mismo dominio con texto corto → listing
+        internal_links = page.get("internal_links", [])
+        if len(internal_links) >= 8:
+            # Si hay muchos links con textos parecidos en longitud → directorio
+            avg_link_text = sum(len(l.get("text", "")) for l in internal_links) / len(internal_links)
+            if avg_link_text < 60:
+                return True
+        
+        return False
+
+    def _score_suburl(self, link: Dict, base_url: str) -> int:
+        """
+        Puntúa un link para decidir si merece crawlarse.
+        Mayor score = más relevante. Retorna 0 si debe descartarse.
+        """
+        url = link.get("url", "").lower()
+        text = link.get("text", "").lower()
+        base_path = urlparse(base_url).path.rstrip("/")
+
+        # Descartar: URLs de recursos estáticos, login, admin, etc.
+        skip_patterns = [
+            r'\.(pdf|doc|docx|xls|xlsx|jpg|png|gif|svg|zip|mp4)$',
+            r'/(login|logout|register|admin|wp-admin|wp-login|cart|checkout)',
+            r'/(privacy|cookies|legal|aviso|terminos|terms|contact|contacto|about|quienes)',
+            r'/(news|noticias|blog|events|eventos|agenda|calendar)(?:/|$)',
+            r'/(tag|category|categoria|search|buscar)\b',
+            r'\?.*page=\d',  # paginación
+        ]
+        for p in skip_patterns:
+            if re.search(p, url):
+                return 0
+
+        score = 30  # base
+
+        # Bonus por palabras clave relevantes en URL
+        relevant_url = [
+            (r'/spin[-_]?off|/startup|/empresa|/portfolio|/company', 40),
+            (r'/investigador|/researcher|/people|/team|/equipo|/grupo|/group|/lab', 35),
+            (r'/proyecto|/project|/research|/tecnolog|/transfer|/patent|/innov', 35),
+            (r'/publicacion|/publication|/paper|/article', 30),
+            (r'/perfil|/profile|/ficha|/detalle|/detail|/view', 20),
+        ]
+        for pattern, bonus in relevant_url:
+            if re.search(pattern, url):
+                score += bonus
+                break
+
+        # Bonus por palabras clave en el texto del link
+        relevant_text = [
+            (r'spin[-\s]?off|startup|empresa|company|portfolio', 30),
+            (r'investigador|researcher|inventor|founder|ceo|cto', 25),
+            (r'proyecto|project|tecnolog|patent|transfer|innov', 25),
+            (r'ver más|view|detalle|detail|perfil|profile|ficha', 15),
+        ]
+        for pattern, bonus in relevant_text:
+            if re.search(pattern, text):
+                score += bonus
+                break
+
+        # Penalización: si la URL no profundiza más que la base
+        parsed_url = urlparse(link.get("url", ""))
+        url_path = parsed_url.path.rstrip("/")
+        if not url_path.startswith(base_path) or url_path == base_path:
+            score -= 20
+
+        # Penalización: paths muy cortos (probablemente homepage o sección genérica)
+        if len(url_path.split("/")) <= 2:
+            score -= 15
+
+        return max(0, score)
+
+    def get_crawl_queue(self, seed_url: str, page: Dict, max_subpages: int = 8) -> List[str]:
+        """
+        Para una URL semilla y su página ya descargada, devuelve una lista de
+        sub-URLs a crawlear si la página es un directorio, ordenadas por relevancia.
+        """
+        if not self._is_directory_page(page):
+            return []
+        
+        internal_links = page.get("internal_links", [])
+        if not internal_links:
+            return []
+        
+        # Puntuar y filtrar
+        scored = []
+        for link in internal_links:
+            s = self._score_suburl(link, seed_url)
+            if s > 20:
+                scored.append((s, link["url"]))
+        
+        # Ordenar por score descendente y deduplicar
+        scored.sort(key=lambda x: x[0], reverse=True)
+        seen = set()
+        result = []
+        for _, url in scored:
+            if url not in seen and url != seed_url:
+                seen.add(url)
+                result.append(url)
+                if len(result) >= max_subpages:
+                    break
+        
+        return result
+
 # ============================================================================
 # CLASE: ORCID INTEGRATOR
 # ============================================================================
@@ -431,72 +557,213 @@ class ORCIDIntegrator:
         return keywords[:20]
 
 # ============================================================================
-# VALIDACIÓN CON PERPLEXITY (NUEVO)
+# PASO 1: EXTRACCIÓN LIMPIA CON GPT (solo lo que está en el HTML)
 # ============================================================================
-def validate_with_perplexity(raw_data: dict, query: str, perplexity_key: str) -> dict:
-    """Valida datos con Perplexity, fuerza verificación web y sugiere fuentes similares"""
+# EntityExtractor se mantiene igual pero su prompt cambia: solo extrae
+# nombres/menciones que APARECEN en el texto. No busca ni inventa nada externo.
+
+# ============================================================================
+# PASO 2: ENRIQUECIMIENTO CON PERPLEXITY (búsqueda real en internet)
+# ============================================================================
+def enrich_entities_with_perplexity(entities: List[Dict], entity_type: str, centro: str, perplexity_key: str) -> List[Dict]:
+    """
+    Recibe entidades extraídas por GPT del HTML y las enriquece con búsqueda
+    real en internet via Perplexity. Verifica existencia, completa datos,
+    corrige URLs y añade información actualizada.
+    
+    Retorna la lista enriquecida. Si Perplexity falla para una entidad,
+    se conserva la original con flag verified=False.
+    """
+    if not perplexity_key or not entities:
+        return entities
+    
     pplx = OpenAI(api_key=perplexity_key, base_url="https://api.perplexity.ai")
+    enriched = []
     
-    system_prompt = """Eres un validador experto en fact-checking y verificación web. 
-Tu ÚNICA tarea es verificar los hechos, fechas, URLs y datos proporcionados.
-
-REGLAS ESTRICTAS:
-1. Busca en la web cada claim importante
-2. Si un dato no es verificable, márcalo como "No verificable"
-3. Corrige URLs truncadas o rotas. Devuelve solo URLs completas y accesibles
-4. NO inventes enlaces, fechas ni nombres
-5. Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura:
-
+    TYPE_INSTRUCTIONS = {
+        "technologies": """Busca en internet información sobre esta tecnología/patente del centro de investigación indicado.
+Devuelve SOLO JSON con esta estructura exacta:
 {
-  "verified_claims": ["claim1", "claim2"],
-  "unverified_claims": ["claim3"],
-  "corrected_urls": ["url_completa1", "url_completa2"],
-  "similar_verified_sources": ["https://...", "https://..."],
-  "confidence_score": 0.95,
-  "validation_notes": "Notas de verificación"
+  "existe": true/false,
+  "nombre_verificado": "nombre oficial si existe",
+  "descripcion_verificada": "descripción real y actualizada",
+  "url_oficial": "URL real y accesible o null",
+  "estado_real": "investigación|prototipo|validación|comercial",
+  "aplicacion_health": "aplicación real en salud",
+  "score_ajustado": 0-100,
+  "fuentes": ["url1", "url2"],
+  "notas": "información adicional relevante encontrada"
+}""",
+        "papers": """Busca en internet este artículo científico del centro de investigación indicado.
+Devuelve SOLO JSON con esta estructura exacta:
+{
+  "existe": true/false,
+  "titulo_verificado": "título oficial",
+  "journal_verificado": "journal real",
+  "doi": "DOI si existe o null",
+  "url_oficial": "URL real del paper o null",
+  "anio_verificado": "año real",
+  "autores_verificados": ["autor1", "autor2"],
+  "resumen_real": "abstract o resumen breve",
+  "score_ajustado": 0-100,
+  "fuentes": ["url1", "url2"]
+}""",
+        "companies": """Busca en internet esta empresa/startup/spin-off del centro de investigación indicado.
+Devuelve SOLO JSON con esta estructura exacta:
+{
+  "existe": true/false,
+  "nombre_verificado": "nombre oficial",
+  "descripcion_verificada": "descripción real y actualizada",
+  "url_oficial": "web oficial real o null",
+  "linkedin": "URL LinkedIn si existe o null",
+  "estado_real": "seed|series A|growth|exit|activa|inactiva",
+  "fundacion": "año de fundación o null",
+  "financiacion": "rondas conocidas o null",
+  "sector_verificado": "sector real",
+  "score_ajustado": 0-100,
+  "fuentes": ["url1", "url2"],
+  "notas": "noticias recientes o información adicional"
+}""",
+        "people": """Busca en internet a esta persona del centro de investigación indicado.
+Devuelve SOLO JSON con esta estructura exacta:
+{
+  "existe": true/false,
+  "nombre_verificado": "nombre completo oficial",
+  "afiliacion_verificada": "afiliación actual real",
+  "rol_verificado": "rol/cargo actual",
+  "url_perfil": "URL perfil institucional o LinkedIn real o null",
+  "orcid_verificado": "ORCID real si existe o null",
+  "publicaciones_recientes": ["título paper 1", "título paper 2"],
+  "expertise_verificado": ["área1", "área2"],
+  "score_ajustado": 0-100,
+  "fuentes": ["url1", "url2"]
 }"""
+    }
     
-    user_message = f"""DATOS A VALIDAR:
-{json.dumps(raw_data, indent=2, ensure_ascii=False)}
-
-CONSULTA ORIGINAL: {query}
-
-Verifica todo, corrige URLs y sugiere fuentes similares reales."""
+    system_prompt = TYPE_INSTRUCTIONS.get(entity_type, TYPE_INSTRUCTIONS["companies"])
     
-    try:
-        res = pplx.chat.completions.create(
-            model="sonar", 
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ],
-            temperature=0.1
-        )
+    for entity in entities:
+        nombre = entity.get("nombre") or entity.get("titulo") or entity.get("nombre_verificado", "")
+        if not nombre:
+            enriched.append({**entity, "verified": False})
+            continue
         
-        clean = res.choices[0].message.content.strip()
+        user_msg = f"""CENTRO DE INVESTIGACIÓN: {centro}
+ENTIDAD A BUSCAR: {nombre}
+DATOS PREVIOS (pueden ser incorrectos): {json.dumps(entity, ensure_ascii=False, indent=2)[:500]}
+
+Busca información real y actualizada sobre esta entidad. Si no existe o no encuentras nada confiable, indica existe=false."""
         
-        # Limpiar formato de código si existe
-        if "```json" in clean:
-            clean = clean.split("```json")[1].split("```")[0].strip()
-        elif "```" in clean:
-            clean = clean.split("```")[1].split("```")[0].strip()
-        
-        validated = json.loads(clean)
-        
-        # Post-procesado de URLs
-        if "corrected_urls" in validated:
-            validated["corrected_urls"] = [clean_and_validate_urls(u) for u in validated["corrected_urls"]]
-        if "similar_verified_sources" in validated:
-            validated["similar_verified_sources"] = [clean_and_validate_urls(u) for u in validated["similar_verified_sources"]]
-        
-        return validated
-        
-    except Exception as e:
-        return {
-            "error": str(e),
-            "confidence_score": 0.0,
-            "validation_notes": "Error en validación con Perplexity"
-        }
+        try:
+            res = pplx.chat.completions.create(
+                model="sonar",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg}
+                ],
+                temperature=0.1
+            )
+            
+            raw = res.choices[0].message.content.strip()
+            if "```json" in raw:
+                raw = raw.split("```json")[1].split("```")[0].strip()
+            elif "```" in raw:
+                raw = raw.split("```")[1].split("```")[0].strip()
+            
+            enriched_data = json.loads(raw)
+            
+            # Merge: datos originales + enriquecimiento, con prioridad a Perplexity
+            merged = {**entity}
+            merged["verified"] = enriched_data.get("existe", False)
+            merged["verified_at"] = datetime.now().isoformat()
+            merged["fuentes_web"] = enriched_data.get("fuentes", [])
+            
+            # Actualizar score si Perplexity lo ajusta
+            if enriched_data.get("score_ajustado"):
+                merged["score"] = enriched_data["score_ajustado"]
+            
+            # Si no existe, bajar score drásticamente
+            if not enriched_data.get("existe", True):
+                merged["score"] = min(merged.get("score", 50), 20)
+                merged["notas_verificacion"] = "No verificado en internet"
+            else:
+                # Sobrescribir campos con datos verificados
+                if entity_type == "technologies":
+                    if enriched_data.get("nombre_verificado"):
+                        merged["nombre"] = enriched_data["nombre_verificado"]
+                    if enriched_data.get("descripcion_verificada"):
+                        merged["descripcion"] = enriched_data["descripcion_verificada"]
+                    if enriched_data.get("url_oficial"):
+                        merged["referencia"] = enriched_data["url_oficial"]
+                    if enriched_data.get("estado_real"):
+                        merged["madurez"] = enriched_data["estado_real"]
+                    if enriched_data.get("aplicacion_health"):
+                        merged["aplicacion_health"] = enriched_data["aplicacion_health"]
+                
+                elif entity_type == "papers":
+                    if enriched_data.get("titulo_verificado"):
+                        merged["titulo"] = enriched_data["titulo_verificado"]
+                    if enriched_data.get("journal_verificado"):
+                        merged["journal"] = enriched_data["journal_verificado"]
+                    if enriched_data.get("doi"):
+                        merged["doi"] = enriched_data["doi"]
+                        merged["referencia"] = f"https://doi.org/{enriched_data['doi']}"
+                    elif enriched_data.get("url_oficial"):
+                        merged["referencia"] = enriched_data["url_oficial"]
+                    if enriched_data.get("anio_verificado"):
+                        merged["anio"] = enriched_data["anio_verificado"]
+                    if enriched_data.get("autores_verificados"):
+                        merged["autores_principales"] = enriched_data["autores_verificados"]
+                    if enriched_data.get("resumen_real"):
+                        merged["relevancia_health"] = enriched_data["resumen_real"]
+                
+                elif entity_type == "companies":
+                    if enriched_data.get("nombre_verificado"):
+                        merged["nombre"] = enriched_data["nombre_verificado"]
+                    if enriched_data.get("descripcion_verificada"):
+                        merged["descripcion"] = enriched_data["descripcion_verificada"]
+                    if enriched_data.get("url_oficial"):
+                        merged["referencia"] = enriched_data["url_oficial"]
+                    if enriched_data.get("linkedin"):
+                        merged["linkedin"] = enriched_data["linkedin"]
+                    if enriched_data.get("estado_real"):
+                        merged["estado"] = enriched_data["estado_real"]
+                    if enriched_data.get("financiacion"):
+                        merged["financiacion"] = enriched_data["financiacion"]
+                    if enriched_data.get("notas"):
+                        merged["notas"] = enriched_data["notas"]
+                
+                elif entity_type == "people":
+                    if enriched_data.get("nombre_verificado"):
+                        merged["nombre"] = enriched_data["nombre_verificado"]
+                    if enriched_data.get("afiliacion_verificada"):
+                        merged["afiliacion"] = enriched_data["afiliacion_verificada"]
+                    if enriched_data.get("rol_verificado"):
+                        merged["rol"] = enriched_data["rol_verificado"]
+                    if enriched_data.get("url_perfil"):
+                        merged["referencia"] = enriched_data["url_perfil"]
+                    if enriched_data.get("orcid_verificado"):
+                        merged["orcid"] = enriched_data["orcid_verificado"]
+                    if enriched_data.get("expertise_verificado"):
+                        merged["expertise"] = enriched_data["expertise_verificado"]
+            
+            enriched.append(merged)
+            
+        except Exception as e:
+            # Conservar original con flag de error
+            enriched.append({
+                **entity,
+                "verified": False,
+                "verification_error": str(e)[:100]
+            })
+    
+    return enriched
+
+
+def validate_with_perplexity(raw_data: dict, query: str, perplexity_key: str) -> dict:
+    """Wrapper legacy — redirige al nuevo enriquecimiento por entidad."""
+    # Mantenido por compatibilidad con el código de validación en batch del pipeline
+    return {"note": "Use enrich_entities_with_perplexity instead", "confidence_score": 0.0}
 
 # ============================================================================
 # CLASE: ENTITY EXTRACTOR (IA + Reglas)
@@ -506,101 +773,106 @@ class EntityExtractor:
     
     # Prompts específicos por tipo de entidad (en orden de prioridad)
     PROMPTS = {
-        "technologies": """Eres un analista de tecnología para Double Helix (healthtech VC).
-Analiza el contenido y extrae TECNOLOGÍAS, PATENTES o INVENCIONES relevantes.
+        "technologies": """Eres un extractor de entidades para Double Helix (healthtech VC).
+Analiza el TEXTO WEB proporcionado y extrae ÚNICAMENTE las tecnologías, patentes o invenciones
+que APARECEN EXPLÍCITAMENTE en ese texto. NO inventes nada que no esté en el texto.
 
-CRITERIOS:
-- Tecnologías con aplicación en salud/diagnóstico/farma/biotech
-- Patentes o invenciones con potencial comercial
-- Plataformas técnicas con aplicación clínica o industrial
+REGLAS ESTRICTAS:
+- Solo extrae lo que está escrito en el texto
+- Para "referencia": pon el fragmento de texto o sección donde aparece, NO una URL inventada
+- Si un campo no está en el texto, pon null
+- El score refleja cuánto aparece en el texto y su relevancia para healthtech
 
 FORMATO JSON:
 {
   "entities": [
     {
-      "nombre": "...",
+      "nombre": "nombre exacto como aparece en el texto",
       "tipo": "tecnología|patente|plataforma|dispositivo",
-      "descripcion": "...",
-      "aplicacion_health": "...",
-      "madurez": "investigación|prototipo|validación|comercial",
+      "descripcion": "descripción usando palabras del propio texto",
+      "aplicacion_health": "aplicación en salud si se menciona o null",
+      "madurez": "investigación|prototipo|validación|comercial según el texto",
       "score": 0-100,
-      "referencia": "URL o sección",
-      "keywords": ["..."]
+      "referencia": "fragmento o sección del texto donde aparece",
+      "keywords": ["keyword extraída del texto"]
     }
   ],
-  "resumen": "Breve descripción del foco tecnológico del centro"
+  "resumen": "resumen del foco tecnológico basado en el texto"
 }""",
-        
-        "papers": """Eres un analista científico para Double Helix.
-Extrae ARTÍCULOS CIENTÍFICOS o PUBLICACIONES con relevancia para healthtech.
 
-CRITERIOS:
-- Publicaciones en journals de impacto en salud/biotech
-- Resultados con potencial de transferencia tecnológica
-- Colaboraciones industria-academia relevantes
+        "papers": """Eres un extractor de entidades para Double Helix.
+Analiza el TEXTO WEB y extrae ÚNICAMENTE los artículos científicos o publicaciones
+que APARECEN EXPLÍCITAMENTE. NO inventes títulos, DOIs ni journals.
+
+REGLAS ESTRICTAS:
+- Solo extrae publicaciones mencionadas en el texto
+- DOI y URL solo si aparecen literalmente en el texto
+- Si un campo no está, pon null
 
 FORMATO JSON:
 {
   "entities": [
     {
-      "titulo": "...",
-      "journal": "...",
-      "anio": "...",
-      "relevancia_health": "...",
+      "titulo": "título exacto del texto",
+      "journal": "journal si se menciona o null",
+      "anio": "año si se menciona o null",
+      "relevancia_health": "relevancia según el texto",
       "transferencia_potencial": "alta|media|baja",
       "score": 0-100,
-      "autores_principales": ["..."],
-      "referencia": "DOI o URL"
+      "autores_principales": ["autores si aparecen en el texto"],
+      "referencia": "DOI o URL si aparece literalmente, si no null"
     }
   ]
 }""",
-        
-        "companies": """Eres un analista de dealflow para Double Helix.
-Extrae EMPRESAS, STARTUPS o PROYECTOS con potencial de inversión.
 
-CRITERIOS:
-- Empresas de healthtech, biotech, medtech, digital health
-- Spin-offs académicas o proyectos con validación
-- Equipos con experiencia y tracción
+        "companies": """Eres un extractor de entidades para Double Helix.
+Analiza el TEXTO WEB y extrae ÚNICAMENTE las empresas, startups o spin-offs
+que APARECEN EXPLÍCITAMENTE en ese texto. NO inventes nombres ni datos.
+
+REGLAS ESTRICTAS:
+- Solo empresas/proyectos mencionados en el texto
+- URL oficial solo si aparece en el texto
+- Estado/financiación solo si se menciona
 
 FORMATO JSON:
 {
   "entities": [
     {
-      "nombre": "...",
+      "nombre": "nombre exacto del texto",
       "tipo": "startup|spin-off|scale-up|proyecto",
-      "sector": "diagnóstico|terapias|digital health|biofarma|otros",
-      "descripcion": "...",
-      "estado": "seed|series A|growth|exit",
-      "equipo": "breve descripción del equipo",
+      "sector": "sector según el texto",
+      "descripcion": "descripción usando el propio texto",
+      "estado": "estado si se menciona o null",
+      "equipo": "info del equipo si aparece o null",
       "score": 0-100,
-      "referencia": "URL",
-      "notas": "Observaciones adicionales"
+      "referencia": "URL si aparece en el texto, si no null",
+      "notas": "observaciones del propio texto"
     }
   ]
 }""",
-        
-        "people": """Eres un analista de talento para Double Helix.
-Extrae PERSONAS CLAVE (investigadores, founders, CEOs) relevantes.
 
-CRITERIOS:
-- Investigadores con patentes/publicaciones en healthtech
-- Founders de startups con experiencia relevante
-- Expertos con red de contactos en el ecosistema
+        "people": """Eres un extractor de entidades para Double Helix.
+Analiza el TEXTO WEB y extrae ÚNICAMENTE las personas que APARECEN EXPLÍCITAMENTE.
+NO inventes nombres, roles ni contactos.
+
+REGLAS ESTRICTAS:
+- Solo personas mencionadas en el texto
+- ORCID solo si aparece literalmente
+- Email/LinkedIn solo si están en el texto
 
 FORMATO JSON:
 {
   "entities": [
     {
-      "nombre": "...",
-      "rol": "investigador|founder|CEO|CTO|advisor",
-      "afiliacion": "...",
-      "expertise": ["..."],
+      "nombre": "nombre exacto del texto",
+      "rol": "rol según el texto",
+      "afiliacion": "afiliación según el texto",
+      "expertise": ["áreas mencionadas en el texto"],
       "relevancia": "alta|media|baja",
       "score": 0-100,
-      "contacto": "email/linkedin si está disponible",
-      "referencia": "URL",
-      "orcid": "ORCID ID si está disponible"
+      "contacto": "email o LinkedIn si aparece en el texto o null",
+      "referencia": "URL del perfil si aparece en el texto o null",
+      "orcid": "ORCID si aparece literalmente o null"
     }
   ]
 }"""
@@ -785,8 +1057,8 @@ class DealflowPipeline:
         self.model = model
         self.token_tracker = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
     
-    def process_center(self, centro: Dict, tematicas: List, max_pages: int = 3) -> Dict:
-        """Procesa un centro completo: URLs → entidades → validación."""
+    def process_center(self, centro: Dict, tematicas: List, max_pages: int = 3, enrich_with_perplexity: bool = False, max_subpages: int = 8) -> Dict:
+        """Procesa un centro completo: URLs → crawl de directorios → extracción GPT → enriquecimiento Perplexity."""
         results = {
             "centro": centro["nombre"],
             "region": centro.get("region", ""),
@@ -796,65 +1068,93 @@ class DealflowPipeline:
             "summary": "",
             "page_types_found": [],
         }
-        
-        # Procesar cada URL del centro
-        for url in centro["urls"][:max_pages]:
-            url_normalized = normalize_url(url)
-            cache_key = url_hash(url_normalized)
-            
-            # Verificar caché
+
+        # ----------------------------------------------------------------
+        # Fase 1: construir la cola de URLs a procesar
+        # Partimos de las URLs del Excel y expandimos directorios
+        # ----------------------------------------------------------------
+        MAX_SUBPAGES_PER_DIRECTORY = max_subpages   # sub-URLs a seguir por cada directorio
+        MAX_TOTAL_PAGES = max_pages * 6  # techo absoluto para evitar explosión
+
+        seed_urls = centro["urls"][:max_pages]   # las URLs del Excel como semillas
+        crawl_queue: List[str] = list(seed_urls)
+        visited: set = set()
+
+        def _fetch_and_expand(url: str, is_seed: bool) -> Optional[Dict]:
+            """Fetcha una URL, la pone en visited, expande si es directorio."""
+            url = normalize_url(url)
+            if url in visited:
+                return None
+            visited.add(url)
+
+            cache_key = url_hash(url)
             cached = get_cached_data("page_analysis", cache_key)
             if cached:
-                # Cálculo robusto de entities_found
-                entities_found = 0
-                for et in self.EXTRACTION_ORDER:
-                    et_data = cached.get(et)
-                    if isinstance(et_data, list):
-                        entities_found += len(et_data)
-                    elif isinstance(et_data, dict) and "entities" in et_data:
-                        entities_found += len(et_data.get("entities", []))
-                
+                page_type = cached.get("page_type", "unknown")
+                entities_found = sum(
+                    len(cached.get(et, [])) if isinstance(cached.get(et), list)
+                    else len(cached.get(et, {}).get("entities", []))
+                    for et in self.EXTRACTION_ORDER
+                )
                 results["urls_analizadas"].append({
-                    "url": url_normalized,
-                    "status": "cached",
-                    "page_type": cached.get("page_type", "unknown"),
-                    "entities_found": entities_found
+                    "url": url, "status": "cached", "page_type": page_type,
+                    "entities_found": entities_found, "is_seed": is_seed
                 })
-                
-                # Merge robusto de entidades
                 for et in self.EXTRACTION_ORDER:
-                    if et in cached:
-                        entities_data = cached[et]
-                        if isinstance(entities_data, list):
-                            results["entities"][et].extend(entities_data)
-                        elif isinstance(entities_data, dict) and "entities" in entities_data:
-                            results["entities"][et].extend(entities_data["entities"])
-                
-                if cached.get("page_type"):
-                    results["page_types_found"].append(cached["page_type"])
-                continue
-            
-            # Fetch página
-            page = self.crawler.fetch_page(url_normalized)
+                    d = cached.get(et)
+                    if isinstance(d, list):
+                        results["entities"][et].extend(d)
+                    elif isinstance(d, dict) and "entities" in d:
+                        results["entities"][et].extend(d["entities"])
+                if page_type:
+                    results["page_types_found"].append(page_type)
+                # Para directorios cacheados también expandimos si hay internal_links guardados
+                # (no los guardamos actualmente → simplemente skip)
+                return None
+
+            page = self.crawler.fetch_page(url)
             if not page["ok"]:
                 results["urls_analizadas"].append({
-                    "url": url_normalized,
-                    "status": f"error: {page['error']}"
+                    "url": url, "status": f"error: {page['error']}", "is_seed": is_seed
                 })
-                continue
-            
-            # Detectar tipo de página
+                return None
+
+            # Si es directorio, encolar sus sub-URLs (solo desde semillas o 1 nivel)
+            if is_seed:
+                sub_urls = self.crawler.get_crawl_queue(url, page, max_subpages=MAX_SUBPAGES_PER_DIRECTORY)
+                for sub in sub_urls:
+                    if sub not in visited and len(crawl_queue) + len(visited) < MAX_TOTAL_PAGES:
+                        crawl_queue.append(sub)
+
+            return page
+
+        # ----------------------------------------------------------------
+        # Fase 2: procesar la cola (semillas + sub-URLs descubiertas)
+        # ----------------------------------------------------------------
+        seed_set = set(seed_urls)
+        processed_pages = 0
+
+        while crawl_queue and processed_pages < MAX_TOTAL_PAGES:
+            url = crawl_queue.pop(0)
+            is_seed = url in seed_set
+            page = _fetch_and_expand(url, is_seed)
+
+            if page is None:
+                continue  # cacheada o error → ya procesada arriba
+
+            processed_pages += 1
             page_type = page.get("page_type", "general")
             results["page_types_found"].append(page_type)
-            
-            # Extraer entidades por tipo (en orden jerárquico)
+
             context = {
                 "centro": centro["nombre"],
                 "region": centro.get("region"),
                 "tematicas": tematicas,
                 "page_type": page_type,
             }
-            
+
+            # PASO 1: GPT extrae del HTML
+            page_entities: Dict[str, List] = defaultdict(list)
             for entity_type in self.EXTRACTION_ORDER:
                 extracted = self.extractor.extract_entities(
                     content=page["text"],
@@ -863,31 +1163,47 @@ class DealflowPipeline:
                     token_tracker=self.token_tracker
                 )
                 if extracted.get("entities"):
-                    results["entities"][entity_type].extend(extracted["entities"])
-            
-            # Si es página de personas y tenemos ORCID API, enriquecer
+                    page_entities[entity_type].extend(extracted["entities"])
+
+            # PASO 2: Perplexity enriquece buscando en internet
+            if enrich_with_perplexity and self.perplexity_key:
+                for entity_type in self.EXTRACTION_ORDER:
+                    if page_entities[entity_type]:
+                        page_entities[entity_type] = enrich_entities_with_perplexity(
+                            entities=page_entities[entity_type],
+                            entity_type=entity_type,
+                            centro=centro["nombre"],
+                            perplexity_key=self.perplexity_key
+                        )
+
+            for entity_type in self.EXTRACTION_ORDER:
+                results["entities"][entity_type].extend(page_entities[entity_type])
+
             if page_type == "people_directory" and self.orcid:
                 results["entities"]["people"] = self._enrich_with_orcid(
                     results["entities"]["people"], page["text"]
                 )
-            
-            # Guardar en caché (estructura original: listas directas)
-            cache_data = {et: results["entities"][et] for et in self.EXTRACTION_ORDER}
+
+            # Cachear
+            cache_data = {et: list(page_entities[et]) for et in self.EXTRACTION_ORDER}
             cache_data["page_type"] = page_type
             cache_data["title"] = page.get("title", "")
-            save_cached_data("page_analysis", cache_key, cache_data)
-            
+            save_cached_data("page_analysis", url_hash(normalize_url(url)), cache_data)
+
+            total_ents = sum(len(page_entities[et]) for et in self.EXTRACTION_ORDER)
             results["urls_analizadas"].append({
-                "url": url_normalized,
+                "url": normalize_url(url),
                 "status": "processed",
                 "page_type": page_type,
-                "entities_found": sum(len(results["entities"][et]) for et in self.EXTRACTION_ORDER)
+                "entities_found": total_ents,
+                "is_seed": is_seed,
             })
-        
-        # Generar resumen
+
         total_entities = sum(len(results["entities"][et]) for et in self.EXTRACTION_ORDER)
-        results["summary"] = f"{centro['nombre']} ({centro.get('region', '')}): {total_entities} oportunidades identificadas"
-        
+        results["summary"] = (
+            f"{centro['nombre']} ({centro.get('region', '')}): "
+            f"{total_entities} oportunidades en {processed_pages} páginas analizadas"
+        )
         return results
     
     def _enrich_with_orcid(self, people: List[Dict], page_content: str) -> List[Dict]:
@@ -1407,9 +1723,10 @@ def main():
         # Configurar análisis
         with st.expander("⚙️ Configuración del análisis", expanded=True):
             # Selector de modelo (prioritizando los más avanzados)
-            st.markdown("**🤖 Modelo de IA**")
+            st.markdown("**🤖 Modelo de IA (Paso 1 — Extracción del HTML)**")
+            st.caption("GPT extrae entidades que aparecen literalmente en el texto de cada página.")
             AVAILABLE_MODELS = {
-                "gpt-4o": "GPT-4o — Más avanzado, mejor análisis (recomendado)",
+                "gpt-4o": "GPT-4o — Más avanzado, mejor extracción (recomendado)",
                 "gpt-4o-mini": "GPT-4o Mini — Más rápido y económico",
                 "gpt-4-turbo": "GPT-4 Turbo — Alta capacidad, contexto largo",
                 "gpt-4": "GPT-4 — Equilibrado",
@@ -1420,16 +1737,34 @@ def main():
                 options=list(AVAILABLE_MODELS.keys()),
                 format_func=lambda x: AVAILABLE_MODELS[x],
                 index=0,
-                help="Los modelos más avanzados ofrecen mejor extracción pero mayor coste en tokens"
+                help="Solo extrae lo que está en el HTML. Perplexity se encarga de la búsqueda web."
             )
             st.session_state.selected_model = selected_model
             
             st.divider()
-            max_pages = st.slider("Máx. páginas por centro", 1, 5, 3)
+            
+            st.markdown("**🔍 Enriquecimiento web (Paso 2 — Perplexity busca en internet)**")
+            if st.session_state.perplexity_ok:
+                enable_enrichment = st.checkbox(
+                    "✅ Activar enriquecimiento con Perplexity",
+                    value=True,
+                    help="Para cada entidad extraída por GPT, Perplexity busca en internet: verifica que existe, obtiene la URL oficial, descripción actualizada, estado real, financiación, ORCID, DOI, etc. Más lento pero resultados verificados."
+                )
+                if enable_enrichment:
+                    st.info("🔎 Flujo: GPT extrae nombres del HTML → Perplexity busca cada entidad en internet → datos reales y verificados")
+                else:
+                    st.warning("⚠️ Sin enriquecimiento: los datos de GPT pueden contener alucinaciones o URLs incorrectas.")
+            else:
+                enable_enrichment = False
+                st.warning("⚠️ Perplexity no configurado. GPT extraerá del HTML pero sin verificación web.")
+            
+            st.divider()
+            max_pages = st.slider("Máx. URLs semilla por centro (del Excel)", 1, 8, 3)
+            max_subpages = st.slider("Máx. sub-páginas por directorio detectado", 0, 15, 8,
+                help="Cuando se detecta un directorio (spin-offs, investigadores, proyectos…) se siguen sus links internos. 0 = desactivado.")
             timeout = st.slider("Timeout por página (segundos)", 10, 60, 30)
             min_score = st.slider("Score mínimo para incluir oportunidad", 50, 90, 60)
             enable_orcid = st.checkbox("🔗 Enriquecer con ORCID", value=True, help="Busca ORCID IDs para investigadores")
-            enable_validation = st.checkbox("✅ Validar con Perplexity", value=st.session_state.perplexity_ok, disabled=not st.session_state.perplexity_ok, help="Verifica URLs y claims con búsqueda web real")
             
             st.info(f"💡 Temáticas activas: {len(st.session_state.tematicas_list)}")
             st.info("🔄 Orden de extracción: Tecnologías → Artículos → Empresas → Personas")
@@ -1454,7 +1789,7 @@ def main():
                 pipeline = DealflowPipeline(
                     api_key=st.session_state.api_key,
                     orcid_api_key=st.secrets.get("ORCID_API_KEY") if enable_orcid else None,
-                    perplexity_key=st.session_state.perplexity_key if enable_validation else None,
+                    perplexity_key=st.session_state.perplexity_key if enable_enrichment else None,
                     model=st.session_state.selected_model
                 )
                 
@@ -1463,41 +1798,26 @@ def main():
                 
                 for idx, centro_key in enumerate(selected_centros):
                     centro = centro_options[centro_key]
-                    status_text.text(f"🔄 Analizando {centro['nombre']}...")
+                    status_text.text(f"🔄 [{idx+1}/{len(selected_centros)}] Extrayendo HTML: {centro['nombre']}...")
                     
                     result = pipeline.process_center(
                         centro=centro,
                         tematicas=st.session_state.tematicas_list,
-                        max_pages=max_pages
+                        max_pages=max_pages,
+                        enrich_with_perplexity=enable_enrichment,
+                        max_subpages=max_subpages
                     )
                     
                     # Filtrar por score mínimo
                     for et in pipeline.EXTRACTION_ORDER:
                         result["entities"][et] = [
-                            e for e in result["entities"][et] 
+                            e for e in result["entities"][et]
                             if e.get("score", 0) >= min_score
                         ]
                     
-                    # Validar con Perplexity si está habilitado
-                    if enable_validation and st.session_state.perplexity_key:
-                        status_text.text(f"🔍 Validando {centro['nombre']} con Perplexity...")
-                        validated = {}
-                        for et in pipeline.EXTRACTION_ORDER:
-                            if result["entities"][et]:
-                                # Preparar datos para validación
-                                raw_data = {
-                                    "centro": centro["nombre"],
-                                    "entities": result["entities"][et],
-                                    "entity_type": et
-                                }
-                                query = f"Verifica las entidades de tipo {et} para {centro['nombre']}"
-                                validated[et] = validate_with_perplexity(raw_data, query, st.session_state.perplexity_key)
-                        
-                        result["validation"] = validated
-                    
                     st.session_state.results[centro["nombre"]] = result
                     progress_bar.progress((idx + 1) / len(selected_centros))
-                    time.sleep(1)
+                    time.sleep(0.5)
                 
                 # Acumular uso de tokens de esta sesión
                 prev = st.session_state.token_usage
@@ -1511,6 +1831,7 @@ def main():
                 status_text.text("✅ Análisis completado")
                 st.balloons()
                 st.rerun()
+
     
     # ------------------------------------------------------------------------
     # TAB 2: Resultados (TABLA - por centro)
@@ -1555,10 +1876,11 @@ def main():
                         url_rows = []
                         for u in urls_analizadas:
                             url_rows.append({
+                                "Origen": "📌 Semilla" if u.get("is_seed", True) else "🔍 Directorio",
                                 "URL": u.get("url", ""),
                                 "Estado": u.get("status", ""),
                                 "Tipo de página": u.get("page_type", "–"),
-                                "Entidades encontradas": u.get("entities_found", "–"),
+                                "Entidades": u.get("entities_found", "–"),
                             })
                         df_urls = pd.DataFrame(url_rows)
                         st.dataframe(
@@ -1566,12 +1888,16 @@ def main():
                             use_container_width=True,
                             hide_index=True,
                             column_config={
+                                "Origen": st.column_config.TextColumn("Origen", width="small"),
                                 "URL": st.column_config.LinkColumn("🔗 URL"),
                                 "Estado": st.column_config.TextColumn("Estado", width="small"),
                                 "Tipo de página": st.column_config.TextColumn("Tipo", width="medium"),
-                                "Entidades encontradas": st.column_config.NumberColumn("Entidades", width="small"),
+                                "Entidades": st.column_config.NumberColumn("Entidades", width="small"),
                             }
                         )
+                        seeds = sum(1 for r in url_rows if r["Origen"] == "📌 Semilla")
+                        subs = len(url_rows) - seeds
+                        st.caption(f"📌 {seeds} semillas del Excel · 🔍 {subs} sub-páginas descubiertas")
                 
                 # ---- Sección: Tabla de oportunidades del centro ----
                 rows = []
@@ -1580,23 +1906,27 @@ def main():
                         continue
                     entities = centro_data["entities"].get(entity_type, [])
                     for entity in entities:
-                        referencia = entity.get("referencia", "")
-                        validation = centro_data.get("validation", {}).get(entity_type, {})
-                        if validation and "corrected_urls" in validation:
-                            for corrected in validation["corrected_urls"]:
-                                if referencia in corrected or corrected in referencia:
-                                    referencia = corrected
-                                    break
                         score = entity.get("score", 0)
                         if score < score_min:
                             continue
+                        
+                        # verified viene directamente en la entidad tras enriquecimiento Perplexity
+                        verified = entity.get("verified")
+                        if verified is True:
+                            val_badge = "✅"
+                        elif verified is False:
+                            val_badge = "❌"
+                        else:
+                            val_badge = "–"
+                        
                         rows.append({
                             "Tipo": entity_type,
                             "Nombre": entity.get("nombre") or entity.get("titulo") or "–",
                             "Descripción": (entity.get("descripcion") or entity.get("relevancia_health") or "")[:250],
                             "Score": score,
-                            "URL": referencia,
-                            "Validado": "✅" if validation and entity.get("nombre") in validation.get("verified_claims", []) else "⚠️" if validation else "–",
+                            "URL": entity.get("referencia") or entity.get("linkedin") or "",
+                            "Verificado": val_badge,
+                            "Fuentes": len(entity.get("fuentes_web", [])),
                         })
                 
                 if rows:
@@ -1611,13 +1941,16 @@ def main():
                             "Descripción": st.column_config.TextColumn("📄 Descripción", width="large"),
                             "Score": st.column_config.ProgressColumn("⭐ Score", min_value=0, max_value=100, format="%d"),
                             "URL": st.column_config.LinkColumn("🔗 URL"),
-                            "Validado": st.column_config.TextColumn("✅ Val.", width="small"),
+                            "Verificado": st.column_config.TextColumn("🌐 Perplexity", width="small",
+                                help="✅ verificado en internet · ❌ no encontrado · – sin verificar"),
+                            "Fuentes": st.column_config.NumberColumn("Fuentes", width="small"),
                         }
                     )
-                    c1, c2, c3 = st.columns(3)
+                    c1, c2, c3, c4 = st.columns(4)
                     c1.metric("Oportunidades", len(df_centro))
                     c2.metric("Score medio", f"{df_centro['Score'].mean():.0f}")
-                    c3.metric("Validadas", df_centro[df_centro["Validado"] == "✅"].shape[0])
+                    c3.metric("Verificadas ✅", df_centro[df_centro["Verificado"] == "✅"].shape[0])
+                    c4.metric("No encontradas ❌", df_centro[df_centro["Verificado"] == "❌"].shape[0])
                 else:
                     st.info("No hay oportunidades que superen los filtros para este centro.")
                 
