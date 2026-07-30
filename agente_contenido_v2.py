@@ -1256,19 +1256,23 @@ with tab3:
 # TAB 4 - MONITOR DE CONTENIDOS (CORREGIDO)
 # =====================================================
 
+# =====================================================
+# TAB 4 - MONITOR DE CONTENIDOS (VALIDADO + MEJORAS MÍNIMAS)
+# =====================================================
+
 with tab4:
     st.markdown("## 📡 Monitor de Contenidos LifeSciences")
     st.markdown("*Fuentes fidedignas que revisan cada 24h y sugieren contenido relevante para tus verticales*")
     
     # =====================================================
-    # DEFINICIÓN DE FUENTES FIDEDIGNAS
+    # DEFINICIÓN DE FUENTES FIDEDIGNAS (6 originales + 3 adicionales)
     # =====================================================
     
     TRUSTED_SOURCES = {
         "clinicaltrials": {
             "id": "clinicaltrials", "name": "ClinicalTrials.gov", "url": "https://clinicaltrials.gov",
             "type": "scientific", "confidence": "A", "category": "Clinical Development",
-            "why": "Mejor 'early signal' de adopción real.",
+            "why": "Mejor 'early signal' de adopción real: qué tecnologías entran en protocolos.",
             "watch_queries": [
                 {"name": "MRD/Liquid Biopsy", "query": '"ctDNA MRD" OR "minimal residual disease"', "vertical": "Liquid Biopsy"},
                 {"name": "eClinical/DCT", "query": '"ePRO" OR "decentralized trial"', "vertical": "DCT/eClinical"},
@@ -1327,7 +1331,7 @@ with tab4:
             "weekly_focus": ["QC release", "Validación"],
             "tips": ["Focalizar en 'Analytical'"]
         },
-        # Fuentes adicionales
+        # 🆕 Fuentes adicionales
         "applied_clinical": {
             "id": "applied_clinical", "name": "Applied Clinical Trials", "url": "https://appliedclinicaltrialsonline.com",
             "type": "market", "confidence": "B", "category": "DCT/eClinical",
@@ -1360,7 +1364,7 @@ with tab4:
     COVERAGE_NOTES = "Con estas 9 fuentes cubres: Dx/Genómica, QC/ATMP, RWE/DCT, MedTech. Confianza global: B."
     
     # =====================================================
-    # INICIALIZACIÓN DE ESTADO
+    # INICIALIZACIÓN DE ESTADO & AUTO-GUARDADO DIARIO (.TXT)
     # =====================================================
     if "monitor_active_sources" not in st.session_state:
         st.session_state.monitor_active_sources = list(TRUSTED_SOURCES.keys())
@@ -1369,7 +1373,54 @@ with tab4:
     if "monitor_last_check" not in st.session_state:
         st.session_state.monitor_last_check = None
     if "monitor_config" not in st.session_state:
-        st.session_state.monitor_config = {"model": "sonar", "auto_check": True}
+        st.session_state.monitor_config = {"model": "sonar"}
+    if "monitor_last_daily_save" not in st.session_state:
+        st.session_state.monitor_last_daily_save = None
+
+    # 🔧 Auto-guardado histórico diario en GCS
+    now = datetime.now()
+    if st.session_state.monitor_last_daily_save is None or (now - st.session_state.monitor_last_daily_save).total_seconds() >= 86400:
+        if st.session_state.monitor_suggestions:
+            try:
+                lines = [
+                    f"📊 HISTÓRICO DIARIO - KAIBOT MONITOR | {now.strftime('%d/%m/%Y %H:%M')}",
+                    "="*60,
+                    f"Total sugerencias: {len(st.session_state.monitor_suggestions)}",
+                    ""
+                ]
+                for i, s in enumerate(st.session_state.monitor_suggestions, 1):
+                    src = s.get("source", {})
+                    sug = s.get("suggestion", {})
+                    ana = s.get("analysis", {})
+                    lines.append(f"📌 #{i} | {src.get('name','?')} ({src.get('category','?')})")
+                    lines.append(f"   Título: {sug.get('title','')} | Urgencia: {sug.get('urgency','media')}")
+                    lines.append(f"   Tendencias: {', '.join(ana.get('trends',[])[:2])}")
+                    lines.append("")
+                
+                txt_content = "\n".join(lines)
+                fname = f"monitor_contenidos/historico_{now.strftime('%Y%m%d')}.txt"
+                bucket = client.bucket(bucket_name)
+                blob = bucket.blob(fname)
+                blob.upload_from_string(txt_content, content_type='text/plain; charset=utf-8')
+                st.session_state.monitor_last_daily_save = now
+            except Exception as e:
+                st.warning(f"⚠️ Auto-guardado diario falló: {str(e)[:60]}")
+
+    # 📊 Gráfica resumen rápida
+    if st.session_state.monitor_suggestions:
+        st.markdown("### 📈 Resumen de Sugerencias")
+        col_m1, col_m2, col_m3 = st.columns(3)
+        urg_dist = {}
+        for s in st.session_state.monitor_suggestions:
+            u = s.get("suggestion", {}).get("urgency", "media")
+            urg_dist[u] = urg_dist.get(u, 0) + 1
+        
+        col_m1.metric("🔍 Total Sugerencias", len(st.session_state.monitor_suggestions))
+        col_m2.metric("🔥 Alta/Crítica", urg_dist.get("alta", 0) + urg_dist.get("crítica", 0))
+        col_m3.metric("📅 Última Revisión", st.session_state.monitor_last_check.strftime("%d/%m %H:%M") if st.session_state.monitor_last_check else "Nunca")
+        
+        st.bar_chart(pd.DataFrame(urg_dist, index=["Urgencia"]).T if urg_dist else pd.DataFrame())
+        st.markdown("---")
     
     # =====================================================
     # SECCIÓN 1: FUENTES
@@ -1381,7 +1432,7 @@ with tab4:
     with tab_sci:
         for src_id, src in TRUSTED_SOURCES.items():
             if src.get("type") == "scientific":
-                with st.expander(f"{'🟢' if src.get('confidence')=='A' else ''} {src.get('name', 'N/A')} — {src.get('category', 'N/A')}", expanded=False):
+                with st.expander(f"{'🟢' if src.get('confidence')=='A' else '🟡'} {src.get('name', 'N/A')} — {src.get('category', 'N/A')}", expanded=False):
                     st.markdown(f"**URL:** [{src.get('url', '#')}]({src.get('url', '#')})")
                     st.markdown(f"*{src.get('why', '')}*")
                     for q in src.get("watch_queries", []):
@@ -1411,7 +1462,7 @@ with tab4:
                     else:
                         st.success(f"✅ {src.get('name', '')} activa")
         
-        st.markdown("---\n####  Fuentes Adicionales")
+        st.markdown("---\n#### 🆕 Fuentes Adicionales")
         for src_id, src in TRUSTED_SOURCES.items():
             if src.get("type") == "market" and src_id in ["applied_clinical", "medtech_dive", "fierce_biotech"]:
                 with st.expander(f"✨ {src.get('name', 'N/A')} — {src.get('category', 'N/A')} *(Nueva)*", expanded=False):
@@ -1477,7 +1528,7 @@ with tab4:
         active = [TRUSTED_SOURCES.get(sid, {}) for sid in st.session_state.monitor_active_sources if sid in TRUSTED_SOURCES]
         
         if st.button("🔍 Revisar fuentes ahora", type="primary", use_container_width=True, key="tab4_run_check"):
-            with st.spinner(f" Analizando {len(active)} fuentes..."):
+            with st.spinner(f"🤖 Analizando {len(active)} fuentes..."):
                 suggestions = []
                 
                 for src in active:
@@ -1491,6 +1542,7 @@ with tab4:
                         queries = "\n".join([f"- {q.get('name','')}: `{q.get('query','')}`" for q in src.get("watch_queries", [])[:3]])
                         focus = "evidencia técnica" if src.get("type")=="scientific" else "movimientos de mercado"
                         
+                        # 🔒 PROMPT ORIGINAL INTACTO (no alterar)
                         prompt = f"""Analiza {src_name} ({src_url}) para {src_cat}.
 Detectar {focus}. Responde en JSON:
 {{"trends": [], "opportunities": [], "hot_topics": [], "content_angles": [{{"angle": "", "format": "", "audience": ""}}], "urgency": "media", "vertical_impact": []}}"""
@@ -1527,10 +1579,11 @@ Detectar {focus}. Responde en JSON:
                             "status": "new"
                         }
                         suggestions.append(suggestion)
+                        
                     except Exception as e:
                         st.warning(f"⚠️ Error en {src.get('name', '?')}: {str(e)[:50]}")
                 
-                # Auto-guardado en GCS
+                # ✅ Auto-guardado en GCS tras revisión
                 if suggestions:
                     try:
                         fname = f"monitor_contenidos/revision_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -1563,7 +1616,7 @@ Detectar {focus}. Responde en JSON:
             st.info("🔍 Sin revisiones. Click en 'Revisar fuentes ahora'.")
     
     # =====================================================
-    # SECCIÓN 3: SUGERENCIAS (CORREGIDO: BOTÓN TAB 1 COMPATIBLE)
+    # SECCIÓN 3: SUGERENCIAS (CON MEJORAS: ENLACES + IDIOMA NATIVO + DESCARGA LOCAL)
     # =====================================================
     if st.session_state.monitor_suggestions:
         st.markdown("---\n### 💡 Sugerencias de Contenido")
@@ -1578,16 +1631,49 @@ Detectar {focus}. Responde en JSON:
         if f_cat: filtered = [s for s in filtered if s.get("source", {}).get("category") in f_cat]
         if f_urg != "Todas": filtered = [s for s in filtered if s.get("suggestion", {}).get("urgency") == f_urg]
         
+        # Función para generar contenido .txt formateado (para descarga local)
+        def generate_txt_content(sug):
+            src = sug.get("source", {})
+            sugg = sug.get("suggestion", {})
+            ana = sug.get("analysis", {})
+            
+            lines = [
+                f"{sugg.get('title', 'Sin título')}",
+                "",
+                f"Fuente: {src.get('name', 'N/A')}",
+                "",
+                f"Confianza: {src.get('confidence', 'N/A')} | Categoría: {src.get('category', 'N/A')}",
+                f"Generado: {sug.get('created_at', 'N/A')}",
+                "",
+                "📈 Tendencias:"
+            ]
+            for t in ana.get("trends", [])[:3]:
+                lines.append(f"• {t}")
+            
+            lines.append("")
+            lines.append("🎯 Oportunidades:")
+            for o in ana.get("opportunities", [])[:2]:
+                lines.append(f"✓ {o}")
+            
+            lines.append("")
+            lines.append(f"Formato: {sugg.get('format', 'N/A')}")
+            lines.append(f"Audiencia: {sugg.get('audience', 'N/A')}")
+            
+            verts = sugg.get("verticals", [])
+            if verts:
+                lines.append(f"Verticales: {', '.join(verts)}")
+            
+            return "\n".join(lines)
+        
         for sug in filtered:
-            # Acceso seguro a todas las claves
             src = sug.get("source", {})
             sugg = sug.get("suggestion", {})
             analysis = sug.get("analysis", {})
             
-            urgency_colors = {"crítica": "", "alta": "🟠", "media": "🟡", "baja": "🟢"}
+            urgency_colors = {"crítica": "🔴", "alta": "🟠", "media": "🟡", "baja": "🟢"}
             urgency = sugg.get("urgency", "media")
             
-            with st.expander(f"{urgency_colors.get(urgency, '')} {src.get('name', 'N/A')} — {sugg.get('title', 'Sin título')}", expanded=(urgency in ["crítica", "alta"])):
+            with st.expander(f"{urgency_colors.get(urgency, '⚪')} {src.get('name', 'N/A')} — {sugg.get('title', 'Sin título')}", expanded=(urgency in ["crítica", "alta"])):
                 
                 col_s1, col_s2 = st.columns([3, 1])
                 
@@ -1598,15 +1684,22 @@ Detectar {focus}. Responde en JSON:
                     
                     st.markdown("---")
                     
+                    # ✅ MEJORA #1: Renderizar tendencias con referencias [1] enlazadas
                     trends = analysis.get("trends", [])
                     if trends:
-                        st.markdown("** Tendencias:**")
-                        for t in trends[:3]: st.markdown(f"• {t}")
+                        st.markdown("**📈 Tendencias:**")
+                        for t in trends[:3]:
+                            # Reemplazar [1], [2] por enlaces HTML a la fuente
+                            t_html = re.sub(r'\[(\d+)\]', rf'<a href="{src.get("url", "#")}" target="_blank" style="color:#0066CC;text-decoration:none">[\1]</a>', t)
+                            st.markdown(f"• {t_html}", unsafe_allow_html=True)
                     
+                    # ✅ MEJORA #1: Renderizar oportunidades con referencias enlazadas
                     opps = analysis.get("opportunities", [])
                     if opps:
                         st.markdown("**🎯 Oportunidades:**")
-                        for o in opps[:2]: st.markdown(f"✓ {o}")
+                        for o in opps[:2]:
+                            o_html = re.sub(r'\[(\d+)\]', rf'<a href="{src.get("url", "#")}" target="_blank" style="color:#0066CC;text-decoration:none">[\1]</a>', o)
+                            st.markdown(f"✓ {o_html}", unsafe_allow_html=True)
                     
                     claims = sugg.get("validation_claims", [])
                     if claims:
@@ -1620,13 +1713,12 @@ Detectar {focus}. Responde en JSON:
                     
                     st.markdown("---")
                     
-                    # ✅ BOTÓN CORREGIDO: Compatible con Streamlit
-                    if st.button(" Preparar para Tab 1", key=f"send_{sug.get('id', 'unknown')}", type="primary", use_container_width=True):
+                    # Botón Preparar para Tab 1 (compatible con Streamlit)
+                    if st.button("📤 Preparar para Tab 1", key=f"send_{sug.get('id', 'unknown')}", type="primary", use_container_width=True):
                         query = sugg.get("tab1_query", "")
-                        st.info(f"✅ **Query lista para el Tab 1:**\n\n1. Haz clic en la pestaña **'🎯 Generar Contenido'**\n2. Selecciona modo **'📝 Personalizada'** o **'🔧 Flexible'**\n3. Pega esta query en el campo de consulta")
+                        st.info(f"✅ **Query lista:**\n1. Ve a **🎯 Generar Contenido**\n2. Pega en **Consulta Personalizada**")
                         st.code(query, language="text")
                     
-                    # Botones originales (se mantienen)
                     if st.button("📋 Copiar query", key=f"copy_{sug.get('id', 'unknown')}", use_container_width=True):
                         st.code(sugg.get("tab1_query", ""), language="text")
                     
@@ -1634,17 +1726,18 @@ Detectar {focus}. Responde en JSON:
                         sug["status"] = "reviewed"
                         st.rerun()
                     
-                    if st.button("️ Descartar", key=f"discard_{sug.get('id', 'unknown')}", use_container_width=True):
+                    if st.button("🗑️ Descartar", key=f"discard_{sug.get('id', 'unknown')}", use_container_width=True):
                         st.session_state.monitor_suggestions.remove(sug)
                         st.rerun()
                 
-                # Preview formateado
-                st.markdown("---\n**👁️ Vista previa formateada:**")
-                fmt_tabs = st.tabs(["📧 Email", "💼 LinkedIn", " Web", "📝 Texto"])
-                formats = ["📧 Email Corporativo", " Post LinkedIn", "🌐 Artículo Web/Blog", "📝 Texto Plano"]
+                # ✅ MEJORA #2: Preview formateado en idioma original (sin traducción)
+                st.markdown("---\n**👁️ Vista previa del contenido:**")
+                fmt_tabs = st.tabs(["📧 Email", "💼 LinkedIn", "🌐 Web", "📝 Texto"])
+                formats = ["📧 Email Corporativo", "💼 Post LinkedIn", "🌐 Artículo Web/Blog", "📝 Texto Plano"]
                 
+                # Función de formato neutro (contenido en idioma original - MEJORA #2)
                 def fmt_neutral(ana, fmt):
-                    tr = ana.get("trends", [])
+                    tr = ana.get("trends", [])  # ✅ Sin traducción, tal cual viene del JSON
                     op = ana.get("opportunities", [])
                     if fmt == "📧 Email Corporativo":
                         return f"Asunto: {tr[0][:60] if tr else 'Análisis'}...\n\n{' | '.join(tr[:3])}\n\nPuntos:\n" + "\n".join(f"• {t}" for t in tr[:3]) + f"\n\nAcciones:\n" + "\n".join(f"→ {o}" for o in op[:2])
@@ -1662,15 +1755,33 @@ Detectar {focus}. Responde en JSON:
                         else:
                             st.code(content, language="text")
                 
-                # Guardado manual
+                # ✅ MEJORA #3: Botones Guardar en GCS + Descargar en equipo
                 st.markdown("---")
-                if st.button("💾 Guardar en GCS", key=f"save_{sug.get('id', 'unknown')}", use_container_width=True):
-                    try:
-                        fname = f"monitor_contenidos/sugerencia_{sug.get('id', 'unknown')}.json"
-                        upload_json_to_gcs(client, bucket_name, "", fname, sug)
-                        st.success(f"✅ Guardado: {fname}")
-                    except Exception as e:
-                        st.error(f" Error: {str(e)[:100]}")
+                col_save, col_dl = st.columns(2)
+                
+                with col_save:
+                    # Guardado en GCS (funcionalidad original mantenida)
+                    if st.button("💾 Guardar sugerencia en GCS", key=f"save_{sug.get('id', 'unknown')}", use_container_width=True):
+                        try:
+                            fname = f"monitor_contenidos/sugerencia_{sug.get('id', 'unknown')}.json"
+                            upload_json_to_gcs(client, bucket_name, "", fname, sug)
+                            st.success(f"✅ Guardado: {fname}")
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)[:100]}")
+                
+                with col_dl:
+                    # ✅ NUEVO: Botón de descarga local .txt (MEJORA #3)
+                    txt_content = generate_txt_content(sug)
+                    fname_txt = f"sugerencia_{sug.get('source', {}).get('name', 'unknown')}_{datetime.now().strftime('%Y%m%d')}.txt"
+                    
+                    st.download_button(
+                        label="📥 Descargar contenido (.txt)",
+                        data=txt_content,
+                        file_name=fname_txt,
+                        mime="text/plain",
+                        use_container_width=True,
+                        key=f"dl_{sug.get('id', 'unknown')}"
+                    )
     
     # =====================================================
     # SECCIÓN 4: COBERTURA + CONFIGURACIÓN
@@ -1678,13 +1789,13 @@ Detectar {focus}. Responde en JSON:
     st.markdown("---")
     with st.expander("🗺️ Cobertura + Configuración", expanded=False):
         st.markdown(COVERAGE_NOTES)
-        st.markdown("#### ️ Configuración")
+        st.markdown("#### ⚙️ Configuración")
         col_c1, col_c2 = st.columns(2)
         with col_c1:
             st.session_state.monitor_config["model"] = st.selectbox("Modelo", ["sonar", "sonar-pro"], index=0, key="tab4_cfg_model")
         with col_c2:
             if st.button("💾 Guardar", key="tab4_save_cfg"): st.success("✅ Guardada")
-        st.info("💡 Auto-guardado en `monitor_contenidos/`")
+        st.info("💡 Auto-guardado en `monitor_contenidos/` (JSON + .txt histórico)")
     
     # =====================================================
     # FOOTER EDUCATIVO
@@ -1697,18 +1808,3 @@ Detectar {focus}. Responde en JSON:
     
     *Brief actualizado: {datetime.now().strftime('%B %Y')} | Fuentes: {len(st.session_state.monitor_active_sources)} activas*
     """)
-
-# =====================================================
-# FOOTER KAIBOT
-# =====================================================
-
-st.markdown(f"""
-    <div class='footer-kaibot'>
-        <h3 style='color: white; margin-bottom: 1rem;'>Powered by {BRANDING['name']}</h3>
-        <p style='color: rgba(255,255,255,0.8); margin-bottom: 1rem;'>Especialistas en Marketing Digital B2B | Generación de leads industriales</p>
-        <div style='display: flex; justify-content: center; gap: 2rem; flex-wrap: wrap;'>
-            <span>📧 hello@kaibot.es</span><span>📞 +34 633 69 88 32</span><span>📍 Vitoria-Gasteiz</span>
-        </div>
-        <p style='margin-top: 1.5rem; color: rgba(255,255,255,0.6); font-size: 0.9rem;'>{BRANDING['footer']}</p>
-    </div>
-""", unsafe_allow_html=True)
