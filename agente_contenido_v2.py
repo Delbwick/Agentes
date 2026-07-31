@@ -1265,12 +1265,17 @@ with tab3:
 # TAB 4 - MONITOR DE CONTENIDOS (IDIOMA ORIGINAL + TXT AMPLIADO + PROFUNDIZAR)
 # =====================================================
 
+
+# =====================================================
+# TAB 4 - MONITOR DE CONTENIDOS (FUNCIONAL + MEJORAS SOLICITADAS)
+# =====================================================
+
 with tab4:
     st.markdown("## 📡 Monitor de Contenidos LifeSciences")
     st.markdown("*Fuentes fidedignas que revisan cada 24h y sugieren contenido relevante para tus verticales*")
     
     # =====================================================
-    # DEFINICIÓN DE FUENTES FIDEDIGNAS
+    # DEFINICIÓN DE FUENTES FIDEDIGNAS (6 originales + 3 adicionales)
     # =====================================================
     
     TRUSTED_SOURCES = {
@@ -1336,7 +1341,7 @@ with tab4:
             "weekly_focus": ["QC release", "Validación"],
             "tips": ["Focalizar en 'Analytical'"]
         },
-        # Fuentes adicionales
+        # 🆕 Fuentes adicionales
         "applied_clinical": {
             "id": "applied_clinical", "name": "Applied Clinical Trials", "url": "https://appliedclinicaltrialsonline.com",
             "type": "market", "confidence": "B", "category": "DCT/eClinical",
@@ -1549,14 +1554,30 @@ with tab4:
                         queries = "\n".join([f"- {q.get('name','')}: `{q.get('query','')}`" for q in src.get("watch_queries", [])[:3]])
                         focus = "evidencia técnica" if src.get("type")=="scientific" else "movimientos de mercado"
                         
-                        # ✅ MODIFICACIÓN #1: Prompt con instrucción de idioma original
-                        prompt = f"""Analiza {src_name} ({src_url}) para {src_cat}.
-Detectar {focus}. Responde en JSON:
-{{"trends": [], "opportunities": [], "hot_topics": [], "content_angles": [{{"angle": "", "format": "", "audience": ""}}], "validation_needed": [], "urgency": "media", "vertical_impact": []}}
+                        # ✅ PROMPT CON INSTRUCCIÓN DE IDIOMA ORIGINAL (reforzada)
+                        prompt = f"""LANGUAGE INSTRUCTION (HIGHEST PRIORITY):
+- Output language MUST match the source language.
+- If source is in English → respond in English.
+- If source is in Spanish → respond in Spanish.
+- DO NOT TRANSLATE content. Keep all trends, opportunities, and insights in their original language.
 
-⚠️ IMPORTANTE: Mantén el idioma original de las fuentes. Si la fuente está en inglés, responde en inglés. Si está en español, responde en español. No traduzcas los contenidos.
+Task: Analyze {src_name} ({src_url}) for category {src_cat}.
+Focus: Detect {focus}. 
 
-Reglas: Sé específico (tecnologías, empresas, metodologías), prioriza lo accionable, marca "hype" sin evidencia."""
+Respond in valid JSON with this exact structure:
+{{
+  "trends": ["trend in ORIGINAL language with specific context"],
+  "opportunities": ["content opportunity in ORIGINAL language"],
+  "hot_topics": ["hot topic in ORIGINAL language"],
+  "content_angles": [{{"angle": "hook in ORIGINAL language", "format": "email|linkedin|blog", "audience": "B2B|technical|investor"}}],
+  "validation_needed": ["claim needing verification in ORIGINAL language"],
+  "urgency": "low|medium|high|critical",
+  "vertical_impact": ["Vertical: reason in ORIGINAL language"]
+}}
+
+Rules: Be specific (technologies, companies, methodologies), prioritize actionable insights, flag unsupported "hype" claims.
+Source queries to consider:
+{queries}"""
                         
                         res = pplx.chat.completions.create(model=st.session_state.monitor_config.get("model", "sonar"), messages=[{"role": "user", "content": prompt}])
                         content = res.choices[0].message.content.strip()
@@ -1627,7 +1648,7 @@ Reglas: Sé específico (tecnologías, empresas, metodologías), prioriza lo acc
             st.info("🔍 Sin revisiones. Click en 'Revisar fuentes ahora'.")
     
     # =====================================================
-    # SECCIÓN 3: SUGERENCIAS (CON IDIOMA ORIGINAL + TXT AMPLIADO + PROFUNDIZAR)
+    # SECCIÓN 3: SUGERENCIAS (CON FIX TypeError + IDIOMA ORIGINAL + TXT AMPLIADO + PROFUNDIZAR)
     # =====================================================
     if st.session_state.monitor_suggestions:
         st.markdown("---\n### 💡 Sugerencias de Contenido")
@@ -1642,7 +1663,7 @@ Reglas: Sé específico (tecnologías, empresas, metodologías), prioriza lo acc
         if f_cat: filtered = [s for s in filtered if s.get("source", {}).get("category") in f_cat]
         if f_urg != "Todas": filtered = [s for s in filtered if s.get("suggestion", {}).get("urgency") == f_urg]
         
-        # ✅ MODIFICACIÓN #2: Función para generar .txt con MÁS resultados
+        # ✅ Función para generar .txt AMPLIADO (MEJORA #2)
         def generate_txt_content(sug, deep_analysis=None):
             src = sug.get("source", {})
             sugg = sug.get("suggestion", {})
@@ -1664,13 +1685,15 @@ Reglas: Sé específico (tecnologías, empresas, metodologías), prioriza lo acc
                 "📈 TENDENCIAS DETECTADAS:",
                 "-"*40
             ]
-            for i, t in enumerate(analysis.get("trends", [])[:5], 1):  # ✅ Más tendencias (5 en lugar de 3)
+            # ✅ Mostrar más tendencias (5 en lugar de 3)
+            for i, t in enumerate(analysis.get("trends", [])[:5], 1):
                 lines.append(f"{i}. {t}")
             
             lines.append("")
             lines.append("🎯 OPORTUNIDADES DE CONTENIDO:")
             lines.append("-"*40)
-            for i, o in enumerate(analysis.get("opportunities", [])[:4], 1):  # ✅ Más oportunidades (4 en lugar de 2)
+            # ✅ Mostrar más oportunidades (4 en lugar de 2)
+            for i, o in enumerate(analysis.get("opportunities", [])[:4], 1):
                 lines.append(f"{i}. {o}")
             
             # ✅ NUEVO: Hot topics
@@ -1727,7 +1750,7 @@ Reglas: Sé específico (tecnologías, empresas, metodologías), prioriza lo acc
             
             return "\n".join(lines)
         
-        # ✅ MODIFICACIÓN #3: Función para análisis profundo
+        # ✅ Función para análisis profundo (MEJORA #3)
         def run_deep_analysis(sug):
             """Ejecuta una segunda llamada a Perplexity para extraer más detalles"""
             try:
@@ -1740,7 +1763,9 @@ Reglas: Sé específico (tecnologías, empresas, metodologías), prioriza lo acc
                 trends_str = "\n".join([f"- {t}" for t in analysis.get("trends", [])[:3]])
                 opps_str = "\n".join([f"- {o}" for o in analysis.get("opportunities", [])[:2]])
                 
-                prompt = f"""Profundiza en este análisis de {src.get('name', 'fuente')}:
+                prompt = f"""LANGUAGE INSTRUCTION: Output language MUST match the source language. DO NOT TRANSLATE.
+
+Profundiza en este análisis de {src.get('name', 'fuente')}:
 
 ANÁLISIS INICIAL:
 Tendencias:
@@ -1763,9 +1788,7 @@ Responde en JSON:
   "validation_needed": ["claim específico a validar con fuente"],
   "vertical_impact": ["Liquid Biopsy: por qué", "QC/ATMP: por qué"],
   "source_metadata": {{"title": "", "description": "", "published_date": ""}}
-}}
-
-⚠️ Mantén el idioma original de las fuentes."""
+}}"""
                 
                 res = pplx.chat.completions.create(
                     model=st.session_state.monitor_config.get("model", "sonar"),
@@ -1805,21 +1828,25 @@ Responde en JSON:
                     
                     st.markdown("---")
                     
-                    # ✅ Renderizar tendencias con referencias [1] enlazadas (idioma original)
+                    # ✅ FIX TypeError: Manejo seguro de strings con str() y lambda
                     trends = analysis.get("trends", [])
                     if trends:
                         st.markdown("**📈 Tendencias:**")
                         for t in trends[:3]:
-                            t_html = re.sub(r'\[(\d+)\]', rf'<a href="{src.get("url", "#")}" target="_blank" style="color:#0066CC;text-decoration:none">[\1]</a>', t)
-                            st.markdown(f"• {t_html}", unsafe_allow_html=True)
+                            t_str = str(t) if t else ""
+                            if t_str:
+                                # ✅ Usar lambda para evitar problemas con backslashes en URLs
+                                t_html = re.sub(r'\[(\d+)\]', lambda m: f'<a href="{src.get("url", "#")}" target="_blank" style="color:#0066CC;text-decoration:none">[{m.group(1)}]</a>', t_str)
+                                st.markdown(f"• {t_html}", unsafe_allow_html=True)
                     
-                    # ✅ Renderizar oportunidades con referencias enlazadas (idioma original)
                     opps = analysis.get("opportunities", [])
                     if opps:
                         st.markdown("**🎯 Oportunidades:**")
                         for o in opps[:2]:
-                            o_html = re.sub(r'\[(\d+)\]', rf'<a href="{src.get("url", "#")}" target="_blank" style="color:#0066CC;text-decoration:none">[\1]</a>', o)
-                            st.markdown(f"✓ {o_html}", unsafe_allow_html=True)
+                            o_str = str(o) if o else ""
+                            if o_str:
+                                o_html = re.sub(r'\[(\d+)\]', lambda m: f'<a href="{src.get("url", "#")}" target="_blank" style="color:#0066CC;text-decoration:none">[{m.group(1)}]</a>', o_str)
+                                st.markdown(f"✓ {o_html}", unsafe_allow_html=True)
                     
                     claims = sugg.get("validation_claims", [])
                     if claims:
@@ -1833,7 +1860,7 @@ Responde en JSON:
                     
                     st.markdown("---")
                     
-                    # Botón Preparar para Tab 1
+                    # Botón Preparar para Tab 1 (compatible con Streamlit)
                     if st.button("📤 Preparar para Tab 1", key=f"send_{sug.get('id', 'unknown')}", type="primary", use_container_width=True):
                         query = sugg.get("tab1_query", "")
                         st.info(f"✅ **Query lista:**\n1. Ve a **🎯 Generar Contenido**\n2. Pega en **Consulta Personalizada**")
@@ -1850,7 +1877,7 @@ Responde en JSON:
                         st.session_state.monitor_suggestions.remove(sug)
                         st.rerun()
                 
-                # ✅ Preview formateado en idioma original
+                # ✅ Preview formateado en idioma original (sin traducción)
                 st.markdown("---\n**👁️ Vista previa del contenido:**")
                 fmt_tabs = st.tabs(["📧 Email", "💼 LinkedIn", "🌐 Web", "📝 Texto"])
                 formats = ["📧 Email Corporativo", "💼 Post LinkedIn", "🌐 Artículo Web/Blog", "📝 Texto Plano"]
@@ -1874,12 +1901,12 @@ Responde en JSON:
                         else:
                             st.code(content, language="text")
                 
-                # ✅ NUEVO: Botón "Profundizar en contenido" (MEJORA #3)
+                # ✅ NUEVO: Botón "🔍 Profundizar en contenido" (MEJORA #3)
                 st.markdown("---")
                 if st.button("🔍 Profundizar en contenido", key=f"deep_{sug.get('id', 'unknown')}", use_container_width=True):
                     sug_id = sug.get('id', 'unknown')
                     with st.spinner("🤖 Extrayendo más detalles con IA..."):
-                        # Verificar cache primero
+                        # Verificar cache primero para no repetir llamadas
                         if sug_id not in st.session_state.deep_analysis_cache:
                             deep_result = run_deep_analysis(sug)
                             st.session_state.deep_analysis_cache[sug_id] = deep_result
@@ -1922,6 +1949,7 @@ Responde en JSON:
                 col_save, col_dl = st.columns(2)
                 
                 with col_save:
+                    # Guardado en GCS (funcionalidad original mantenida)
                     if st.button("💾 Guardar sugerencia en GCS", key=f"save_{sug.get('id', 'unknown')}", use_container_width=True):
                         try:
                             fname = f"monitor_contenidos/sugerencia_{sug.get('id', 'unknown')}.json"
