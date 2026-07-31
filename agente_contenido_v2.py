@@ -1550,13 +1550,31 @@ with tab4:
                         focus = "evidencia técnica" if src.get("type")=="scientific" else "movimientos de mercado"
                         
                         # ✅ MODIFICACIÓN #1: Prompt con instrucción de idioma original
-                        prompt = f"""Analiza {src_name} ({src_url}) para {src_cat}.
-Detectar {focus}. Responde en JSON:
-{{"trends": [], "opportunities": [], "hot_topics": [], "content_angles": [{{"angle": "", "format": "", "audience": ""}}], "validation_needed": [], "urgency": "media", "vertical_impact": []}}
+                        # ✅ PROMPT REFORZADO PARA IDIOMA ORIGINAL
+                        prompt = f"""LANGUAGE INSTRUCTION (HIGHEST PRIORITY): 
+- Output language MUST match the source language. 
+- If source is in English → respond in English. 
+- If source is in Spanish → respond in Spanish. 
+- DO NOT TRANSLATE content. Keep all trends, opportunities, and insights in their original language.
 
-⚠️ IMPORTANTE: Mantén el idioma original de las fuentes. Si la fuente está en inglés, responde en inglés. Si está en español, responde en español. No traduzcas los contenidos.
+Task: Analyze {src_name} ({src_url}) for category {src_cat}.
+Focus: Detect {focus}. 
 
-Reglas: Sé específico (tecnologías, empresas, metodologías), prioriza lo accionable, marca "hype" sin evidencia."""
+Respond in valid JSON with this exact structure:
+{{
+  "trends": ["trend in ORIGINAL language with specific context"],
+  "opportunities": ["content opportunity in ORIGINAL language"],
+  "hot_topics": ["hot topic in ORIGINAL language"],
+  "content_angles": [{{"angle": "hook in ORIGINAL language", "format": "email|linkedin|blog", "audience": "B2B|technical|investor"}}],
+  "validation_needed": ["claim needing verification in ORIGINAL language"],
+  "urgency": "low|medium|high|critical",
+  "vertical_impact": ["Vertical: reason in ORIGINAL language"]
+}}
+
+Rules: Be specific (technologies, companies, methodologies), prioritize actionable insights, flag unsupported "hype" claims.
+Source queries to consider:
+{queries}"""
+
                         
                         res = pplx.chat.completions.create(model=st.session_state.monitor_config.get("model", "sonar"), messages=[{"role": "user", "content": prompt}])
                         content = res.choices[0].message.content.strip()
